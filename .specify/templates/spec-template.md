@@ -65,6 +65,29 @@
 
 [Add more user stories as needed, each with an assigned priority]
 
+## Constitution Alignment *(mandatory)*
+
+### Architecture and Boundaries
+
+- [Describe how this feature preserves the required handler -> orchestrator ->
+  agent -> tool -> storage flow, or state why it does not apply]
+- [Describe any frontend changes using feature-based folders only]
+- [State whether the WebSocket event protocol changes; if yes, list impacted
+  events and required integration coverage]
+
+### Approval and Safety Impact
+
+- [State whether the feature causes file writes or shell command execution and
+  how handler-level developer approval is enforced]
+- [State whether any agent file-system or shell tool behavior changes and how
+  repo-root sandboxing and path traversal protection are preserved]
+
+### UX States
+
+- [Describe visible loading states for each async interaction]
+- [Describe the human-readable error states shown to users]
+- [Describe explicit empty states for any empty list, history, or canvas view]
+
 ### Edge Cases
 
 <!--
@@ -90,6 +113,21 @@
 - **FR-004**: System MUST [data requirement, e.g., "persist user preferences"]
 - **FR-005**: System MUST [behavior, e.g., "log all security events"]
 
+### Constitution-Derived Requirements *(mandatory)*
+
+- **CDR-001**: Features MUST preserve Relay's layered architecture and MUST NOT
+  bypass handler-level approval enforcement for file writes or shell commands.
+- **CDR-002**: Features MUST preserve WebSocket-only backend/frontend
+  communication, SQLite-only persistence, and repo-scoped file-system access for
+  agents.
+- **CDR-003**: Features MUST define required tests, including tool happy/error
+  path tests, WebSocket integration tests for protocol changes, and React Flow
+  node component tests when custom nodes are introduced.
+- **CDR-004**: Features MUST define visible loading states, human-readable error
+  messages, and explicit empty states for every affected user flow.
+- **CDR-005**: Features MUST document any new third-party dependency and update
+  the Tech Stack note in project documentation in the same change.
+
 *Example of marking unclear requirements:*
 
 - **FR-006**: System MUST authenticate users via [NEEDS CLARIFICATION: auth method not specified - email/password, SSO, OAuth?]
@@ -113,3 +151,5 @@
 - **SC-002**: [Measurable metric, e.g., "System handles 1000 concurrent users without degradation"]
 - **SC-003**: [User satisfaction metric, e.g., "90% of users successfully complete primary task on first attempt"]
 - **SC-004**: [Business metric, e.g., "Reduce support tickets related to [X] by 50%"]
+- **SC-005**: [If applicable, backend events reach the frontend within 100ms of
+  occurrence and active streaming does not block user interaction on the canvas]

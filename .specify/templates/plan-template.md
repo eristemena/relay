@@ -17,21 +17,36 @@
   the iteration process.
 -->
 
-**Language/Version**: [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION]  
-**Primary Dependencies**: [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]  
-**Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]  
-**Testing**: [e.g., pytest, XCTest, cargo test or NEEDS CLARIFICATION]  
-**Target Platform**: [e.g., Linux server, iOS 15+, WASM or NEEDS CLARIFICATION]
-**Project Type**: [e.g., library/cli/web-service/mobile-app/compiler/desktop-app or NEEDS CLARIFICATION]  
-**Performance Goals**: [domain-specific, e.g., 1000 req/s, 10k lines/sec, 60 fps or NEEDS CLARIFICATION]  
-**Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]  
+**Language/Version**: [e.g., Go 1.24 backend, TypeScript 5.x + React frontend or NEEDS CLARIFICATION]  
+**Primary Dependencies**: [list standard library first; justify any third-party additions]  
+**Storage**: [SQLite only, or NEEDS CLARIFICATION]  
+**Testing**: [e.g., `go test`, Vitest, React Testing Library, integration coverage for WebSocket protocol changes]  
+**Target Platform**: [e.g., macOS/Linux desktop environment for development, browser UI for frontend or NEEDS CLARIFICATION]
+**Project Type**: [Relay backend/frontend feature, tooling, or platform work]  
+**Performance Goals**: [e.g., WebSocket dispatch <100ms, non-blocking React Flow interaction during streaming]  
+**Constraints**: [dark mode only, WebSocket-only frontend/backend communication, handler-level approval for file writes and shell commands]  
 **Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
 
 ## Constitution Check
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+- [ ] Code quality rules are satisfied: idiomatic Go, standard library preferred,
+  exported Go APIs documented, TypeScript strict mode preserved, no banned
+  debug logging statements introduced.
+- [ ] Test impact is defined: table-driven Go tests where applicable, core
+  package coverage preserved at 75%+, tool happy/error-path coverage added,
+  WebSocket protocol and React Flow node test obligations identified.
+- [ ] Architecture remains compliant: handlers -> orchestrator -> agents ->
+  tools -> storage, no concrete agent imports outside the agent package,
+  feature-based frontend folders preserved, SQLite/WebSocket-only boundaries
+  unchanged.
+- [ ] UX and governance impact is defined: visible loading, human-readable
+  errors, helpful empty states, and handler-level approval enforcement for
+  file writes and shell commands.
+- [ ] Security and performance constraints are covered: repo-scoped file access,
+  sandboxed shell execution, no prompt/response logging, cancellable
+  goroutines, no N+1 SQLite access, and <100ms event dispatch expectations.
 
 ## Project Structure
 
@@ -56,43 +71,31 @@ specs/[###-feature]/
 -->
 
 ```text
-# [REMOVE IF UNUSED] Option 1: Single project (DEFAULT)
-src/
-├── models/
-├── services/
-├── cli/
-└── lib/
-
-tests/
-├── contract/
-├── integration/
-└── unit/
-
-# [REMOVE IF UNUSED] Option 2: Web application (when "frontend" + "backend" detected)
 backend/
-├── src/
-│   ├── models/
-│   ├── services/
-│   └── api/
+├── cmd/
+├── internal/
+│   ├── handlers/
+│   ├── orchestrator/
+│   ├── agents/
+│   ├── tools/
+│   └── storage/
 └── tests/
+  ├── integration/
+  └── unit/
 
 frontend/
 ├── src/
-│   ├── components/
-│   ├── pages/
-│   └── services/
+│   ├── app/
+│   ├── features/
+│   │   ├── canvas/
+│   │   └── history/
+│   └── shared/
 └── tests/
-
-# [REMOVE IF UNUSED] Option 3: Mobile + API (when "iOS/Android" detected)
-api/
-└── [same as backend above]
-
-ios/ or android/
-└── [platform-specific structure: feature modules, UI flows, platform tests]
 ```
 
 **Structure Decision**: [Document the selected structure and reference the real
-directories captured above]
+directories captured above. Any deviation from the mandated Relay layering or
+feature-based frontend structure must be justified in Complexity Tracking.]
 
 ## Complexity Tracking
 
@@ -100,5 +103,5 @@ directories captured above]
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |-----------|------------|-------------------------------------|
-| [e.g., 4th project] | [current need] | [why 3 projects insufficient] |
-| [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient] |
+| [e.g., extra dependency] | [current need] | [why standard library or existing stack is insufficient] |
+| [e.g., layer exception] | [specific problem] | [why mandated handler -> orchestrator -> agent -> tool -> storage flow is insufficient] |
