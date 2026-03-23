@@ -1,0 +1,67 @@
+openapi: 3.1.0
+info:
+  title: Relay Local Service Diagnostics API
+  version: 0.1.0
+  description: >-
+    Minimal HTTP diagnostics owned by the Go server. Workspace state for the
+    browser is delivered over WebSocket and is intentionally not modeled as a
+    REST API.
+servers:
+  - url: http://127.0.0.1:{port}
+    variables:
+      port:
+        default: '4747'
+        description: Preferred Relay port; the actual runtime port may differ when Relay falls back to a free port.
+paths:
+  /api/healthz:
+    get:
+      summary: Check whether the local Relay service is ready to serve requests
+      operationId: getHealthz
+      responses:
+        '200':
+          description: Relay is ready
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                  - version
+                  - frontend_mode
+                properties:
+                  status:
+                    type: string
+                    const: ok
+                  version:
+                    type: string
+                  frontend_mode:
+                    type: string
+                    enum:
+                      - embedded
+                      - proxied
+                  active_port:
+                    type: integer
+                    minimum: 1
+                    maximum: 65535
+                  browser_launch:
+                    type: string
+                    enum:
+                      - pending
+                      - opened
+                      - skipped
+                      - failed
+        '503':
+          description: Relay is still starting or the frontend dependency is unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                  - message
+                properties:
+                  status:
+                    type: string
+                    const: starting
+                  message:
+                    type: string

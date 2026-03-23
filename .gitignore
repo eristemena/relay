@@ -1,0 +1,15 @@
+bin/
+coverage/
+dist/
+node_modules/
+web/node_modules/
+web/.next/
+web/out/
+*.log
+.env*
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+.idea/
+.vscode/

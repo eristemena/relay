@@ -1,0 +1,121 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --color-base: #09090f;
+  --color-surface: #0d0d18;
+  --color-raised: #111120;
+  --color-border: #1a1a2e;
+  --color-brand: #a78bfa;
+  --color-brand-mid: #7c3aed;
+  --color-brand-dim: #5b5bd6;
+  --color-text: #fafafa;
+  --color-text-muted: #8f90bb;
+  --color-success: #34d399;
+  --color-error: #f87171;
+  --surface-glow: radial-gradient(circle at top left, rgba(124, 58, 237, 0.28), transparent 42%);
+  --grid-pattern: linear-gradient(to right, rgba(26, 26, 46, 0.7) 1px, transparent 1px), linear-gradient(to bottom, rgba(26, 26, 46, 0.7) 1px, transparent 1px);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at top, rgba(124, 58, 237, 0.12), transparent 38%),
+    radial-gradient(circle at bottom right, rgba(91, 91, 214, 0.18), transparent 30%),
+    var(--color-base);
+  background-attachment: fixed;
+  overflow-wrap: anywhere;
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 3px;
+}
+
+.skip-link {
+  position: absolute;
+  left: 1rem;
+  top: 1rem;
+  z-index: 50;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--color-brand);
+  background: var(--color-surface);
+  color: var(--color-text);
+  transform: translateY(-200%);
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+.panel-surface {
+  background: var(--surface-glow), var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+
+.eyebrow {
+  font-family: var(--font-jetbrains-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.canvas-grid {
+  background-image: var(--grid-pattern);
+  background-size: 2.4rem 2.4rem;
+}
+
+.noise-overlay::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.08;
+  background-image: radial-gradient(circle at 10% 20%, rgba(255, 255, 255, 0.12) 0, transparent 24%), radial-gradient(circle at 80% 10%, rgba(255, 255, 255, 0.08) 0, transparent 18%), radial-gradient(circle at 40% 80%, rgba(255, 255, 255, 0.09) 0, transparent 20%);
+}
+
+@media (max-width: 860px) {
+  .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (forced-colors: active) {
+  body {
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .panel-surface {
+    background: Canvas;
+    border-color: ButtonBorder;
+  }
+
+  .skip-link,
+  :focus-visible {
+    outline-color: Highlight;
+  }
+}
