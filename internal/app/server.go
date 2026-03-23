@@ -219,7 +219,10 @@ func (s *Server) buildHTTPServer(ctx context.Context, preferredPort int, loadedC
 
 func (s *Server) frontendHandler(ctx context.Context) (http.Handler, string) {
 	if s.options.DevMode || strings.EqualFold(strings.TrimSpace(getenv("RELAY_DEV", "")), "true") {
-		target, err := frontendpkg.DiscoverDevServer(ctx, 3000)
+		probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+
+		target, err := frontendpkg.DiscoverDevServer(probeCtx, 3000)
 		if err != nil {
 			message := "Relay could not reach the Next.js development server."
 			s.status.appendEvent("frontend-unavailable", message+" Start the frontend with npm --prefix web run dev or use make dev.")

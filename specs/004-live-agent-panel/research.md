@@ -62,3 +62,20 @@
   - Enforce approval only inside the tool implementation: rejected because it violates the constitution's server-handler requirement and makes UX approval state harder to represent.
   - Remove mutating tools entirely from this phase: rejected because the phase definition still includes role-level tool permissions for Coder and Tester.
   - Enforce approval only in the frontend: rejected because the server must remain authoritative.
+
+## Decision 8: Make live run delivery reattachable across WebSocket reconnects
+
+- Decision: Keep run execution owned by the workspace service, publish live events through service-managed subscribers, and let `agent.run.open` attach a new subscriber to an active run before replaying saved events.
+- Rationale: Without service-managed fan-out, an active run would continue after a socket disconnect but the new connection would only receive historical replay. The feature requires reconnect-safe live visibility, so replay and live delivery must be able to hand off cleanly.
+- Alternatives considered:
+  - Bind every run to the websocket that started it: rejected because reconnecting would lose future events.
+  - Cancel active runs on socket close: rejected because a browser refresh should not terminate the agent task.
+  - Replay only after completion: rejected because active runs need to resume in place, not disappear until terminal state.
+
+## Decision 9: Keep approval requests transient while preserving their effects in persisted run history
+
+- Decision: Emit approval requests only on the live WebSocket path, keep them in memory while pending, and persist only the resulting `tool_result` and terminal run outcome.
+- Rationale: The durable history needs to explain what happened to the run, not recreate an outdated prompt that no longer accepts input. Persisting the rejected or completed tool result plus the terminal state preserves the audit trail without replaying stale approval controls.
+- Alternatives considered:
+  - Persist approval prompts as first-class history events: rejected because replay could imply that historical approval prompts are actionable.
+  - Drop approval outcomes from history entirely: rejected because the run review would become incomplete.

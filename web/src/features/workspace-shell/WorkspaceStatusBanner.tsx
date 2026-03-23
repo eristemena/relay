@@ -7,21 +7,49 @@ interface WorkspaceStatusBannerProps {
   connectionState: "connecting" | "connected" | "closed";
   status: WorkspaceStatusPayload | null;
   error: ErrorPayload | null;
+  projectRootMessage?: string;
+  projectRootValid?: boolean;
   warnings: string[];
 }
 
-export function WorkspaceStatusBanner({ connectionState, status, error, warnings }: WorkspaceStatusBannerProps) {
-  if (!error && !status && warnings.length === 0 && connectionState === "connected") {
+export function WorkspaceStatusBanner({
+  connectionState,
+  status,
+  error,
+  projectRootMessage,
+  projectRootValid = true,
+  warnings,
+}: WorkspaceStatusBannerProps) {
+  if (
+    !error &&
+    !status &&
+    warnings.length === 0 &&
+    connectionState === "connected" &&
+    projectRootValid
+  ) {
     return null;
   }
 
-  const tone = error ? "error" : connectionState !== "connected" ? "warning" : "info";
-  const message = error?.message ?? status?.message ?? warnings[0] ?? "Connecting to the Relay workspace.";
+  const hasProjectRootWarning =
+    !projectRootValid && Boolean(projectRootMessage);
+  const tone = error
+    ? "error"
+    : connectionState !== "connected" || hasProjectRootWarning
+      ? "warning"
+      : "info";
+  const message =
+    error?.message ??
+    status?.message ??
+    projectRootMessage ??
+    warnings[0] ??
+    "Connecting to the Relay workspace.";
   const title = error
     ? "Recoverable issue"
     : connectionState !== "connected"
       ? "Connection status"
-      : "Workspace status";
+      : hasProjectRootWarning
+        ? "Project root needs attention"
+          : "Workspace status";
 
   return (
     <div

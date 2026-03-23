@@ -43,6 +43,39 @@ func TestDiscoverDevServerSkipsUnrelatedAppOnPreferredPort(t *testing.T) {
 	}
 }
 
+func TestDiscoverDevServerWaitsForDelayedRelayFrontend(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	relay := httptest.NewUnstartedServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+		responseWriter.WriteHeader(http.StatusOK)
+		_, _ = responseWriter.Write([]byte("<html><head><title>Relay workspace</title></head><body>Local AI session control, without leaving localhost.</body></html>"))
+	}))
+	relay.Listener = listener
+
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		relay.Start()
+	}()
+	defer relay.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	target, err := DiscoverDevServer(ctx, port)
+	if err != nil {
+		t.Fatalf("DiscoverDevServer() error = %v", err)
+	}
+
+	want := fmt.Sprintf("http://127.0.0.1:%d", port)
+	if target.String() != want {
+		t.Fatalf("target.String() = %q, want %q", target.String(), want)
+	}
+}
+
 func reserveSequentialPorts(t *testing.T) (net.Listener, net.Listener, int) {
 	t.Helper()
 

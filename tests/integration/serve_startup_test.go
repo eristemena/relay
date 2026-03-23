@@ -9,16 +9,21 @@ import (
 )
 
 func TestServeStartup_FallsBackToFreePort(t *testing.T) {
-	occupied, err := net.Listen("tcp", "127.0.0.1:4747")
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("net.Listen() error = %v", err)
 	}
 	defer occupied.Close()
 
-	server, _, launcher := newIntegrationServer(t, app.Options{PreferredPort: 4747, NoBrowser: false})
+	occupiedAddr, ok := occupied.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("occupied listener addr type = %T, want *net.TCPAddr", occupied.Addr())
+	}
+
+	server, _, launcher := newIntegrationServer(t, app.Options{PreferredPort: occupiedAddr.Port, NoBrowser: false})
 	status := server.StatusSnapshot()
 
-	if status.ActivePort == 4747 {
+	if status.ActivePort == occupiedAddr.Port {
 		t.Fatalf("status.ActivePort = %d, want fallback port", status.ActivePort)
 	}
 	if launcher.openedURL == "" {

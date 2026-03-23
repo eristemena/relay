@@ -36,12 +36,23 @@ Expected behavior:
 - Invalid or missing model strings fall back to Relay defaults.
 - The recommended default role-to-model assignments are Planner -> `anthropic/claude-opus-4`, Coder -> `anthropic/claude-sonnet-4-5`, Reviewer -> `anthropic/claude-sonnet-4-5`, Tester -> `deepseek/deepseek-chat`, and Explainer -> `google/gemini-flash-1.5`.
 - The frontend sees only whether credentials are configured and which model was used for each run.
+- Read-only repo tools require a valid absolute `project_root`.
+- Mutating tools (`write_file`, `run_command`) stop and wait for approval before they execute.
+
+## Role Summary
+
+- `planner`: plan and sequence work, read-only repo access
+- `coder`: implement code changes, may request file writes and commands with approval
+- `reviewer`: analyze code and regressions, read-only repo access
+- `tester`: inspect and run test-oriented workflows, may request file writes and commands with approval
+- `explainer`: explain code or runtime behavior, read-only repo access
 
 ## First-Time Setup
 
 ```bash
 cd /Volumes/xpro/erisristemena/made-by-ai/relay
 npm --prefix web install
+npm --prefix web run typecheck
 go mod tidy
 ```
 
@@ -83,23 +94,29 @@ Frontend component tests:
 
 ```bash
 npm --prefix web test
+npm --prefix web run typecheck
 ```
 
 ## Manual Validation Flow
 
 1. Start Relay and confirm the workspace bootstrap succeeds.
-2. Open settings and save a valid OpenRouter API key.
-3. Submit a planning-style task such as `Plan the steps to add a JWT parser to this Go service` and confirm the panel shows a live stream, a model badge, and state changes.
-4. Submit a task that triggers at least one tool call after configuring repository access for the backend and confirm `tool_call` and `tool_result` entries appear inline in order.
-5. Confirm the active stream shows a live cursor while output is arriving.
-6. Validate that each default model behaves acceptably with its built-in role prompt and that unsupported tool-calling behavior fails with a clear inline error rather than silent corruption.
-7. Restart Relay and verify the saved run remains reviewable from run history without re-running the model.
-8. Replace the API key with an invalid value and confirm the next run fails gracefully with a plain-language configuration or provider error.
+2. Before saving credentials, submit a task and confirm the command bar stays available while Relay returns a clear OpenRouter configuration error.
+3. Open settings and save a valid OpenRouter API key.
+4. Submit a planning-style task such as `Plan the steps to add a JWT parser to this Go service` and confirm the panel shows a live stream, a model badge, and state changes.
+5. Submit a task that triggers at least one tool call after configuring repository access for the backend and confirm `tool_call` and `tool_result` entries appear inline in order.
+6. Reject a mutating tool approval request and confirm the run records a rejected tool result plus a final error while preserving earlier timeline entries.
+7. Reopen the saved errored or completed run from history and confirm the timeline replays without contacting OpenRouter.
+8. Reload the browser during an active run and confirm Relay restores the workspace bootstrap and can continue the active stream after replay.
+9. Confirm the active stream shows a live cursor while output is arriving.
+10. Validate that each default model behaves acceptably with its built-in role prompt and that unsupported tool-calling behavior fails with a clear inline error rather than silent corruption.
+11. Restart Relay and verify the saved run remains reviewable from run history without re-running the model.
+12. Replace the API key with an invalid value and confirm the next run fails gracefully with a plain-language configuration or provider error.
 
 ## Failure Recovery Expectations
 
 - If the OpenRouter API key is missing, the command bar remains available but run submission returns a clear configuration error instead of silently failing.
 - If `project_root` is missing or invalid, Relay blocks repo-scoped tool activity and explains that the path must be corrected in `config.toml`.
+- If a mutating tool requires approval and the developer rejects it, Relay records the rejection inline and terminates the run without hiding previous events.
 - If the chosen model does not support the requested tool behavior, Relay records the partial run, emits an error event, and preserves the visible history.
 - If OpenRouter returns a mid-stream error, Relay must preserve all prior ordered events and terminate the run with a final error event.
-- If the browser reconnects during or after a run, the server must deliver a fresh bootstrap snapshot and replay the selected run in stored order when needed.
+- If the browser reconnects during or after a run, the server must deliver a fresh bootstrap snapshot and replay the selected run in stored order when needed, then resume live delivery for active runs.

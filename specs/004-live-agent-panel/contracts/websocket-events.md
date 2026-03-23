@@ -146,10 +146,13 @@ Emitted for each ordered slice of visible streamed text.
     "role": "planner",
     "model": "anthropic/claude-opus-4",
     "text": "1. Clarify the input source...",
+    "first_token_latency_ms": 184,
     "occurred_at": "2026-03-23T12:00:00Z"
   }
 }
 ```
+
+- `first_token_latency_ms` is optional and appears only on the first visible token for a live run so Relay can measure submit-to-first-output latency without delaying streaming.
 
 ### `tool_call`
 

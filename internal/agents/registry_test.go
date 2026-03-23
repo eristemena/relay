@@ -1,0 +1,238 @@
+package agents
+
+import (
+	"context"
+	"encoding/json"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/erisristemena/relay/internal/agents/openrouter"
+	"github.com/erisristemena/relay/internal/config"
+	"github.com/erisristemena/relay/internal/storage/sqlite"
+)
+
+func TestRegistrySelectProfileUsesRoleSpecificPromptsModelsAndToolAllowlists(t *testing.T) {
+	registry := NewRegistry(config.AgentModels{})
+
+	tests := []struct {
+		name         string
+		task         string
+		wantRole     sqlite.AgentRole
+		wantModel    string
+		promptNeedle string
+		wantTools    []ToolName
+	}{
+		{
+			name:         "planner",
+			task:         "Plan the rollout steps for this migration",
+			wantRole:     sqlite.RolePlanner,
+			wantModel:    config.DefaultPlannerModel,
+			promptNeedle: "Break developer tasks into a concrete sequence of steps",
+			wantTools:    []ToolName{ToolReadFile, ToolSearchCodebase},
+		},
+		{
+			name:         "coder",
+			task:         "Implement the missing websocket state reducer",
+			wantRole:     sqlite.RoleCoder,
+			wantModel:    config.DefaultCoderModel,
+			promptNeedle: "Produce focused implementation guidance",
+			wantTools:    []ToolName{ToolReadFile, ToolSearchCodebase, ToolWriteFile, ToolRunCommand},
+		},
+		{
+			name:         "reviewer",
+			task:         "Review this patch for regressions",
+			wantRole:     sqlite.RoleReviewer,
+			wantModel:    config.DefaultReviewerModel,
+			promptNeedle: "Prioritize correctness, regressions, missing tests, and security issues",
+			wantTools:    []ToolName{ToolReadFile, ToolSearchCodebase},
+		},
+		{
+			name:         "tester",
+			task:         "Add test coverage for this handler",
+			wantRole:     sqlite.RoleTester,
+			wantModel:    config.DefaultTesterModel,
+			promptNeedle: "Focus on validation strategy, failure modes",
+			wantTools:    []ToolName{ToolReadFile, ToolSearchCodebase, ToolWriteFile, ToolRunCommand},
+		},
+		{
+			name:         "explainer",
+			task:         "Explain why the bootstrap logic restores this session",
+			wantRole:     sqlite.RoleExplainer,
+			wantModel:    config.DefaultExplainerModel,
+			promptNeedle: "Explain code and architecture clearly",
+			wantTools:    []ToolName{ToolReadFile},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			profile := registry.SelectProfile(test.task)
+
+			if profile.Role != test.wantRole {
+				t.Fatalf("profile.Role = %q, want %q", profile.Role, test.wantRole)
+			}
+			if profile.Model != test.wantModel {
+				t.Fatalf("profile.Model = %q, want %q", profile.Model, test.wantModel)
+			}
+			if !strings.Contains(profile.SystemPrompt, test.promptNeedle) {
+				t.Fatalf("profile.SystemPrompt = %q, want substring %q", profile.SystemPrompt, test.promptNeedle)
+			}
+			if !reflect.DeepEqual(profile.AllowedTools, test.wantTools) {
+				t.Fatalf("profile.AllowedTools = %v, want %v", profile.AllowedTools, test.wantTools)
+			}
+		})
+	}
+}
+
+func TestRegistrySelectProfileUsesConfiguredModelOverrides(t *testing.T) {
+	registry := NewRegistry(config.AgentModels{
+		Planner:   "custom/planner",
+		Coder:     "custom/coder",
+		Reviewer:  "custom/reviewer",
+		Tester:    "custom/tester",
+		Explainer: "custom/explainer",
+	})
+
+	tests := []struct {
+		name      string
+		task      string
+		wantModel string
+	}{
+		{name: "planner override", task: "design the migration plan", wantModel: "custom/planner"},
+		{name: "coder override", task: "implement the handler", wantModel: "custom/coder"},
+		{name: "reviewer override", task: "review the regression risk", wantModel: "custom/reviewer"},
+		{name: "tester override", task: "test the websocket flow", wantModel: "custom/tester"},
+		{name: "explainer override", task: "why does this reconnect work", wantModel: "custom/explainer"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			profile := registry.SelectProfile(test.task)
+			if profile.Model != test.wantModel {
+				t.Fatalf("profile.Model = %q, want %q", profile.Model, test.wantModel)
+			}
+		})
+	}
+}
+
+func TestRegistrySelectProfileFallsBackToCoderForGeneralTasks(t *testing.T) {
+	profile := NewRegistry(config.AgentModels{}).SelectProfile("Tighten the websocket reconnect handling")
+	if profile.Role != sqlite.RoleCoder {
+		t.Fatalf("profile.Role = %q, want %q", profile.Role, sqlite.RoleCoder)
+	}
+}
+
+func TestRegistryRunnerAdvertisesAndExecutesReadOnlyTools(t *testing.T) {
+	fakeClient := &fakeStreamClient{}
+	registry := NewRegistry(config.AgentModels{}).WithClientFactory(func(string) openrouter.StreamClient {
+		return fakeClient
+	})
+	executor := &fakeToolExecutor{}
+	runner := registry.NewRunner("or-test-key", "Explain the websocket reconnect flow", executor)
+
+	toolCalls := make([]ToolCallEvent, 0, 1)
+	toolResults := make([]ToolResultEvent, 0, 1)
+	err := runner.Run(context.Background(), "Explain the websocket reconnect flow", StreamEventHandlers{
+		OnToolCall: func(event ToolCallEvent) {
+			toolCalls = append(toolCalls, event)
+		},
+		OnToolResult: func(event ToolResultEvent) {
+			toolResults = append(toolResults, event)
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if len(fakeClient.request.Tools) != 1 {
+		t.Fatalf("len(request.Tools) = %d, want 1", len(fakeClient.request.Tools))
+	}
+	if fakeClient.request.Tools[0].Name != string(ToolReadFile) {
+		t.Fatalf("request.Tools[0].Name = %q, want %q", fakeClient.request.Tools[0].Name, ToolReadFile)
+	}
+	if len(toolCalls) != 1 {
+		t.Fatalf("len(toolCalls) = %d, want 1", len(toolCalls))
+	}
+	if len(toolResults) != 1 {
+		t.Fatalf("len(toolResults) = %d, want 1", len(toolResults))
+	}
+	if toolCalls[0].ToolName != ToolReadFile {
+		t.Fatalf("toolCalls[0].ToolName = %q, want %q", toolCalls[0].ToolName, ToolReadFile)
+	}
+	if toolResults[0].Status != "completed" {
+		t.Fatalf("toolResults[0].Status = %q, want completed", toolResults[0].Status)
+	}
+	if executor.executedName != ToolReadFile {
+		t.Fatalf("executedName = %q, want %q", executor.executedName, ToolReadFile)
+	}
+	if !strings.Contains(executor.executedArgs, `"path":"README.md"`) {
+		t.Fatalf("executedArgs = %q, want serialized path", executor.executedArgs)
+	}
+	if fakeClient.toolResult.Content != "file contents" {
+		t.Fatalf("toolResult.Content = %q, want file contents", fakeClient.toolResult.Content)
+	}
+	if got := toolCalls[0].InputPreview["path"]; got != "README.md" {
+		t.Fatalf("toolCalls[0].InputPreview[path] = %v, want README.md", got)
+	}
+	if got := toolResults[0].ResultPreview["summary"]; got != "Loaded file content." {
+		t.Fatalf("toolResults[0].ResultPreview[summary] = %v, want Loaded file content.", got)
+	}
+}
+
+type fakeStreamClient struct {
+	request    openrouter.StreamRequest
+	toolResult openrouter.ToolResult
+}
+
+func (f *fakeStreamClient) Stream(ctx context.Context, request openrouter.StreamRequest, handlers openrouter.StreamHandlers) error {
+	f.request = request
+	if handlers.ExecuteTool == nil {
+		return nil
+	}
+
+	result, err := handlers.ExecuteTool(ctx, openrouter.ToolCall{
+		ID:        "call_123",
+		Name:      string(ToolReadFile),
+		Arguments: `{"path":"README.md"}`,
+	})
+	if err != nil {
+		return err
+	}
+	f.toolResult = result
+	if handlers.OnComplete != nil {
+		handlers.OnComplete("stop")
+	}
+	return nil
+}
+
+type fakeToolExecutor struct {
+	executedName ToolName
+	executedArgs string
+}
+
+func (f *fakeToolExecutor) Definitions(_ []ToolName) []ToolDefinition {
+	return []ToolDefinition{{
+		Name:        ToolReadFile,
+		Description: "Read a text file.",
+		Parameters:  map[string]any{"type": "object"},
+	}}
+}
+
+func (f *fakeToolExecutor) PreviewToolCall(_ ToolName, arguments json.RawMessage) map[string]any {
+	return map[string]any{"path": "README.md"}
+}
+
+func (f *fakeToolExecutor) ExecuteTool(_ context.Context, toolCallID string, name ToolName, arguments json.RawMessage) (ToolExecutionResult, error) {
+	f.executedName = name
+	f.executedArgs = string(arguments)
+	return ToolExecutionResult{
+		ToolCallID: toolCallID,
+		ToolName:   name,
+		Status:     "completed",
+		Content:    "file contents",
+		ResultPreview: map[string]any{
+			"summary": "Loaded file content.",
+		},
+	}, nil
+}

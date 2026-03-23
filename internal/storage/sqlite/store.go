@@ -21,6 +21,8 @@ import (
 var migrationFiles embed.FS
 
 var ErrSessionNotFound = errors.New("session not found")
+var ErrRunNotFound = errors.New("agent run not found")
+var ErrActiveRunExists = errors.New("agent run already active")
 
 type Store struct {
 	db *sql.DB
@@ -30,6 +32,15 @@ func NewStore(databasePath string) (*Store, error) {
 	db, err := sql.Open("sqlite", databasePath)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite database: %w", err)
+	}
+
+	if _, err := db.Exec(`PRAGMA busy_timeout = 5000;`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("configure sqlite busy timeout: %w", err)
+	}
+	if _, err := db.Exec(`PRAGMA journal_mode = WAL;`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("configure sqlite journal mode: %w", err)
 	}
 
 	store := &Store{db: db}
@@ -184,6 +195,271 @@ func (s *Store) OpenSession(ctx context.Context, sessionID string) (Session, err
 	return session, nil
 }
 
+func (s *Store) CreateAgentRun(ctx context.Context, sessionID string, taskText string, role AgentRole, model string) (AgentRun, error) {
+	now := time.Now().UTC()
+	runID, err := generateID("run")
+	if err != nil {
+		return AgentRun{}, err
+	}
+
+	taskText = strings.TrimSpace(taskText)
+	if taskText == "" {
+		return AgentRun{}, fmt.Errorf("create agent run: task text is required")
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AgentRun{}, fmt.Errorf("begin run transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var activeCount int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM agent_runs
+		WHERE state IN (?, ?, ?)
+	`, RunStateAccepted, RunStateThinking, RunStateToolRunning).Scan(&activeCount); err != nil {
+		return AgentRun{}, fmt.Errorf("check active run: %w", err)
+	}
+	if activeCount > 0 {
+		return AgentRun{}, ErrActiveRunExists
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO agent_runs (id, session_id, task_text, role, model, state, started_at, completed_at, error_code, error_message, first_token_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, NULL, '', '', NULL)
+	`, runID, sessionID, taskText, string(role), strings.TrimSpace(model), RunStateAccepted, now.Format(time.RFC3339)); err != nil {
+		return AgentRun{}, fmt.Errorf("insert agent run: %w", err)
+	}
+
+	if err := s.updateSessionActivity(ctx, tx, sessionID, true); err != nil {
+		return AgentRun{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return AgentRun{}, fmt.Errorf("commit agent run: %w", err)
+	}
+
+	return AgentRun{
+		ID:        runID,
+		SessionID: sessionID,
+		TaskText:  taskText,
+		Role:      role,
+		Model:     strings.TrimSpace(model),
+		State:     RunStateAccepted,
+		StartedAt: now,
+	}, nil
+}
+
+func (s *Store) GetActiveRun(ctx context.Context) (AgentRun, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, session_id, task_text, role, model, state, started_at, completed_at, error_code, error_message, first_token_at
+		FROM agent_runs
+		WHERE state IN (?, ?, ?)
+		ORDER BY datetime(started_at) DESC
+		LIMIT 1
+	`, RunStateAccepted, RunStateThinking, RunStateToolRunning)
+
+	run, err := scanAgentRun(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AgentRun{}, ErrRunNotFound
+	}
+	if err != nil {
+		return AgentRun{}, err
+	}
+
+	return run, nil
+}
+
+func (s *Store) GetAgentRun(ctx context.Context, runID string) (AgentRun, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, session_id, task_text, role, model, state, started_at, completed_at, error_code, error_message, first_token_at
+		FROM agent_runs
+		WHERE id = ?
+	`, runID)
+
+	run, err := scanAgentRun(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AgentRun{}, ErrRunNotFound
+	}
+	if err != nil {
+		return AgentRun{}, err
+	}
+
+	return run, nil
+}
+
+func (s *Store) ListRunSummaries(ctx context.Context, sessionID string) ([]RunSummary, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT r.id,
+		       CASE
+		         WHEN length(r.task_text) > 96 THEN substr(r.task_text, 1, 93) || '...'
+		         ELSE r.task_text
+		       END AS task_text_preview,
+		       r.role,
+		       r.model,
+		       r.state,
+		       r.started_at,
+		       r.completed_at,
+		       EXISTS (
+		         SELECT 1 FROM agent_run_events e
+		         WHERE e.run_id = r.id AND e.event_type IN (?, ?)
+		       ) AS has_tool_activity
+		FROM agent_runs r
+		WHERE r.session_id = ?
+			ORDER BY datetime(r.started_at) DESC, r.rowid DESC
+	`, EventTypeToolCall, EventTypeToolResult, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("list run summaries: %w", err)
+	}
+	defer rows.Close()
+
+	summaries := make([]RunSummary, 0)
+	for rows.Next() {
+		var (
+			summary     RunSummary
+			role        string
+			startedAt   string
+			completedAt sql.NullString
+		)
+		if err := rows.Scan(&summary.ID, &summary.TaskTextPreview, &role, &summary.Model, &summary.State, &startedAt, &completedAt, &summary.HasToolActivity); err != nil {
+			return nil, fmt.Errorf("scan run summary: %w", err)
+		}
+		parsedStartedAt, err := time.Parse(time.RFC3339, startedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse run summary started_at: %w", err)
+		}
+		summary.StartedAt = parsedStartedAt
+		summary.Role = AgentRole(role)
+		if completedAt.Valid {
+			parsedCompletedAt, err := time.Parse(time.RFC3339, completedAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("parse run summary completed_at: %w", err)
+			}
+			summary.CompletedAt = &parsedCompletedAt
+		}
+		if summary.TaskTextPreview == "" {
+			summary.TaskTextPreview = "Untitled task"
+		}
+		summaries = append(summaries, summary)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate run summaries: %w", err)
+	}
+
+	return summaries, nil
+}
+
+func (s *Store) AppendRunEvent(ctx context.Context, runID string, eventType string, role AgentRole, model string, payloadJSON string) (AgentRunEvent, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AgentRunEvent{}, fmt.Errorf("begin append run event: %w", err)
+	}
+	defer tx.Rollback()
+
+	var nextSequence int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COALESCE(MAX(sequence), 0) + 1
+		FROM agent_run_events
+		WHERE run_id = ?
+	`, runID).Scan(&nextSequence); err != nil {
+		return AgentRunEvent{}, fmt.Errorf("compute next run event sequence: %w", err)
+	}
+
+	now := time.Now().UTC()
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO agent_run_events (run_id, sequence, event_type, role, model, payload_json, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, runID, nextSequence, eventType, string(role), strings.TrimSpace(model), payloadJSON, now.Format(time.RFC3339)); err != nil {
+		return AgentRunEvent{}, fmt.Errorf("insert run event: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return AgentRunEvent{}, fmt.Errorf("commit run event: %w", err)
+	}
+
+	return AgentRunEvent{
+		RunID:       runID,
+		Sequence:    nextSequence,
+		EventType:   eventType,
+		Role:        role,
+		Model:       strings.TrimSpace(model),
+		PayloadJSON: payloadJSON,
+		CreatedAt:   now,
+	}, nil
+}
+
+func (s *Store) ListRunEvents(ctx context.Context, runID string) ([]AgentRunEvent, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT run_id, sequence, event_type, role, model, payload_json, created_at
+		FROM agent_run_events
+		WHERE run_id = ?
+		ORDER BY sequence ASC
+	`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("list run events: %w", err)
+	}
+	defer rows.Close()
+
+	events := make([]AgentRunEvent, 0)
+	for rows.Next() {
+		var (
+			event     AgentRunEvent
+			role      string
+			createdAt string
+		)
+		if err := rows.Scan(&event.RunID, &event.Sequence, &event.EventType, &role, &event.Model, &event.PayloadJSON, &createdAt); err != nil {
+			return nil, fmt.Errorf("scan run event: %w", err)
+		}
+		parsedCreatedAt, err := time.Parse(time.RFC3339, createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse run event created_at: %w", err)
+		}
+		event.Role = AgentRole(role)
+		event.CreatedAt = parsedCreatedAt
+		events = append(events, event)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate run events: %w", err)
+	}
+
+	return events, nil
+}
+
+func (s *Store) UpdateAgentRun(ctx context.Context, run AgentRun) error {
+	completedAt := sql.NullString{}
+	if run.CompletedAt != nil {
+		completedAt.Valid = true
+		completedAt.String = run.CompletedAt.Format(time.RFC3339)
+	}
+	firstTokenAt := sql.NullString{}
+	if run.FirstTokenAt != nil {
+		firstTokenAt.Valid = true
+		firstTokenAt.String = run.FirstTokenAt.Format(time.RFC3339)
+	}
+
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE agent_runs
+		SET state = ?, completed_at = ?, error_code = ?, error_message = ?, first_token_at = ?
+		WHERE id = ?
+	`, run.State, completedAt, strings.TrimSpace(run.ErrorCode), strings.TrimSpace(run.ErrorMessage), firstTokenAt, run.ID)
+	if err != nil {
+		return fmt.Errorf("update agent run: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read updated run rows: %w", err)
+	}
+	if rowsAffected == 0 {
+		return ErrRunNotFound
+	}
+
+	return nil
+}
+
 func (s *Store) migrate(ctx context.Context) error {
 	entries, err := fs.ReadDir(migrationFiles, "migrations")
 	if err != nil {
@@ -251,11 +527,81 @@ func scanSession(scanner rowScanner) (Session, error) {
 	return session, nil
 }
 
-func generateSessionID() (string, error) {
-	buffer := make([]byte, 8)
-	if _, err := rand.Read(buffer); err != nil {
-		return "", fmt.Errorf("generate session id: %w", err)
+func scanAgentRun(scanner rowScanner) (AgentRun, error) {
+	var (
+		run          AgentRun
+		role         string
+		startedAt    string
+		completedAt  sql.NullString
+		firstTokenAt sql.NullString
+	)
+
+	if err := scanner.Scan(&run.ID, &run.SessionID, &run.TaskText, &role, &run.Model, &run.State, &startedAt, &completedAt, &run.ErrorCode, &run.ErrorMessage, &firstTokenAt); err != nil {
+		return AgentRun{}, err
 	}
 
-	return "session_" + hex.EncodeToString(buffer), nil
+	parsedStartedAt, err := time.Parse(time.RFC3339, startedAt)
+	if err != nil {
+		return AgentRun{}, fmt.Errorf("parse agent run started_at: %w", err)
+	}
+	run.StartedAt = parsedStartedAt
+	run.Role = AgentRole(role)
+	if completedAt.Valid {
+		parsedCompletedAt, err := time.Parse(time.RFC3339, completedAt.String)
+		if err != nil {
+			return AgentRun{}, fmt.Errorf("parse agent run completed_at: %w", err)
+		}
+		run.CompletedAt = &parsedCompletedAt
+	}
+	if firstTokenAt.Valid {
+		parsedFirstTokenAt, err := time.Parse(time.RFC3339, firstTokenAt.String)
+		if err != nil {
+			return AgentRun{}, fmt.Errorf("parse agent run first_token_at: %w", err)
+		}
+		run.FirstTokenAt = &parsedFirstTokenAt
+	}
+
+	return run, nil
+}
+
+func generateSessionID() (string, error) {
+	return generateID("session")
+}
+
+func generateID(prefix string) (string, error) {
+	buffer := make([]byte, 8)
+	if _, err := rand.Read(buffer); err != nil {
+		return "", fmt.Errorf("generate %s id: %w", prefix, err)
+	}
+
+	return prefix + "_" + hex.EncodeToString(buffer), nil
+}
+
+func (s *Store) updateSessionActivity(ctx context.Context, tx *sql.Tx, sessionID string, hasActivity bool) error {
+	session, err := scanSession(tx.QueryRowContext(ctx, `
+		SELECT id, display_name, created_at, updated_at, last_opened_at, status, snapshot_json
+		FROM sessions
+		WHERE id = ?
+	`, sessionID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrSessionNotFound
+	}
+	if err != nil {
+		return err
+	}
+
+	session.Snapshot.HasActivity = hasActivity
+	snapshotJSON, err := json.Marshal(session.Snapshot)
+	if err != nil {
+		return fmt.Errorf("marshal updated session snapshot: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE sessions
+		SET snapshot_json = ?, updated_at = ?
+		WHERE id = ?
+	`, string(snapshotJSON), time.Now().UTC().Format(time.RFC3339), sessionID); err != nil {
+		return fmt.Errorf("update session snapshot activity: %w", err)
+	}
+
+	return nil
 }

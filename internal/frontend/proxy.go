@@ -2,6 +2,7 @@ package frontend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 )
 
 const maxProbeResponseBytes = 256 * 1024
+const devProbeRetryInterval = 150 * time.Millisecond
 
 func DiscoverDevServer(ctx context.Context, preferredPort int) (*url.URL, error) {
 	if value := strings.TrimSpace(os.Getenv("RELAY_FRONTEND_URL")); value != "" {
@@ -31,13 +33,28 @@ func DiscoverDevServer(ctx context.Context, preferredPort int) (*url.URL, error)
 	}
 
 	for _, port := range ports {
-		target, ok := probeRelayDevServer(ctx, client, port)
-		if ok {
+		if target, ok := probeRelayDevServer(ctx, client, port); ok {
 			return target, nil
 		}
 	}
 
-	return nil, fmt.Errorf("no Next.js dev server was reachable on ports %d-%d", preferredPort, preferredPort+10)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("no Next.js dev server was reachable on ports %d-%d: %w", preferredPort, preferredPort+10, err)
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("no Next.js dev server was reachable on ports %d-%d: %w", preferredPort, preferredPort+10, ctx.Err())
+		case <-time.After(devProbeRetryInterval):
+		}
+
+		for _, port := range ports {
+			if target, ok := probeRelayDevServer(ctx, client, port); ok {
+				return target, nil
+			}
+		}
+	}
 }
 
 func probeRelayDevServer(ctx context.Context, client *http.Client, port int) (*url.URL, bool) {
@@ -49,6 +66,9 @@ func probeRelayDevServer(ctx context.Context, client *http.Client, port int) (*u
 
 	response, err := client.Do(request)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, false
+		}
 		return nil, false
 	}
 	defer response.Body.Close()

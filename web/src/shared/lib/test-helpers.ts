@@ -20,6 +20,17 @@ export function buildWorkspaceSnapshot(overrides: Partial<WorkspaceSnapshotPaylo
       preferred_port: 4747,
       appearance_variant: "midnight",
       has_credentials: false,
+      openrouter_configured: false,
+      project_root: "",
+      project_root_configured: false,
+      project_root_valid: false,
+      agent_models: {
+        planner: "anthropic/claude-opus-4",
+        coder: "anthropic/claude-sonnet-4-5",
+        reviewer: "anthropic/claude-sonnet-4-5",
+        tester: "deepseek/deepseek-chat",
+        explainer: "google/gemini-flash-1.5",
+      },
       open_browser_on_start: true,
     },
     ui_state: {
@@ -27,6 +38,10 @@ export function buildWorkspaceSnapshot(overrides: Partial<WorkspaceSnapshotPaylo
       canvas_state: "empty",
       save_state: "idle",
     },
+    credential_status: {
+      configured: false,
+    },
+    run_summaries: [],
     warnings: [],
     ...overrides,
   };

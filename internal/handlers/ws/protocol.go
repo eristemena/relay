@@ -12,6 +12,16 @@ const (
 	TypeSessionOpened             = "session.opened"
 	TypePreferencesSave           = "preferences.save"
 	TypePreferencesSaved          = "preferences.saved"
+	TypeAgentRunSubmit            = "agent.run.submit"
+	TypeAgentRunOpen              = "agent.run.open"
+	TypeAgentRunCancel            = "agent.run.cancel"
+	TypeAgentRunApprovalRespond   = "agent.run.approval.respond"
+	TypeApprovalRequest           = "approval_request"
+	TypeStateChange               = "state_change"
+	TypeToken                     = "token"
+	TypeToolCall                  = "tool_call"
+	TypeToolResult                = "tool_result"
+	TypeComplete                  = "complete"
 	TypeError                     = "error"
 )
 
@@ -49,7 +59,31 @@ type PreferencesSavePayload struct {
 	PreferredPort      *int                `json:"preferred_port,omitempty"`
 	AppearanceVariant  *string             `json:"appearance_variant,omitempty"`
 	Credentials        []CredentialPayload `json:"credentials,omitempty"`
+	OpenRouterAPIKey   *string             `json:"openrouter_api_key,omitempty"`
+	ProjectRoot        *string             `json:"project_root,omitempty"`
 	OpenBrowserOnStart *bool               `json:"open_browser_on_start,omitempty"`
+}
+
+type AgentRunSubmitPayload struct {
+	SessionID string `json:"session_id"`
+	Task      string `json:"task"`
+}
+
+type AgentRunOpenPayload struct {
+	SessionID string `json:"session_id"`
+	RunID     string `json:"run_id"`
+}
+
+type AgentRunCancelPayload struct {
+	SessionID string `json:"session_id"`
+	RunID     string `json:"run_id"`
+}
+
+type AgentRunApprovalRespondPayload struct {
+	SessionID  string `json:"session_id"`
+	RunID      string `json:"run_id"`
+	ToolCallID string `json:"tool_call_id"`
+	Decision   string `json:"decision"`
 }
 
 type SessionSummary struct {
@@ -62,10 +96,24 @@ type SessionSummary struct {
 }
 
 type PreferencesView struct {
-	PreferredPort      int    `json:"preferred_port"`
-	AppearanceVariant  string `json:"appearance_variant"`
-	HasCredentials     bool   `json:"has_credentials"`
-	OpenBrowserOnStart bool   `json:"open_browser_on_start"`
+	PreferredPort        int    `json:"preferred_port"`
+	AppearanceVariant    string `json:"appearance_variant"`
+	HasCredentials       bool   `json:"has_credentials"`
+	OpenRouterConfigured bool   `json:"openrouter_configured"`
+	ProjectRoot          string `json:"project_root"`
+	ProjectRootConfigured bool  `json:"project_root_configured"`
+	ProjectRootValid      bool  `json:"project_root_valid"`
+	ProjectRootMessage    string `json:"project_root_message,omitempty"`
+	AgentModels           AgentModelsView `json:"agent_models"`
+	OpenBrowserOnStart    bool   `json:"open_browser_on_start"`
+}
+
+type AgentModelsView struct {
+	Planner   string `json:"planner"`
+	Coder     string `json:"coder"`
+	Reviewer  string `json:"reviewer"`
+	Tester    string `json:"tester"`
+	Explainer string `json:"explainer"`
 }
 
 type UIState struct {
@@ -75,11 +123,29 @@ type UIState struct {
 }
 
 type WorkspaceSnapshotPayload struct {
-	ActiveSessionID string            `json:"active_session_id"`
-	Sessions        []SessionSummary  `json:"sessions"`
-	Preferences     PreferencesView   `json:"preferences"`
-	UIState         UIState           `json:"ui_state"`
-	Warnings        []string          `json:"warnings,omitempty"`
+	ActiveSessionID  string              `json:"active_session_id"`
+	Sessions         []SessionSummary    `json:"sessions"`
+	Preferences      PreferencesView     `json:"preferences"`
+	UIState          UIState             `json:"ui_state"`
+	ActiveRunID      string              `json:"active_run_id,omitempty"`
+	RunSummaries     []AgentRunSummary   `json:"run_summaries,omitempty"`
+	CredentialStatus CredentialStatusView `json:"credential_status"`
+	Warnings         []string            `json:"warnings,omitempty"`
+}
+
+type AgentRunSummary struct {
+	ID              string `json:"id"`
+	TaskTextPreview string `json:"task_text_preview"`
+	Role            string `json:"role"`
+	Model           string `json:"model"`
+	State           string `json:"state"`
+	StartedAt       string `json:"started_at"`
+	CompletedAt     string `json:"completed_at,omitempty"`
+	HasToolActivity bool   `json:"has_tool_activity"`
+}
+
+type CredentialStatusView struct {
+	Configured bool `json:"configured"`
 }
 
 type WorkspaceStatusPayload struct {
@@ -88,6 +154,26 @@ type WorkspaceStatusPayload struct {
 }
 
 type ErrorPayload struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code       string `json:"code"`
+	Message    string `json:"message"`
+	SessionID  string `json:"session_id,omitempty"`
+	RunID      string `json:"run_id,omitempty"`
+	Sequence   int64  `json:"sequence,omitempty"`
+	Replay     bool   `json:"replay,omitempty"`
+	Role       string `json:"role,omitempty"`
+	Model      string `json:"model,omitempty"`
+	Terminal   bool   `json:"terminal,omitempty"`
+	OccurredAt string `json:"occurred_at,omitempty"`
+}
+
+type ApprovalRequestPayload struct {
+	SessionID    string         `json:"session_id"`
+	RunID        string         `json:"run_id"`
+	Role         string         `json:"role,omitempty"`
+	Model        string         `json:"model,omitempty"`
+	ToolCallID   string         `json:"tool_call_id"`
+	ToolName     string         `json:"tool_name"`
+	InputPreview map[string]any `json:"input_preview"`
+	Message      string         `json:"message"`
+	OccurredAt   string         `json:"occurred_at,omitempty"`
 }

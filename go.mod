@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	github.com/pelletier/go-toml/v2 v2.2.3
+	github.com/sashabaranov/go-openai v1.41.2
 	github.com/spf13/cobra v1.9.1
 	modernc.org/sqlite v1.38.2
 	nhooyr.io/websocket v1.8.17

@@ -1,11 +1,16 @@
 "use client";
 
 interface PreferencesStatusProps {
-  hasCredentials: boolean;
+  openRouterConfigured: boolean;
+  projectRootValid: boolean;
   saveState: "idle" | "saving" | "saved" | "error";
 }
 
-export function PreferencesStatus({ hasCredentials, saveState }: PreferencesStatusProps) {
+export function PreferencesStatus({
+  openRouterConfigured,
+  projectRootValid,
+  saveState,
+}: PreferencesStatusProps) {
   const message =
     saveState === "saving"
       ? "Saving preferences"
@@ -19,7 +24,12 @@ export function PreferencesStatus({ hasCredentials, saveState }: PreferencesStat
     <div className="rounded-3xl border border-border bg-raised/80 p-4">
       <p className="eyebrow">Preference status</p>
       <p className="mt-2 text-sm text-text">{message}</p>
-      <p className="mt-2 text-sm text-text-muted">Stored credentials: {hasCredentials ? "present" : "not saved"}</p>
+      <p className="mt-2 text-sm text-text-muted">
+        OpenRouter key: {openRouterConfigured ? "saved" : "not saved"}
+      </p>
+      <p className="mt-1 text-sm text-text-muted">
+        Project root: {projectRootValid ? "ready" : "needs attention"}
+      </p>
     </div>
   );
 }

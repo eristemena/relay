@@ -23,11 +23,11 @@
 
 **Purpose**: Add the approved dependencies, scaffold the live-agent feature areas, and document the runtime additions needed by every story.
 
-- [ ] T001 Add the OpenRouter streaming dependency and lock the backend module graph in `go.mod` and `go.sum`
-- [ ] T002 Add any required frontend dependencies and scripts for the live agent panel in `web/package.json` and `web/package-lock.json`
-- [ ] T003 [P] Scaffold the agent and tool package entrypoints in `internal/agents/agent.go`, `internal/agents/registry.go`, and `internal/tools/catalog.go`
-- [ ] T004 [P] Scaffold the frontend live-panel feature area in `web/src/features/agent-panel/AgentCommandBar.tsx`, `web/src/features/agent-panel/AgentPanel.tsx`, and `web/src/features/agent-panel/RunTimeline.tsx`
-- [ ] T005 [P] Update the approved tech stack and local setup notes for OpenRouter-backed agent runs, default role-model assignments, and manual `project_root` configuration in `README.md` and `specs/004-live-agent-panel/quickstart.md`
+- [X] T001 Add the OpenRouter streaming dependency and lock the backend module graph in `go.mod` and `go.sum`
+- [X] T002 Add any required frontend dependencies and scripts for the live agent panel in `web/package.json` and `web/package-lock.json`
+- [X] T003 [P] Scaffold the agent and tool package entrypoints in `internal/agents/agent.go`, `internal/agents/registry.go`, and `internal/tools/catalog.go`
+- [X] T004 [P] Scaffold the frontend live-panel feature area in `web/src/features/agent-panel/AgentCommandBar.tsx`, `web/src/features/agent-panel/AgentPanel.tsx`, and `web/src/features/agent-panel/RunTimeline.tsx`
+- [X] T005 [P] Update the approved tech stack and local setup notes for OpenRouter-backed agent runs, default role-model assignments, and manual `project_root` configuration in `README.md` and `specs/004-live-agent-panel/quickstart.md`
 
 ---
 
@@ -37,15 +37,15 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T006 Implement OpenRouter credential loading, manual `project_root` parsing and validation, per-role model defaults, and redacted status serialization in `internal/config/config.go`
-- [ ] T007 [P] Extend the SQLite schema and sqlc inputs for agent runs and ordered run events in `internal/storage/sqlite/migrations/0002_agent_runs.sql`, `internal/storage/sqlite/queries/agent_runs.sql`, `internal/storage/sqlite/queries/agent_run_events.sql`, and `sqlc.yaml`
-- [ ] T008 [P] Implement storage models and store methods for run summaries, ordered event append, replay loading, and active-run lookups in `internal/storage/sqlite/models.go` and `internal/storage/sqlite/store.go`
-- [ ] T009 [P] Define the live-agent WebSocket envelopes, approval-related events, and shared TypeScript DTOs in `internal/handlers/ws/protocol.go` and `web/src/shared/lib/workspace-protocol.ts`
-- [ ] T010 [P] Implement the role registry, fixed prompts, fixed tool allowlists, and OpenRouter stream normalization in `internal/agents/planner.go`, `internal/agents/coder.go`, `internal/agents/reviewer.go`, `internal/agents/tester.go`, `internal/agents/explainer.go`, and `internal/agents/openrouter/client.go`
-- [ ] T011 [P] Implement the server-side tool catalog, `project_root`-backed repo guards, and display-safe redaction helpers in `internal/tools/catalog.go`, `internal/tools/read_file.go`, and `internal/tools/search_codebase.go`
-- [ ] T012 Implement handler-level approval enforcement, approval request or rejection flow, and mutating tool dispatch for `write_file` and `run_command` in `internal/handlers/ws/workspace.go`, `internal/orchestrator/workspace/service.go`, `internal/tools/write_file.go`, and `internal/tools/run_command.go`
-- [ ] T013 Implement single-active-run lifecycle management, ordered event sequencing, replay hydration, and cancellation plumbing in `internal/orchestrator/workspace/runs.go`, `internal/orchestrator/workspace/history.go`, and `internal/orchestrator/workspace/service.go`
-- [ ] T014 [P] Extend the frontend socket store for credential status, run summaries, active run state, approval-blocked states, and ordered event replay in `web/src/shared/lib/workspace-store.ts` and `web/src/shared/lib/useWorkspaceSocket.ts`
+- [X] T006 Implement OpenRouter credential loading, manual `project_root` parsing and validation, per-role model defaults, and redacted status serialization in `internal/config/config.go`
+- [X] T007 [P] Extend the SQLite schema and sqlc inputs for agent runs and ordered run events in `internal/storage/sqlite/migrations/0002_agent_runs.sql`, `internal/storage/sqlite/queries/agent_runs.sql`, `internal/storage/sqlite/queries/agent_run_events.sql`, and `sqlc.yaml`
+- [X] T008 [P] Implement storage models and store methods for run summaries, ordered event append, replay loading, and active-run lookups in `internal/storage/sqlite/models.go` and `internal/storage/sqlite/store.go`
+- [X] T009 [P] Define the live-agent WebSocket envelopes, approval-related events, and shared TypeScript DTOs in `internal/handlers/ws/protocol.go` and `web/src/shared/lib/workspace-protocol.ts`
+- [X] T010 [P] Implement the role registry, fixed prompts, fixed tool allowlists, and OpenRouter stream normalization in `internal/agents/planner.go`, `internal/agents/coder.go`, `internal/agents/reviewer.go`, `internal/agents/tester.go`, `internal/agents/explainer.go`, and `internal/agents/openrouter/client.go`
+- [X] T011 [P] Implement the server-side tool catalog, `project_root`-backed repo guards, and display-safe redaction helpers in `internal/tools/catalog.go`, `internal/tools/read_file.go`, and `internal/tools/search_codebase.go`
+- [X] T012 Implement handler-level approval enforcement, approval request or rejection flow, and mutating tool dispatch for `write_file` and `run_command` in `internal/handlers/ws/workspace.go`, `internal/orchestrator/workspace/service.go`, `internal/tools/write_file.go`, and `internal/tools/run_command.go`
+- [X] T013 Implement single-active-run lifecycle management, ordered event sequencing, replay hydration, and cancellation plumbing in `internal/orchestrator/workspace/runs.go`, `internal/orchestrator/workspace/history.go`, and `internal/orchestrator/workspace/service.go`
+- [X] T014 [P] Extend the frontend socket store for credential status, run summaries, active run state, approval-blocked states, and ordered event replay in `web/src/shared/lib/workspace-store.ts` and `web/src/shared/lib/useWorkspaceSocket.ts`
 
 **Checkpoint**: Foundation ready. User story work can begin.
 
@@ -59,19 +59,19 @@
 
 ### Tests for User Story 1
 
-- [ ] T015 [P] [US1] Add config and orchestrator coverage for missing credentials, missing or invalid `project_root`, model fallback, and single-run acceptance in `internal/config/config_test.go` and `internal/orchestrator/workspace/service_test.go`
-- [ ] T016 [P] [US1] Add agent construction coverage for fixed prompts, default model assignments, and per-role allowlists in `internal/agents/registry_test.go` and `internal/agents/openrouter/client_test.go`
-- [ ] T017 [P] [US1] Add live streaming integration coverage for submit, first-token delivery, stream ordering, and single-active-run rejection in `tests/integration/agent_streaming_test.go`
-- [ ] T018 [P] [US1] Add component coverage for command submission, waiting-for-output, streaming cursor, role identity, and terminal states in `web/src/features/agent-panel/AgentPanel.test.tsx` and `web/src/features/workspace-shell/WorkspaceShell.test.tsx`
+- [X] T015 [P] [US1] Add config and orchestrator coverage for missing credentials, missing or invalid `project_root`, model fallback, and single-run acceptance in `internal/config/config_test.go` and `internal/orchestrator/workspace/service_test.go`
+- [X] T016 [P] [US1] Add agent construction coverage for fixed prompts, default model assignments, and per-role allowlists in `internal/agents/registry_test.go` and `internal/agents/openrouter/client_test.go`
+- [X] T017 [P] [US1] Add live streaming integration coverage for submit, first-token delivery, stream ordering, and single-active-run rejection in `tests/integration/agent_streaming_test.go`
+- [X] T018 [P] [US1] Add component coverage for command submission, waiting-for-output, streaming cursor, role identity, and terminal states in `web/src/features/agent-panel/AgentPanel.test.tsx` and `web/src/features/workspace-shell/WorkspaceShell.test.tsx`
 
 ### Implementation for User Story 1
 
-- [ ] T019 [P] [US1] Implement automatic role selection, run bootstrap metadata, and stream-to-event conversion in `internal/orchestrator/workspace/runs.go` and `internal/agents/registry.go`
-- [ ] T020 [P] [US1] Implement the live run submit, request validation, and active-run replay flows over WebSocket in `internal/handlers/ws/workspace.go` and `web/src/shared/lib/useWorkspaceSocket.ts`
-- [ ] T021 [P] [US1] Build the command bar and submission UX for natural-language tasks in `web/src/features/agent-panel/AgentCommandBar.tsx` and `web/src/features/agent-panel/AgentPanel.tsx`
-- [ ] T022 [P] [US1] Build the thought viewer, run header, model badge, and live cursor rendering in `web/src/features/agent-panel/ThoughtViewer.tsx`, `web/src/features/agent-panel/RunHeader.tsx`, and `web/src/features/agent-panel/LiveCursor.tsx`
-- [ ] T023 [P] [US1] Integrate the live agent panel into the main workspace shell and default empty-state layout in `web/src/app/page.tsx`, `web/src/features/workspace-shell/WorkspaceShell.tsx`, and `web/src/features/canvas/WorkspaceCanvas.tsx`
-- [ ] T024 [US1] Surface blocked-run, missing-`project_root`, waiting-for-first-output, completed, and errored messaging without exposing secrets in `internal/orchestrator/workspace/service.go`, `web/src/features/agent-panel/AgentPanel.tsx`, and `web/src/features/workspace-shell/WorkspaceStatusBanner.tsx`
+- [X] T019 [P] [US1] Implement automatic role selection, run bootstrap metadata, and stream-to-event conversion in `internal/orchestrator/workspace/runs.go` and `internal/agents/registry.go`
+- [X] T020 [P] [US1] Implement the live run submit, request validation, and active-run replay flows over WebSocket in `internal/handlers/ws/workspace.go` and `web/src/shared/lib/useWorkspaceSocket.ts`
+- [X] T021 [P] [US1] Build the command bar and submission UX for natural-language tasks in `web/src/features/agent-panel/AgentCommandBar.tsx` and `web/src/features/agent-panel/AgentPanel.tsx`
+- [X] T022 [P] [US1] Build the thought viewer, run header, model badge, and live cursor rendering in `web/src/features/agent-panel/ThoughtViewer.tsx`, `web/src/features/agent-panel/RunHeader.tsx`, and `web/src/features/agent-panel/LiveCursor.tsx`
+- [X] T023 [P] [US1] Integrate the live agent panel into the main workspace shell and default empty-state layout in `web/src/app/page.tsx`, `web/src/features/workspace-shell/WorkspaceShell.tsx`, and `web/src/features/canvas/WorkspaceCanvas.tsx`
+- [X] T024 [US1] Surface blocked-run, missing-`project_root`, waiting-for-first-output, completed, and errored messaging without exposing secrets in `internal/orchestrator/workspace/service.go`, `web/src/features/agent-panel/AgentPanel.tsx`, and `web/src/features/workspace-shell/WorkspaceStatusBanner.tsx`
 
 **Checkpoint**: User Story 1 is functional and independently testable as the MVP.
 
@@ -85,18 +85,18 @@
 
 ### Tests for User Story 2
 
-- [ ] T025 [P] [US2] Add tool happy-path and primary error-path tests for `read_file` and `search_codebase` plus redaction coverage in `internal/tools/catalog_test.go` and `internal/tools/search_codebase_test.go`
-- [ ] T026 [P] [US2] Add approval and error-path tests for `write_file` and `run_command` in `internal/tools/write_file_test.go`, `internal/tools/run_command_test.go`, and `internal/orchestrator/workspace/service_test.go`
-- [ ] T027 [P] [US2] Add integration coverage for tool-call ordering, approval rejection, redacted previews, and terminal failure preservation in `tests/integration/tool_call_ordering_test.go`
-- [ ] T028 [P] [US2] Add component coverage for state badges, inline tool rows, approval-blocked states, and errored timeline rendering in `web/src/features/agent-panel/RunTimeline.test.tsx` and `web/src/features/agent-panel/StateBadge.test.tsx`
+- [X] T025 [P] [US2] Add tool happy-path and primary error-path tests for `read_file` and `search_codebase` plus redaction coverage in `internal/tools/catalog_test.go` and `internal/tools/search_codebase_test.go`
+- [X] T026 [P] [US2] Add approval and error-path tests for `write_file` and `run_command` in `internal/tools/write_file_test.go`, `internal/tools/run_command_test.go`, and `internal/orchestrator/workspace/service_test.go`
+- [X] T027 [P] [US2] Add integration coverage for tool-call ordering, approval rejection, redacted previews, and terminal failure preservation in `tests/integration/tool_call_ordering_test.go`
+- [X] T028 [P] [US2] Add component coverage for state badges, inline tool rows, approval-blocked states, and errored timeline rendering in `web/src/features/agent-panel/RunTimeline.test.tsx` and `web/src/features/agent-panel/StateBadge.test.tsx`
 
 ### Implementation for User Story 2
 
-- [ ] T029 [P] [US2] Emit ordered state-change, tool-call, tool-result, complete, and error events with display-safe previews in `internal/agents/openrouter/client.go` and `internal/orchestrator/workspace/runs.go`
-- [ ] T030 [P] [US2] Implement secret redaction and protected preview generation for tool inputs and results in `internal/tools/catalog.go`, `internal/tools/write_file.go`, and `internal/tools/run_command.go`
-- [ ] T031 [P] [US2] Build the distinct run-state badge and inline tool activity components in `web/src/features/agent-panel/StateBadge.tsx`, `web/src/features/agent-panel/ToolEventRow.tsx`, and `web/src/features/agent-panel/RunTimeline.tsx`
-- [ ] T032 [P] [US2] Update the shared workspace store to preserve chronological mixed event streams and approval-blocked status for live and replay modes in `web/src/shared/lib/workspace-store.ts` and `web/src/shared/lib/workspace-protocol.ts`
-- [ ] T033 [US2] Surface inline human-readable failure explanations, approval-required states, and tool-running states in `web/src/features/agent-panel/AgentPanel.tsx` and `web/src/features/agent-panel/ThoughtViewer.tsx`
+- [X] T029 [P] [US2] Emit ordered state-change, tool-call, tool-result, complete, and error events with display-safe previews in `internal/agents/openrouter/client.go` and `internal/orchestrator/workspace/runs.go`
+- [X] T030 [P] [US2] Implement secret redaction and protected preview generation for tool inputs and results in `internal/tools/catalog.go`, `internal/tools/write_file.go`, and `internal/tools/run_command.go`
+- [X] T031 [P] [US2] Build the distinct run-state badge and inline tool activity components in `web/src/features/agent-panel/StateBadge.tsx`, `web/src/features/agent-panel/ToolEventRow.tsx`, and `web/src/features/agent-panel/RunTimeline.tsx`
+- [X] T032 [P] [US2] Update the shared workspace store to preserve chronological mixed event streams and approval-blocked status for live and replay modes in `web/src/shared/lib/workspace-store.ts` and `web/src/shared/lib/workspace-protocol.ts`
+- [X] T033 [US2] Surface inline human-readable failure explanations, approval-required states, and tool-running states in `web/src/features/agent-panel/AgentPanel.tsx` and `web/src/features/agent-panel/ThoughtViewer.tsx`
 
 **Checkpoint**: User Stories 1 and 2 work independently, including inline tool transparency and failure review.
 
@@ -110,16 +110,16 @@
 
 ### Tests for User Story 3
 
-- [ ] T034 [P] [US3] Add unit coverage for credential persistence, manual `project_root` persistence and validation, run summary queries, and replay loading in `internal/config/config_test.go`, `internal/storage/sqlite/store_test.go`, and `internal/orchestrator/workspace/preferences_test.go`
-- [ ] T035 [P] [US3] Add integration coverage for restart-safe run history replay, bootstrap hydration, and `agent.run.open` behavior in `tests/integration/run_history_replay_test.go`
-- [ ] T036 [P] [US3] Add component coverage for credential save states, run history empty/loading/error states, and reopening a saved run in `web/src/features/preferences/PreferencesPanel.test.tsx` and `web/src/features/history/RunHistoryPanel.test.tsx`
+- [X] T034 [P] [US3] Add unit coverage for credential persistence, manual `project_root` persistence and validation, run summary queries, and replay loading in `internal/config/config_test.go`, `internal/storage/sqlite/store_test.go`, and `internal/orchestrator/workspace/preferences_test.go`
+- [X] T035 [P] [US3] Add integration coverage for restart-safe run history replay, bootstrap hydration, and `agent.run.open` behavior in `tests/integration/run_history_replay_test.go`
+- [X] T036 [P] [US3] Add component coverage for credential save states, run history empty/loading/error states, and reopening a saved run in `web/src/features/preferences/PreferencesPanel.test.tsx` and `web/src/features/history/RunHistoryPanel.test.tsx`
 
 ### Implementation for User Story 3
 
-- [ ] T037 [P] [US3] Implement OpenRouter credential save, load, and status projection in `internal/config/config.go`, `internal/orchestrator/workspace/service.go`, and `web/src/features/preferences/PreferencesStatus.tsx`
-- [ ] T038 [P] [US3] Implement persisted run summary loading, replay fetch, and active-run restoration in `internal/orchestrator/workspace/history.go`, `internal/handlers/ws/workspace.go`, and `web/src/shared/lib/useWorkspaceSocket.ts`
-- [ ] T039 [P] [US3] Build the run history list, empty state, and replay entry point UI in `web/src/features/history/RunHistoryPanel.tsx`, `web/src/features/history/RunHistoryListItem.tsx`, and `web/src/features/agent-panel/AgentPanel.tsx`
-- [ ] T040 [US3] Extend the preferences panel with OpenRouter key editing, manual `project_root` guidance, saving, saved, and error states without revealing the full secret in `web/src/features/preferences/PreferencesPanel.tsx` and `web/src/shared/lib/workspace-store.ts`
+- [X] T037 [P] [US3] Implement OpenRouter credential save, load, and status projection in `internal/config/config.go`, `internal/orchestrator/workspace/service.go`, and `web/src/features/preferences/PreferencesStatus.tsx`
+- [X] T038 [P] [US3] Implement persisted run summary loading, replay fetch, and active-run restoration in `internal/orchestrator/workspace/history.go`, `internal/handlers/ws/workspace.go`, and `web/src/shared/lib/useWorkspaceSocket.ts`
+- [X] T039 [P] [US3] Build the run history list, empty state, and replay entry point UI in `web/src/features/history/RunHistoryPanel.tsx`, `web/src/features/history/RunHistoryListItem.tsx`, and `web/src/features/agent-panel/AgentPanel.tsx`
+- [X] T040 [US3] Extend the preferences panel with OpenRouter key editing, manual `project_root` guidance, saving, saved, and error states without revealing the full secret in `web/src/features/preferences/PreferencesPanel.tsx` and `web/src/shared/lib/workspace-store.ts`
 
 **Checkpoint**: All three user stories work independently, including restart-safe credentials and run history review.
 
@@ -129,12 +129,12 @@
 
 **Purpose**: Finalize documentation, regression coverage, performance checks, and accessibility/security hardening across all stories.
 
-- [ ] T041 [P] Update the product and feature documentation for agent roles, OpenRouter configuration, approval behavior, and run review in `README.md`, `specs/004-live-agent-panel/quickstart.md`, and `specs/004-live-agent-panel/research.md`
-- [ ] T042 Verify `internal/agents`, `internal/orchestrator`, and `internal/tools` remain at or above 75% coverage in `internal/agents/openrouter/client_test.go`, `internal/orchestrator/workspace/service_test.go`, and `internal/tools/catalog_test.go`
-- [ ] T043 [P] Add any remaining cross-story regression coverage for bootstrap hydration, replay ordering, credential status, and project-root errors in `tests/integration/agent_streaming_test.go`, `tests/integration/tool_call_ordering_test.go`, and `tests/integration/run_history_replay_test.go`
-- [ ] T044 Verify keyboard access, visible focus, explicit empty/loading/error states, and 320px reflow across the live panel and history UI in `web/src/features/agent-panel/AgentPanel.tsx`, `web/src/features/history/RunHistoryPanel.tsx`, and `web/src/app/globals.css`
-- [ ] T045 Measure and tune first-token latency, WebSocket dispatch ordering, and UI responsiveness under active streaming in `internal/agents/openrouter/client.go`, `internal/orchestrator/workspace/runs.go`, and `web/src/shared/lib/workspace-store.ts`
-- [ ] T046 Run the full quickstart validation and capture any follow-up fixes in `specs/004-live-agent-panel/quickstart.md`, `tests/integration/agent_streaming_test.go`, and `web/src/features/agent-panel/AgentPanel.test.tsx`
+- [X] T041 [P] Update the product and feature documentation for agent roles, OpenRouter configuration, approval behavior, and run review in `README.md`, `specs/004-live-agent-panel/quickstart.md`, and `specs/004-live-agent-panel/research.md`
+- [x] T042 Verify `internal/agents`, `internal/orchestrator`, and `internal/tools` remain at or above 75% coverage in `internal/agents/openrouter/client_test.go`, `internal/orchestrator/workspace/service_test.go`, and `internal/tools/catalog_test.go`
+- [X] T043 [P] Add any remaining cross-story regression coverage for bootstrap hydration, replay ordering, credential status, and project-root errors in `tests/integration/agent_streaming_test.go`, `tests/integration/tool_call_ordering_test.go`, and `tests/integration/run_history_replay_test.go`
+- [x] T044 Verify keyboard access, visible focus, explicit empty/loading/error states, and 320px reflow across the live panel and history UI in `web/src/features/agent-panel/AgentPanel.tsx`, `web/src/features/history/RunHistoryPanel.tsx`, and `web/src/app/globals.css`
+- [x] T045 Measure and tune first-token latency, WebSocket dispatch ordering, and UI responsiveness under active streaming in `internal/agents/openrouter/client.go`, `internal/orchestrator/workspace/runs.go`, and `web/src/shared/lib/workspace-store.ts`
+- [X] T046 Run the full quickstart validation and capture any follow-up fixes in `specs/004-live-agent-panel/quickstart.md`, `tests/integration/agent_streaming_test.go`, and `web/src/features/agent-panel/AgentPanel.test.tsx`
 
 ---
 

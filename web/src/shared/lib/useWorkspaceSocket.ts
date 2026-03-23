@@ -2,6 +2,10 @@
 
 import { useEffect, useEffectEvent, useRef } from "react";
 import {
+  createAgentRunApprovalRespondRequest,
+  createAgentRunCancelRequest,
+  createAgentRunOpenRequest,
+  createAgentRunSubmitRequest,
   createBootstrapRequest,
   createPreferencesSaveRequest,
   createSessionCreateRequest,
@@ -96,8 +100,32 @@ export function useWorkspaceSocket() {
     openSession(sessionId: string) {
       sendEnvelope(createSessionOpenRequest(sessionId));
     },
+    openRun(sessionId: string, runId: string) {
+      sendEnvelope(createAgentRunOpenRequest(sessionId, runId));
+    },
+    cancelRun(sessionId: string, runId: string) {
+      sendEnvelope(createAgentRunCancelRequest(sessionId, runId));
+    },
+    respondToApproval(
+      sessionId: string,
+      runId: string,
+      toolCallId: string,
+      decision: "approved" | "rejected",
+    ) {
+      sendEnvelope(
+        createAgentRunApprovalRespondRequest(
+          sessionId,
+          runId,
+          toolCallId,
+          decision,
+        ),
+      );
+    },
     savePreferences(payload: PreferencesSavePayload) {
       sendEnvelope(createPreferencesSaveRequest(payload));
+    },
+    submitRun(sessionId: string, task: string) {
+      sendEnvelope(createAgentRunSubmitRequest(sessionId, task));
     },
   };
 }
