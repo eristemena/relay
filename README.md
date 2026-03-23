@@ -59,6 +59,23 @@ Relay keeps the key server-side, exposes only configuration status to the browse
 
 Relay keeps the prompts and tool allowlists fixed in code per role. The config file only controls model assignment.
 
+## Isolated Agent Canvas
+
+Relay now includes a frontend-only agent canvas inside the workspace shell.
+
+- Add Planner, Coder, Reviewer, Tester, and Explainer nodes from the local toolbar.
+- Inspect a selected node in a side panel without leaving the canvas surface.
+- Change the selected node's local state to `idle`, `thinking`, `executing`, `complete`, or `error` without triggering a relayout.
+- Pan and zoom the graph while the canvas recalculates layout after structural changes.
+
+The canvas is intentionally isolated from backend runs, WebSocket events, and SQLite persistence. It exists to validate the workflow design surface, not to mirror live execution.
+
+## Frontend Validation
+
+- `npm --prefix web run typecheck`: run the frontend TypeScript checker
+- `npm --prefix web test`: run the frontend component and store tests, including the isolated canvas suite
+- If `make dev` opens Relay with a "frontend dev server is unavailable" page, start the Relay Next.js app on any free port from `3000` to `3010` and restart the backend so the dev proxy can rediscover it.
+
 ## Approval Flow
 
 - `read_file` and `search_codebase` run without approval when `project_root` is valid.

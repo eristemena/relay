@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceShell } from "@/features/workspace-shell/WorkspaceShell";
 import {
@@ -9,6 +9,29 @@ import {
   resetWorkspaceStore,
   workspaceStore,
 } from "@/shared/lib/workspace-store";
+
+vi.mock("@xyflow/react", async () => {
+  const React = await import("react");
+
+  return {
+    Background: () => <div data-testid="react-flow-background" />,
+    Controls: () => <div aria-label="Canvas controls" />,
+    Handle: () => <span />,
+    Position: {
+      Left: "left",
+      Right: "right",
+    },
+    ReactFlowProvider: ({ children }: { children: React.ReactNode }) => (
+      <>{children}</>
+    ),
+    ReactFlow: ({ children }: { children: React.ReactNode }) => (
+      <div data-testid="react-flow-mock">{children}</div>
+    ),
+    useReactFlow: () => ({
+      fitView: () => Promise.resolve(true),
+    }),
+  };
+});
 
 const socketActions = {
   cancelRun: vi.fn(),
@@ -45,17 +68,51 @@ describe("WorkspaceShell", () => {
     expect(
       screen.getByRole("heading", { name: /local ai session control/i }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("main")).toHaveAttribute("id", "maincontent");
     expect(
-      screen.getByRole("button", {
-        name: /open session: inspect relay startup/i,
+      screen.getByRole("heading", {
+        name: /inspect relay startup agent graph/i,
       }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("main")).toHaveAttribute("id", "maincontent");
+    expect(
+      screen.getByRole("heading", {
+        name: /start by placing the first agent on the canvas/i,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /open workspace menu/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("navigation", {
+        name: /session history and switching/i,
+      }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/workspace summary/i)).not.toBeInTheDocument();
+  });
+
+  it("opens the slide-out workspace menu on demand", async () => {
+    primeWorkspaceStore(buildWorkspaceSnapshot());
+    render(<WorkspaceShell />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /open workspace menu/i }),
+    );
+
+    expect(
+      await screen.findByRole("dialog", {
+        name: /sessions, saved runs, and preferences/i,
+      }),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("navigation", {
         name: /session history and switching/i,
       }),
     ).toBeInTheDocument();
+    expect(screen.getByText(/saved workspace defaults/i)).toBeInTheDocument();
+    expect(screen.getByText(/port 4747/i)).toBeInTheDocument();
+    expect(screen.getByText(/theme midnight/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/saved runs/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/local settings/i)).toBeInTheDocument();
   });
 
   it("renders a recoverable error state", () => {
@@ -105,7 +162,8 @@ describe("WorkspaceShell", () => {
 
     render(<WorkspaceShell />);
 
-    const [workspaceStatusBanner] = screen.getAllByRole("status");
+    const header = screen.getByRole("banner");
+    const workspaceStatusBanner = within(header).getByRole("status");
     expect(
       within(workspaceStatusBanner).getByText(/project root needs attention/i),
     ).toBeInTheDocument();
@@ -181,7 +239,7 @@ describe("WorkspaceShell", () => {
     );
   });
 
-  it("does not duplicate saved runs after opening the same run twice", () => {
+  it("does not duplicate saved runs after opening the same run twice", async () => {
     const consoleErrorSpy = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
@@ -204,13 +262,24 @@ describe("WorkspaceShell", () => {
 
     render(<WorkspaceShell />);
 
-    const savedRunButton = screen.getByRole("button", {
-      name: /inspect saved startup run/i,
+    fireEvent.click(
+      screen.getByRole("button", { name: /open workspace menu/i }),
+    );
+
+    const drawer = await screen.findByRole("dialog", {
+      name: /sessions, saved runs, and preferences/i,
     });
+    const savedRunButton = within(drawer)
+      .getAllByRole("button")
+      .find((button) =>
+        /inspect saved startup run/i.test(button.textContent ?? ""),
+      );
+
+    expect(savedRunButton).not.toBeNull();
 
     act(() => {
-      savedRunButton.click();
-      savedRunButton.click();
+      savedRunButton?.click();
+      savedRunButton?.click();
     });
 
     expect(socketActions.openRun).toHaveBeenNthCalledWith(
@@ -252,9 +321,7 @@ describe("WorkspaceShell", () => {
       } as never);
     });
 
-    expect(
-      screen.getAllByRole("button", { name: /inspect saved startup run/i }),
-    ).toHaveLength(1);
+    expect(screen.getAllByText(/inspect saved startup run/i)).toHaveLength(1);
     expect(
       consoleErrorSpy.mock.calls.some(([message]) =>
         String(message).includes("Encountered two children with the same key"),

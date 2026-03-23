@@ -1,6 +1,6 @@
 # relay Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-03-23
+Auto-generated from all feature plans. Last updated: 2026-03-24
 
 ## Active Technologies
 - SQLite database at `~/.relay/relay.db` for session records and minimal workspace state; TOML config at `~/.relay/config.toml` for preferences and stored credentials (003-local-relay-workspace)
@@ -8,6 +8,8 @@ Auto-generated from all feature plans. Last updated: 2026-03-23
 - SQLite for sessions, agent runs, and append-only run events; TOML config at `~/.relay/config.toml` for `[openrouter]` credentials and `[agents]` role-to-model assignments (004-live-agent-panel)
 - Go 1.26 backend; TypeScript (strict) with Next.js 16.2 App Router frontend + Go standard library (`context`, `net/http`, `encoding/json`, `sync`, `time`, `os/exec`, `database/sql`, `errors`, `path/filepath`), Cobra for CLI entrypoints, `nhooyr.io/websocket` for Relay WebSocket transport, `github.com/pelletier/go-toml/v2` for local config, SQLite with sqlc-generated queries and repository migrations, `github.com/sashabaranov/go-openai` for OpenAI-compatible chat completion streaming against OpenRouter, Next.js 16.2, Tailwind CSS, shadcn/ui, React Flow, Framer Motion (004-live-agent-panel)
 - SQLite for sessions, agent runs, and append-only run events; TOML config at `~/.relay/config.toml` for `project_root`, `[openrouter]` credentials, and `[agents]` role-to-model assignments (004-live-agent-panel)
+- TypeScript 5.8.x in strict mode, React 19.1, Next.js 16.2 App Router frontend + Existing frontend stack (`next`, `react`, `react-dom`, `framer-motion`, `tailwindcss`, `vitest`, `@testing-library/react`) plus planned additions `@xyflow/react` for the controlled graph canvas and `@dagrejs/dagre` for directed graph layou (005-agent-canvas)
+- No persistent storage; all node, edge, selection, and detail state remains in local client memory for this isolated experience (005-agent-canvas)
 
 - Go 1.26 backend; TypeScript (strict) with Next.js 16.2 App Router frontend + Go standard library (`net/http`, `net/http/httputil`, `embed`, `context`, `os`, `os/exec`, `database/sql`), Cobra for CLI entrypoints, `nhooyr.io/websocket` for Relay WebSocket transport, SQLite via `modernc.org/sqlite` or equivalent driver plus sqlc query generation and goose migrations, `github.com/pelletier/go-toml/v2` for `~/.relay/config.toml`, Next.js 16.2, Tailwind CSS, shadcn/ui, React Flow, Framer Motion (003-local-relay-workspace)
 
@@ -28,9 +30,9 @@ npm test && npm run lint
 Go 1.26 backend; TypeScript (strict) with Next.js 16.2 App Router frontend: Follow standard conventions
 
 ## Recent Changes
+- 005-agent-canvas: Added TypeScript 5.8.x in strict mode, React 19.1, Next.js 16.2 App Router frontend + Existing frontend stack (`next`, `react`, `react-dom`, `framer-motion`, `tailwindcss`, `vitest`, `@testing-library/react`) plus planned additions `@xyflow/react` for the controlled graph canvas and `@dagrejs/dagre` for directed graph layou
 - 004-live-agent-panel: Added Go 1.26 backend; TypeScript (strict) with Next.js 16.2 App Router frontend + Go standard library (`context`, `net/http`, `encoding/json`, `sync`, `time`, `os/exec`, `database/sql`, `errors`, `path/filepath`), Cobra for CLI entrypoints, `nhooyr.io/websocket` for Relay WebSocket transport, `github.com/pelletier/go-toml/v2` for local config, SQLite with sqlc-generated queries and repository migrations, `github.com/sashabaranov/go-openai` for OpenAI-compatible chat completion streaming against OpenRouter, Next.js 16.2, Tailwind CSS, shadcn/ui, React Flow, Framer Motion
 - 004-live-agent-panel: Added Go 1.26 backend; TypeScript (strict) with Next.js 16.2 App Router frontend + Go standard library (`context`, `net/http`, `encoding/json`, `sync`, `time`, `os/exec`, `database/sql`), Cobra for CLI entrypoints, `nhooyr.io/websocket` for Relay WebSocket transport, `github.com/pelletier/go-toml/v2` for local config, SQLite with sqlc-generated queries and goose migrations for persistence, `github.com/sashabaranov/go-openai` for OpenAI-compatible chat completion streaming against OpenRouter, Next.js 16.2, Tailwind CSS, shadcn/ui, React Flow, Framer Motion
-- 003-local-relay-workspace: Added Go 1.26 backend; TypeScript (strict) with Next.js 16.2 App Router frontend + Go standard library (`net/http`, `net/http/httputil`, `embed`, `context`, `os`, `os/exec`, `database/sql`), Cobra for CLI entrypoints, `nhooyr.io/websocket` for Relay WebSocket transport, SQLite via `modernc.org/sqlite` or equivalent driver plus sqlc query generation and goose migrations, `github.com/pelletier/go-toml/v2` for `~/.relay/config.toml`, Next.js 16.2, Tailwind CSS, shadcn/ui, React Flow, Framer Motion
 
 
 <!-- MANUAL ADDITIONS START -->

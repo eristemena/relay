@@ -56,3 +56,7 @@ export function renderWithWorkspace(ui: ReactElement, snapshot = buildWorkspaceS
   primeWorkspaceStore(snapshot);
   return render(ui);
 }
+
+export function renderIsolatedCanvas(ui: ReactElement) {
+  return render(ui);
+}

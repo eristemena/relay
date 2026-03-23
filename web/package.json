@@ -10,6 +10,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@dagrejs/dagre": "^3.0.0",
+    "@xyflow/react": "^12.10.1",
     "clsx": "^2.1.1",
     "framer-motion": "^12.9.4",
     "next": "^16.2.0",
