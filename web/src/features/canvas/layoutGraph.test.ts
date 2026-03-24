@@ -39,24 +39,30 @@ describe("layoutGraph", () => {
       spawn_order: 2,
       occurred_at: "2026-03-24T12:00:01Z",
     });
-    document = patchHandoff(document, {
-      session_id: "session_alpha",
-      run_id: "run_1",
-      agent_id: "agent_planner_1",
-      sequence: 3,
-      replay: false,
-      from_agent_id: "agent_planner_1",
-      to_agent_id: "agent_coder_2",
-      reason: "planner_completed",
-      occurred_at: "2026-03-24T12:00:02Z",
-      role: "planner",
-      model: "anthropic/claude-opus-4",
-    });
+    document = patchHandoff(
+      document,
+      {
+        session_id: "session_alpha",
+        run_id: "run_1",
+        agent_id: "agent_planner_1",
+        sequence: 3,
+        replay: false,
+        from_agent_id: "agent_planner_1",
+        to_agent_id: "agent_coder_2",
+        reason: "planner_completed",
+        occurred_at: "2026-03-24T12:00:02Z",
+        role: "planner",
+        model: "anthropic/claude-opus-4",
+      },
+      "handoff_start",
+    );
 
     expect(document.edges).toEqual([
       {
         id: "agent_planner_1->agent_coder_2",
         kind: "handoff",
+        lastHandoffAt: "2026-03-24T12:00:02Z",
+        pulseState: "active",
         sourceNodeId: "agent_planner_1",
         targetNodeId: "agent_coder_2",
       },

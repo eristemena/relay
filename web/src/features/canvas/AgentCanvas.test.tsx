@@ -32,13 +32,18 @@ vi.mock("@xyflow/react", async () => {
     ReactFlow: ({
       children,
       edges,
+      edgeTypes,
       nodeTypes,
       nodes,
       onNodeClick,
       onPaneClick,
     }: {
       children: React.ReactNode;
-      edges: Array<{ id: string }>;
+      edges: Array<Record<string, unknown>>;
+      edgeTypes?: Record<
+        string,
+        (props: Record<string, unknown>) => React.ReactNode
+      >;
       nodeTypes: Record<
         string,
         (props: Record<string, unknown>) => React.ReactNode
@@ -54,6 +59,28 @@ vi.mock("@xyflow/react", async () => {
           type="button"
         />
         <div data-testid="react-flow-edge-count">{edges.length}</div>
+        {edges.map((edge) => {
+          const EdgeComponent = edgeTypes?.[String(edge.type)];
+
+          if (!EdgeComponent) {
+            return null;
+          }
+
+          return (
+            <svg data-testid={`edge-${String(edge.id)}`} key={String(edge.id)}>
+              <EdgeComponent
+                data={edge.data}
+                id={edge.id}
+                sourcePosition="right"
+                sourceX={0}
+                sourceY={0}
+                targetPosition="left"
+                targetX={100}
+                targetY={20}
+              />
+            </svg>
+          );
+        })}
         {nodes.map((node) => {
           const NodeComponent = nodeTypes[String(node.type)];
 
@@ -81,10 +108,15 @@ vi.mock("@xyflow/react", async () => {
     useReactFlow: () => ({
       fitView: () => Promise.resolve(true),
     }),
+    getBezierPath: () => ["M0,0 C40,0 60,20 100,20"],
   };
 });
 
 describe("AgentCanvas", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("shows the orchestration empty state before any node has spawned", () => {
     const snapshot = buildWorkspaceSnapshot();
     renderWithWorkspace(
@@ -97,6 +129,65 @@ describe("AgentCanvas", () => {
         name: /submit a goal to start the orchestration graph/i,
       }),
     ).toBeInTheDocument();
+  });
+
+  it("does not reserve the selected-node panel until a node is selected", () => {
+    const runId = "run_panel_selection_1";
+    const snapshot = buildWorkspaceSnapshot({
+      active_run_id: runId,
+      run_summaries: [
+        {
+          id: runId,
+          task_text_preview: "Inspect relay startup",
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          state: "active",
+          started_at: "2026-03-24T12:00:00Z",
+          has_tool_activity: false,
+        },
+      ],
+    });
+
+    renderWithWorkspace(
+      <WorkspaceCanvas activeSession={snapshot.sessions[0]} />,
+      snapshot,
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: runId,
+          agent_id: "agent_planner_1",
+          sequence: 1,
+          replay: false,
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          label: "Planner",
+          spawn_order: 1,
+          occurred_at: "2026-03-24T12:00:00Z",
+        },
+      } as never);
+    });
+
+    expect(
+      screen.queryByTestId("agent-canvas-detail-mode-selected"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Planner, Planner node" }),
+    );
+
+    expect(
+      screen.getByTestId("agent-canvas-detail-mode-selected"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Canvas background" }));
+
+    expect(
+      screen.getByTestId("agent-canvas-flow").parentElement,
+    ).toHaveAttribute("data-detail-open", "false");
   });
 
   it("appends spawned nodes and patches node state without losing interactivity", () => {
@@ -258,8 +349,8 @@ describe("AgentCanvas", () => {
     fireEvent.click(screen.getByRole("button", { name: /canvas background/i }));
 
     expect(
-      screen.getByText(/select a node on the canvas/i),
-    ).toBeInTheDocument();
+      screen.getByTestId("agent-canvas-flow").parentElement,
+    ).toHaveAttribute("data-detail-open", "false");
   });
 
   it("keeps viewport controls available while orchestration nodes stream and fail", () => {
@@ -342,6 +433,207 @@ describe("AgentCanvas", () => {
     ).toBeGreaterThan(0);
     expect(zoomIn).toBeEnabled();
     expect(fitView).toBeEnabled();
+  });
+
+  it("renders loading and plain-language error states for the canvas shell", () => {
+    const loadingSnapshot = buildWorkspaceSnapshot({
+      ui_state: {
+        history_state: "loading",
+        canvas_state: "empty",
+        save_state: "idle",
+      },
+    });
+    const { rerender } = renderWithWorkspace(
+      <WorkspaceCanvas activeSession={loadingSnapshot.sessions[0]} />,
+      loadingSnapshot,
+    );
+
+    expect(
+      screen.getByText(/relay is loading the orchestration canvas/i),
+    ).toBeInTheDocument();
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "error",
+        payload: {
+          code: "workspace_canvas_unavailable",
+          message: "Relay could not load the orchestration canvas.",
+          occurred_at: "2026-03-24T12:00:00Z",
+        },
+      } as never);
+    });
+
+    rerender(<WorkspaceCanvas activeSession={loadingSnapshot.sessions[0]} />);
+    expect(
+      screen.getByText(/relay could not load the orchestration canvas/i),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps node streaming indicators active only while tokens continue arriving", () => {
+    vi.useFakeTimers();
+
+    const snapshot = buildWorkspaceSnapshot({
+      active_run_id: "run_streaming",
+      run_summaries: [
+        {
+          id: "run_streaming",
+          task_text_preview: "Inspect relay startup",
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          state: "active",
+          started_at: "2026-03-24T12:00:00Z",
+          has_tool_activity: false,
+        },
+      ],
+    });
+
+    const { container } = renderWithWorkspace(
+      <WorkspaceCanvas activeSession={snapshot.sessions[0]} />,
+      snapshot,
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_streaming",
+          agent_id: "agent_planner_1",
+          sequence: 1,
+          replay: false,
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          label: "Planner",
+          spawn_order: 1,
+          occurred_at: "2026-03-24T12:00:00Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "token",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_streaming",
+          agent_id: "agent_planner_1",
+          sequence: 2,
+          replay: false,
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          text: "Planner transcript.",
+          occurred_at: "2026-03-24T12:00:01Z",
+        },
+      } as never);
+    });
+
+    const node = container.querySelector(".agent-canvas-node");
+    expect(node).toHaveAttribute("data-streaming-active", "true");
+
+    act(() => {
+      vi.advanceTimersByTime(301);
+    });
+
+    expect(node).toHaveAttribute("data-streaming-active", "false");
+  });
+
+  it("renders active and settling handoff pulse states on the custom edge", () => {
+    const snapshot = buildWorkspaceSnapshot({
+      active_run_id: "run_handoff",
+      run_summaries: [
+        {
+          id: "run_handoff",
+          task_text_preview: "Inspect relay startup",
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          state: "active",
+          started_at: "2026-03-24T12:00:00Z",
+          has_tool_activity: false,
+        },
+      ],
+    });
+
+    renderWithWorkspace(
+      <WorkspaceCanvas activeSession={snapshot.sessions[0]} />,
+      snapshot,
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_handoff",
+          agent_id: "agent_planner_1",
+          sequence: 1,
+          replay: false,
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          label: "Planner",
+          spawn_order: 1,
+          occurred_at: "2026-03-24T12:00:00Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_handoff",
+          agent_id: "agent_coder_2",
+          sequence: 2,
+          replay: false,
+          role: "coder",
+          model: "anthropic/claude-sonnet-4-5",
+          label: "Coder",
+          spawn_order: 2,
+          occurred_at: "2026-03-24T12:00:01Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "handoff_start",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_handoff",
+          agent_id: "agent_planner_1",
+          sequence: 3,
+          replay: false,
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          from_agent_id: "agent_planner_1",
+          to_agent_id: "agent_coder_2",
+          reason: "planner_completed",
+          occurred_at: "2026-03-24T12:00:02Z",
+        },
+      } as never);
+    });
+
+    expect(
+      screen
+        .getByTestId("edge-agent_planner_1->agent_coder_2")
+        .querySelector('.agent-canvas-edge-pulse[data-pulse-state="active"]'),
+    ).not.toBeNull();
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "handoff_complete",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_handoff",
+          agent_id: "agent_planner_1",
+          sequence: 4,
+          replay: false,
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          from_agent_id: "agent_planner_1",
+          to_agent_id: "agent_coder_2",
+          reason: "planner_completed",
+          occurred_at: "2026-03-24T12:00:03Z",
+        },
+      } as never);
+    });
+
+    expect(
+      screen
+        .getByTestId("edge-agent_planner_1->agent_coder_2")
+        .querySelector('.agent-canvas-edge-pulse[data-pulse-state="settling"]'),
+    ).not.toBeNull();
   });
 
   it("switches the detail panel between nodes while transcripts continue updating", () => {

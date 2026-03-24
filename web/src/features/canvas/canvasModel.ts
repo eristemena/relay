@@ -30,6 +30,7 @@ export const agentCanvasStates = [
 
 export type AgentCanvasRole = (typeof agentCanvasRoles)[number];
 export type AgentCanvasState = (typeof agentCanvasStates)[number];
+export type AgentCanvasEdgePulseState = "idle" | "active" | "settling";
 export type CanvasRunState =
   | "idle"
   | "submitting"
@@ -52,6 +53,8 @@ export interface AgentCanvasNodeModel {
   role: AgentCanvasRole;
   label: string;
   state: AgentCanvasState;
+  stateRevision: number;
+  lastUpdatedAt: string | null;
   details: AgentNodeDetails;
   position: {
     x: number;
@@ -68,6 +71,8 @@ export interface AgentCanvasEdgeModel {
   sourceNodeId: string;
   targetNodeId: string;
   kind: "handoff";
+  pulseState: AgentCanvasEdgePulseState;
+  lastHandoffAt: string | null;
 }
 
 export interface AgentCanvasDocument {
@@ -89,6 +94,7 @@ export interface SelectedCanvasNodeView {
   role: AgentCanvasRole;
   label: string;
   state: AgentCanvasState;
+  stateRevision: number;
   details: AgentNodeDetails;
 }
 
@@ -160,6 +166,8 @@ export function addSpawnedNode(
     role,
     label: payload.label || roleCopy[role].label,
     state: "queued",
+    stateRevision: 0,
+    lastUpdatedAt: payload.occurred_at,
     details: {
       summary: roleCopy[role].summary,
       currentStateLabel: stateLabels.queued,
@@ -193,15 +201,14 @@ export function patchAgentState(
     nodes: syncNodeDetails(
       document.nodes.map((node) =>
         node.id === payload.agent_id
-          ? {
-              ...node,
+          ? updateNodePresentation(node, payload.occurred_at, {
               state: payload.state,
               details: {
                 ...node.details,
                 summary: payload.message || node.details.summary,
                 currentStateLabel: stateLabels[payload.state],
               },
-            }
+            })
           : node,
       ),
       document.edges,
@@ -222,15 +229,14 @@ export function patchTaskAssigned(
     nodes: syncNodeDetails(
       document.nodes.map((node) =>
         node.id === payload.agent_id
-          ? {
-              ...node,
+          ? updateNodePresentation(node, payload.occurred_at, {
               state: "assigned",
               details: {
                 ...node.details,
                 taskText: payload.task_text,
                 currentStateLabel: stateLabels.assigned,
               },
-            }
+            })
           : node,
       ),
       document.edges,
@@ -252,8 +258,7 @@ export function patchAgentToken(
     nodes: syncNodeDetails(
       document.nodes.map((node) =>
         node.id === payload.agent_id
-          ? {
-              ...node,
+          ? updateNodePresentation(node, payload.occurred_at, {
               state: node.state === "completed" ? node.state : "streaming",
               details: {
                 ...node.details,
@@ -263,7 +268,7 @@ export function patchAgentToken(
                   `${node.details.transcript}${payload.text}`,
                 ),
               },
-            }
+            })
           : node,
       ),
       document.edges,
@@ -275,15 +280,29 @@ export function patchAgentToken(
 export function patchHandoff(
   document: AgentCanvasDocument,
   payload: HandoffPayload,
+  eventType: "handoff_start" | "handoff_complete",
 ): AgentCanvasDocument {
   const nextEdge: AgentCanvasEdgeModel = {
     id: `${payload.from_agent_id}->${payload.to_agent_id}`,
     sourceNodeId: payload.from_agent_id,
     targetNodeId: payload.to_agent_id,
     kind: "handoff",
+    pulseState: eventType === "handoff_start" ? "active" : "settling",
+    lastHandoffAt: eventType === "handoff_start" ? payload.occurred_at : null,
   };
   const edges = document.edges.some((edge) => edge.id === nextEdge.id)
-    ? document.edges
+    ? document.edges.map((edge) =>
+        edge.id === nextEdge.id
+          ? {
+              ...edge,
+              pulseState: nextEdge.pulseState,
+              lastHandoffAt:
+                eventType === "handoff_start"
+                  ? payload.occurred_at
+                  : edge.lastHandoffAt,
+            }
+          : edge,
+      )
     : [...document.edges, nextEdge];
   return {
     ...document,
@@ -309,8 +328,7 @@ export function patchAgentError(
     nodes: syncNodeDetails(
       document.nodes.map((node) =>
         node.id === payload.agent_id
-          ? {
-              ...node,
+          ? updateNodePresentation(node, payload.occurred_at ?? null, {
               state: nextState,
               details: {
                 ...node.details,
@@ -318,7 +336,7 @@ export function patchAgentError(
                 errorMessage: payload.message,
                 summary: payload.message || node.details.summary,
               },
-            }
+            })
           : node,
       ),
       document.edges,
@@ -332,6 +350,7 @@ export function patchRunComplete(
 ): AgentCanvasDocument {
   return {
     ...document,
+    edges: settleCanvasEdges(document.edges),
     runState: "completed",
     runSummary: payload.summary,
   };
@@ -359,8 +378,7 @@ export function patchRunError(
             return node;
           }
 
-          return {
-            ...node,
+          return updateNodePresentation(node, payload.occurred_at ?? null, {
             state: "clarification_required",
             details: {
               ...node.details,
@@ -368,7 +386,7 @@ export function patchRunError(
               errorMessage: payload.message,
               summary: payload.message || node.details.summary,
             },
-          };
+          });
         }),
         document.edges,
       )
@@ -376,6 +394,7 @@ export function patchRunError(
 
   return {
     ...document,
+    edges: settleCanvasEdges(document.edges),
     nodes,
     runState: "halted",
     haltCode: payload.code,
@@ -422,6 +441,26 @@ export function getSelectedCanvasNode(
 
 export function getRoleLabel(role: AgentCanvasRole) {
   return roleCopy[role].label;
+}
+
+function updateNodePresentation(
+  node: AgentCanvasNodeModel,
+  occurredAt: string | null,
+  patch: Partial<AgentCanvasNodeModel>,
+): AgentCanvasNodeModel {
+  return {
+    ...node,
+    ...patch,
+    stateRevision: node.stateRevision + 1,
+    lastUpdatedAt: occurredAt,
+  };
+}
+
+function settleCanvasEdges(edges: AgentCanvasEdgeModel[]) {
+  return edges.map((edge) => ({
+    ...edge,
+    pulseState: "idle" as const,
+  }));
 }
 
 function syncNodeDetails(

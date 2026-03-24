@@ -12,6 +12,8 @@ Auto-generated from all feature plans. Last updated: 2026-03-24
 - No persistent storage; all node, edge, selection, and detail state remains in local client memory for this isolated experience (005-agent-canvas)
 - Go 1.26 backend; TypeScript in strict mode with Next.js 16.2 App Router frontend + Go standard library (`context`, `sync`, `errors`, `time`, `encoding/json`), existing `nhooyr.io/websocket` transport, existing SQLite store and sqlc models, existing Relay agent and OpenRouter integration packages, existing React Flow and dagre frontend stack; no new third-party dependency is required for orchestration itself (006-live-agent-orchestration)
 - SQLite only for orchestration runs, per-agent executions, and ordered event replay; existing `~/.relay/config.toml` remains the source for provider access and agent model settings (006-live-agent-orchestration)
+- Go 1.26 backend; TypeScript 5.8 in strict mode; React 19.1; Next.js 16.2 App Router frontend + Go standard library and existing backend packages remain unchanged by default; existing frontend dependencies `@xyflow/react` for the canvas and existing `framer-motion` for node and panel animation; existing global CSS for state glow styling; no new third-party dependency is required (007-canvas-animation-layer)
+- SQLite only for existing run persistence; no new persisted animation state (007-canvas-animation-layer)
 
 - Go 1.26 backend; TypeScript (strict) with Next.js 16.2 App Router frontend + Go standard library (`net/http`, `net/http/httputil`, `embed`, `context`, `os`, `os/exec`, `database/sql`), Cobra for CLI entrypoints, `nhooyr.io/websocket` for Relay WebSocket transport, SQLite via `modernc.org/sqlite` or equivalent driver plus sqlc query generation and goose migrations, `github.com/pelletier/go-toml/v2` for `~/.relay/config.toml`, Next.js 16.2, Tailwind CSS, shadcn/ui, React Flow, Framer Motion (003-local-relay-workspace)
 
@@ -32,9 +34,9 @@ npm test && npm run lint
 Go 1.26 backend; TypeScript (strict) with Next.js 16.2 App Router frontend: Follow standard conventions
 
 ## Recent Changes
+- 007-canvas-animation-layer: Added Go 1.26 backend; TypeScript 5.8 in strict mode; React 19.1; Next.js 16.2 App Router frontend + Go standard library and existing backend packages remain unchanged by default; existing frontend dependencies `@xyflow/react` for the canvas and existing `framer-motion` for node and panel animation; existing global CSS for state glow styling; no new third-party dependency is required
 - 006-live-agent-orchestration: Added Go 1.26 backend; TypeScript in strict mode with Next.js 16.2 App Router frontend + Go standard library (`context`, `sync`, `errors`, `time`, `encoding/json`), existing `nhooyr.io/websocket` transport, existing SQLite store and sqlc models, existing Relay agent and OpenRouter integration packages, existing React Flow and dagre frontend stack; no new third-party dependency is required for orchestration itself
 - 006-live-agent-orchestration: Added Go 1.26 backend; TypeScript in strict mode with Next.js 16.2 App Router frontend + Go standard library (`context`, `sync`, `errors`, `time`, `encoding/json`), existing `nhooyr.io/websocket` transport, existing SQLite store and sqlc models, existing Relay agent and OpenRouter integration packages, existing React Flow and dagre frontend stack; no new third-party dependency is required for orchestration itself
-- 005-agent-canvas: Added TypeScript 5.8.x in strict mode, React 19.1, Next.js 16.2 App Router frontend + Existing frontend stack (`next`, `react`, `react-dom`, `framer-motion`, `tailwindcss`, `vitest`, `@testing-library/react`) plus planned additions `@xyflow/react` for the controlled graph canvas and `@dagrejs/dagre` for directed graph layou
 
 
 <!-- MANUAL ADDITIONS START -->

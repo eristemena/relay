@@ -1,7 +1,15 @@
 "use client";
 
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
+import { motion, useReducedMotion } from "framer-motion";
+import { useEffect, useRef, useState } from "react";
 import { StateBadge } from "@/features/agent-panel/StateBadge";
+import {
+  CANVAS_STREAMING_SILENCE_MS,
+  canvasNodeEnterVariants,
+  getCanvasTransition,
+  getNodeMotionTarget,
+} from "@/features/canvas/canvasMotion";
 import type {
   AgentCanvasRole,
   AgentCanvasState,
@@ -12,20 +20,64 @@ export interface AgentCanvasNodeData extends Record<string, unknown> {
   roleLabel: string;
   role: AgentCanvasRole;
   state: AgentCanvasState;
+  stateRevision: number;
   summary: string;
 }
 
 export type AgentCanvasFlowNode = Node<AgentCanvasNodeData, "agentCanvasNode">;
 
 export function AgentCanvasNode({ data, selected }: NodeProps<AgentCanvasFlowNode>) {
+  const prefersReducedMotion = useReducedMotion() ?? false;
+  const timeoutRef = useRef<number | null>(null);
+  const [streamingActive, setStreamingActive] = useState(
+    data.state === "streaming",
+  );
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current !== null) {
+        window.clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (timeoutRef.current !== null) {
+      window.clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+
+    if (data.state !== "streaming") {
+      setStreamingActive(false);
+      return;
+    }
+
+    setStreamingActive(true);
+    timeoutRef.current = window.setTimeout(() => {
+      setStreamingActive(false);
+      timeoutRef.current = null;
+    }, CANVAS_STREAMING_SILENCE_MS);
+  }, [data.state, data.stateRevision]);
+
   return (
-    <div
+    <motion.div
       className="agent-canvas-node"
       data-selected={selected}
       data-state={data.state}
+      data-state-revision={data.stateRevision}
+      data-streaming-active={streamingActive}
+      initial="hidden"
+      animate={getNodeMotionTarget({
+        reducedMotion: prefersReducedMotion,
+        selected,
+        state: data.state,
+        streamingActive,
+      })}
+      transition={getCanvasTransition(prefersReducedMotion)}
+      variants={canvasNodeEnterVariants}
     >
       <Handle
-        className="!h-3 !w-3 !border-border !bg-raised"
+        className="agent-canvas-node-handle agent-canvas-node-handle-target"
         isConnectable={false}
         position={Position.Left}
         type="target"
@@ -35,10 +87,13 @@ export function AgentCanvasNode({ data, selected }: NodeProps<AgentCanvasFlowNod
         className="agent-canvas-node-button"
         type="button"
       >
+        <span aria-hidden="true" className="agent-canvas-node-streaming-ring" />
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="eyebrow">{data.roleLabel}</p>
-            <h3 className="mt-2 font-display text-xl text-text">{data.label}</h3>
+            <h3 className="mt-2 font-display text-xl text-text">
+              {data.label}
+            </h3>
           </div>
           <StateBadge state={data.state} />
         </div>
@@ -48,11 +103,11 @@ export function AgentCanvasNode({ data, selected }: NodeProps<AgentCanvasFlowNod
         </p>
       </button>
       <Handle
-        className="!h-3 !w-3 !border-border !bg-raised"
+        className="agent-canvas-node-handle agent-canvas-node-handle-source"
         isConnectable={false}
         position={Position.Right}
         type="source"
       />
-    </div>
+    </motion.div>
   );
 }

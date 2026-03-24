@@ -587,13 +587,13 @@ function syncRunSummaries(
   }
   if (message.type === "run_error") {
     nextSummary.state = "halted";
-    nextSummary.error_code = payload.code;
-    nextSummary.completed_at = payload.occurred_at;
+    nextSummary.error_code = (payload as ErrorPayload).code;
+    nextSummary.completed_at = (payload as ErrorPayload).occurred_at;
   }
   if (message.type === "error") {
     nextSummary.state = "errored";
-    nextSummary.error_code = payload.code;
-    nextSummary.completed_at = payload.occurred_at;
+    nextSummary.error_code = (payload as ErrorPayload).code;
+    nextSummary.completed_at = (payload as ErrorPayload).occurred_at;
   }
   if (
     message.type === "agent_spawned" ||
@@ -649,8 +649,18 @@ function syncOrchestrationDocuments(
       next = patchAgentToken(current, message.payload as TokenPayload);
       break;
     case "handoff_start":
+      next = patchHandoff(
+        current,
+        message.payload as HandoffPayload,
+        "handoff_start",
+      );
+      break;
     case "handoff_complete":
-      next = patchHandoff(current, message.payload as HandoffPayload);
+      next = patchHandoff(
+        current,
+        message.payload as HandoffPayload,
+        "handoff_complete",
+      );
       break;
     case "agent_error":
       next = patchAgentError(current, message.payload as ErrorPayload);

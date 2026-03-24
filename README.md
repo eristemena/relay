@@ -65,7 +65,9 @@ Relay now includes a live orchestration canvas inside the workspace shell.
 
 - Submit one goal and Relay starts a prompt-only run with Planner first, then Coder and Tester in parallel, then Reviewer, then Explainer.
 - Nodes are appended only when an agent is spawned, then patched in place as state, transcript, handoff, and failure events arrive.
+- The live canvas adds presentation-only motion: spawned nodes fade and scale in, active handoffs pulse on the connecting edge, and streaming borders clear within 300ms after token silence.
 - Selecting a node opens that agent's current or preserved output in the side panel without interrupting the run.
+- The selected-node panel keeps explicit empty, loading, and plain-language error states while selection changes animate in place.
 - Opening a saved run replays the stored orchestration timeline into the same canvas surface.
 
 This orchestration mode is intentionally prompt-only. It does not read the repository, write files, or run shell commands as part of the orchestration DAG.
@@ -75,6 +77,7 @@ This orchestration mode is intentionally prompt-only. It does not read the repos
 - `npm --prefix web run typecheck`: run the frontend TypeScript checker
 - `npm --prefix web test`: run the frontend component and store tests, including the live canvas suite
 - `npm --prefix web test -- src/features/canvas/AgentCanvas.test.tsx src/features/workspace-shell/WorkspaceShell.test.tsx`: run the focused orchestration canvas coverage
+- `npm --prefix web test -- src/features/canvas/AgentCanvas.test.tsx src/features/canvas/AnimatedHandoffEdge.test.tsx src/features/canvas/AgentNodeDetailPanel.test.tsx src/features/canvas/AgentCanvasNode.test.tsx src/features/canvas/canvasModel.test.ts src/features/canvas/layoutGraph.test.ts src/shared/lib/workspace-store.test.ts`: run the focused canvas animation and motion-regression suite
 - If `make dev` opens Relay with a "frontend dev server is unavailable" page, start the Relay Next.js app on any free port from `3000` to `3010` and restart the backend so the dev proxy can rediscover it.
 
 ## Approval Flow
@@ -97,6 +100,7 @@ This orchestration mode is intentionally prompt-only. It does not read the repos
 - `go test ./tests/integration -run 'TestAgentStreaming_|TestWorkspaceWebSocket_' -count=1`: run the broader orchestration ordering, replay, and reconnect regressions
 - `go test ./tests/integration/run_history_replay_test.go`: run the replay-focused integration file directly
 - `npm --prefix web test -- src/features/canvas/AgentCanvas.test.tsx src/features/workspace-shell/WorkspaceShell.test.tsx`: run the current canvas and workspace-shell regression suite
+- `npm --prefix web test -- src/features/canvas/AgentCanvas.test.tsx src/features/canvas/AnimatedHandoffEdge.test.tsx src/features/canvas/AgentNodeDetailPanel.test.tsx src/features/canvas/AgentCanvasNode.test.tsx src/features/canvas/canvasModel.test.ts src/features/canvas/layoutGraph.test.ts src/shared/lib/workspace-store.test.ts`: run the canvas animation layer regressions and store derivation checks
 - `npm --prefix web test -- src/features/canvas/layoutGraph.test.ts src/features/canvas/AgentCanvas.test.tsx src/features/workspace-shell/WorkspaceShell.test.tsx`: run the canvas model, layout, and shell regression suite together
 - `make build && ./bin/relay serve --help`: verify the packaged frontend assets and built `relay serve` entrypoint
 - `env -u RELAY_DEV ./bin/relay serve --no-browser --port 4851`: smoke-test the packaged server path against the embedded frontend; if `RELAY_DEV=true` is still set, Relay will intentionally switch to the dev-proxy frontend mode instead

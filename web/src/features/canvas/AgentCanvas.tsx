@@ -9,7 +9,12 @@ import {
   type Edge,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { AnimatePresence } from "framer-motion";
 import { useEffect, useMemo } from "react";
+import {
+  AnimatedHandoffEdge,
+  type AnimatedHandoffEdgeData,
+} from "@/features/canvas/AnimatedHandoffEdge";
 import { CanvasEmptyState } from "@/features/canvas/CanvasEmptyState";
 import {
   AgentCanvasNode,
@@ -17,6 +22,7 @@ import {
 } from "@/features/canvas/AgentCanvasNode";
 import { AgentNodeDetailPanel } from "@/features/canvas/AgentNodeDetailPanel";
 import {
+  type AgentCanvasEdgePulseState,
   getRoleLabel,
   getSelectedCanvasNode,
   type AgentCanvasDocument,
@@ -26,28 +32,40 @@ import {
   selectWorkspaceCanvasNode,
 } from "@/shared/lib/workspace-store";
 import { FormattedMarkdown } from "@/shared/lib/FormattedMarkdown";
+import type { WorkspaceUIState } from "@/shared/lib/workspace-protocol";
 import {
   getRunFailureTitle,
   isClarificationRequiredCode,
 } from "@/features/agent-panel/runStatus";
 
 interface AgentCanvasProps {
+  canvasState?: WorkspaceUIState["canvas_state"];
   sessionLabel: string;
+  historyState?: WorkspaceUIState["history_state"];
+  errorMessage?: string | null;
   runId: string;
   document: AgentCanvasDocument | null;
 }
 
 const nodeTypes = { agentCanvasNode: AgentCanvasNode };
+const edgeTypes = { animatedHandoff: AnimatedHandoffEdge };
+type AgentCanvasFlowEdge = Edge<AnimatedHandoffEdgeData>;
 
 export function AgentCanvas({
+  canvasState,
   sessionLabel,
+  historyState,
+  errorMessage,
   runId,
   document,
 }: AgentCanvasProps) {
   return (
     <ReactFlowProvider>
       <AgentCanvasSurface
+        canvasState={canvasState}
         document={document}
+        errorMessage={errorMessage}
+        historyState={historyState}
         runId={runId}
         sessionLabel={sessionLabel}
       />
@@ -56,11 +74,24 @@ export function AgentCanvas({
 }
 
 function AgentCanvasSurface({
+  canvasState,
   sessionLabel,
+  historyState,
+  errorMessage,
   runId,
   document,
 }: AgentCanvasProps) {
   const canvasDocument = document;
+  const canvasErrorMessage =
+    !canvasDocument && errorMessage
+      ? errorMessage
+      : canvasState === "error"
+        ? errorMessage || "Relay could not load the orchestration canvas."
+        : null;
+  const isCanvasLoading =
+    !canvasDocument &&
+    !canvasErrorMessage &&
+    (historyState === "loading" || Boolean(runId));
   const selectedNode = canvasDocument
     ? getSelectedCanvasNode(canvasDocument)
     : null;
@@ -82,6 +113,7 @@ function AgentCanvasSurface({
           role: node.role,
           roleLabel: getRoleLabel(node.role),
           state: node.state,
+          stateRevision: node.stateRevision,
           summary: node.details.summary,
         },
         selected: node.id === canvasDocument?.selectedNodeId,
@@ -90,13 +122,17 @@ function AgentCanvasSurface({
       })),
     [canvasDocument],
   );
-  const flowEdges = useMemo<Edge[]>(
+  const flowEdges = useMemo<AgentCanvasFlowEdge[]>(
     () =>
       (canvasDocument?.edges ?? []).map((edge) => ({
         id: edge.id,
         source: edge.sourceNodeId,
         target: edge.targetNodeId,
+        type: "animatedHandoff",
         animated: false,
+        data: {
+          pulseState: edge.pulseState as AgentCanvasEdgePulseState,
+        },
         selectable: false,
       })),
     [canvasDocument],
@@ -170,7 +206,21 @@ function AgentCanvasSurface({
               : "Submit a goal or reopen a saved run to populate the orchestration canvas."}
           </p>
 
-          {!canvasDocument || canvasDocument.nodes.length === 0 ? (
+          {isCanvasLoading ? (
+            <div
+              className="agent-canvas-inline-state rounded-[1.25rem] border border-border bg-raised/80 p-4 text-sm leading-6 text-text"
+              role="status"
+            >
+              Relay is loading the orchestration canvas.
+            </div>
+          ) : canvasErrorMessage && !canvasDocument ? (
+            <div
+              className="agent-canvas-inline-state rounded-[1.25rem] border border-[var(--color-error)] bg-raised/80 p-4 text-sm leading-6 text-text"
+              role="alert"
+            >
+              {canvasErrorMessage}
+            </div>
+          ) : !canvasDocument || canvasDocument.nodes.length === 0 ? (
             <CanvasEmptyState
               description="Relay will append nodes only when agents spawn, then patch them in place as state, transcript, and handoff events arrive."
               eyebrow="Live agent graph"
@@ -178,13 +228,17 @@ function AgentCanvasSurface({
               title="Submit a goal to start the orchestration graph."
             />
           ) : (
-            <div className="agent-canvas-detail-grid">
+            <div
+              className="agent-canvas-detail-grid"
+              data-detail-open={selectedNode ? "true" : "false"}
+            >
               <div
                 className="agent-canvas-stage agent-canvas-flow"
                 data-testid="agent-canvas-flow"
               >
-                <ReactFlow<AgentCanvasFlowNode, Edge>
+                <ReactFlow<AgentCanvasFlowNode, AgentCanvasFlowEdge>
                   aria-label="Agent canvas graph"
+                  edgeTypes={edgeTypes}
                   edges={flowEdges}
                   elementsSelectable
                   fitView
@@ -210,13 +264,18 @@ function AgentCanvasSurface({
                   />
                 </ReactFlow>
               </div>
-              <AgentNodeDetailPanel
-                haltAgentId={canvasDocument.haltAgentId}
-                haltCode={canvasDocument.haltCode}
-                haltMessage={canvasDocument.haltMessage}
-                haltRole={canvasDocument.haltRole}
-                selectedNode={selectedNode}
-              />
+              <AnimatePresence initial={false} mode="sync">
+                {selectedNode ? (
+                  <AgentNodeDetailPanel
+                    haltAgentId={canvasDocument.haltAgentId}
+                    haltCode={canvasDocument.haltCode}
+                    haltMessage={canvasDocument.haltMessage}
+                    haltRole={canvasDocument.haltRole}
+                    key={selectedNode.id}
+                    selectedNode={selectedNode}
+                  />
+                ) : null}
+              </AnimatePresence>
             </div>
           )}
         </div>

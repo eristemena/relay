@@ -205,4 +205,101 @@ describe("workspaceStore", () => {
 
     resetWorkspaceStore();
   });
+
+  it("derives handoff pulse state from live events without backend-owned motion fields", () => {
+    resetWorkspaceStore();
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        active_run_id: "run_1",
+        run_summaries: [
+          {
+            id: "run_1",
+            task_text_preview: "Inspect relay startup",
+            role: "planner",
+            model: "anthropic/claude-opus-4",
+            state: "active",
+            started_at: "2026-03-24T12:00:00Z",
+            has_tool_activity: false,
+          },
+        ],
+      }),
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_planner_1",
+          sequence: 1,
+          replay: false,
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          label: "Planner",
+          spawn_order: 1,
+          occurred_at: "2026-03-24T12:00:00Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_coder_2",
+          sequence: 2,
+          replay: false,
+          role: "coder",
+          model: "anthropic/claude-sonnet-4-5",
+          label: "Coder",
+          spawn_order: 2,
+          occurred_at: "2026-03-24T12:00:01Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "handoff_start",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_planner_1",
+          sequence: 3,
+          replay: false,
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          from_agent_id: "agent_planner_1",
+          to_agent_id: "agent_coder_2",
+          reason: "planner_completed",
+          occurred_at: "2026-03-24T12:00:02Z",
+        },
+      } as never);
+    });
+
+    let document = workspaceStore.getSnapshot().orchestrationDocuments.run_1;
+    expect(document?.edges[0]?.pulseState).toBe("active");
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "handoff_complete",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_planner_1",
+          sequence: 4,
+          replay: false,
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          from_agent_id: "agent_planner_1",
+          to_agent_id: "agent_coder_2",
+          reason: "planner_completed",
+          occurred_at: "2026-03-24T12:00:03Z",
+        },
+      } as never);
+    });
+
+    document = workspaceStore.getSnapshot().orchestrationDocuments.run_1;
+    expect(document?.edges).toHaveLength(1);
+    expect(document?.edges[0]?.pulseState).toBe("settling");
+
+    resetWorkspaceStore();
+  });
 });

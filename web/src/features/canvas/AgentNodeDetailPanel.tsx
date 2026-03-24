@@ -1,6 +1,11 @@
 "use client";
 
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { StateBadge } from "@/features/agent-panel/StateBadge";
+import {
+  canvasPanelPresenceVariants,
+  getCanvasTransition,
+} from "@/features/canvas/canvasMotion";
 import { getRunFailureTitle } from "@/features/agent-panel/runStatus";
 import type {
   AgentCanvasRole,
@@ -13,6 +18,8 @@ interface AgentNodeDetailPanelProps {
   haltCode: string | null;
   haltMessage: string;
   haltRole: AgentCanvasRole | null;
+  isLoading?: boolean;
+  errorMessage?: string | null;
   selectedNode: SelectedCanvasNodeView | null;
 }
 
@@ -21,27 +28,81 @@ export function AgentNodeDetailPanel({
   haltCode,
   haltMessage,
   haltRole,
+  isLoading = false,
+  errorMessage = null,
   selectedNode,
 }: AgentNodeDetailPanelProps) {
+  const prefersReducedMotion = useReducedMotion() ?? false;
+  const panelMode = selectedNode
+    ? "selected"
+    : isLoading
+      ? "loading"
+      : errorMessage
+        ? "error"
+        : "empty";
+  const panelKey = selectedNode ? selectedNode.id : panelMode;
+
   if (!selectedNode) {
     return (
       <aside
         aria-labelledby="agent-canvas-detail-heading"
         className="agent-canvas-detail-panel panel-surface rounded-[1.5rem] p-5 shadow-idle"
       >
-        <div>
-          <p className="eyebrow">Selected node</p>
-          <h3
-            className="mt-2 font-display text-2xl text-text"
-            id="agent-canvas-detail-heading"
+        <AnimatePresence initial={false} mode="sync">
+          <motion.div
+            key={panelKey}
+            className="agent-canvas-panel-motion"
+            data-panel-mode={panelMode}
+            data-testid={`agent-canvas-detail-mode-${panelMode}`}
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+            transition={getCanvasTransition(prefersReducedMotion)}
+            variants={canvasPanelPresenceVariants}
           >
-            Inspect an agent
-          </h3>
-          <p className="mt-4 text-sm leading-6 text-text-muted">
-            Select a node on the canvas to review its task handoff, live
-            transcript, and any preserved failure details.
-          </p>
-        </div>
+            {panelMode === "loading" ? (
+              <div>
+                <p className="eyebrow">Selected node</p>
+                <h3
+                  className="mt-2 font-display text-2xl text-text"
+                  id="agent-canvas-detail-heading"
+                >
+                  Loading agent details
+                </h3>
+                <p className="mt-4 text-sm leading-6 text-text-muted">
+                  Relay is loading the selected run details for this canvas.
+                </p>
+              </div>
+            ) : panelMode === "error" ? (
+              <div>
+                <p className="eyebrow">Selected node</p>
+                <h3
+                  className="mt-2 font-display text-2xl text-text"
+                  id="agent-canvas-detail-heading"
+                >
+                  Canvas details unavailable
+                </h3>
+                <p className="mt-4 text-sm leading-6 text-text-muted">
+                  {errorMessage}
+                </p>
+              </div>
+            ) : (
+              <div>
+                <p className="eyebrow">Selected node</p>
+                <h3
+                  className="mt-2 font-display text-2xl text-text"
+                  id="agent-canvas-detail-heading"
+                >
+                  Inspect an agent
+                </h3>
+                <p className="mt-4 text-sm leading-6 text-text-muted">
+                  Select a node on the canvas to review its task handoff, live
+                  transcript, and any preserved failure details.
+                </p>
+              </div>
+            )}
+          </motion.div>
+        </AnimatePresence>
       </aside>
     );
   }
@@ -61,95 +122,109 @@ export function AgentNodeDetailPanel({
       aria-labelledby="agent-canvas-detail-heading"
       className="agent-canvas-detail-panel panel-surface rounded-[1.5rem] p-5 shadow-idle"
     >
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="eyebrow">Selected node</p>
-          <h3
-            className="mt-2 font-display text-2xl text-text"
-            id="agent-canvas-detail-heading"
-          >
-            {selectedNode.label}
-          </h3>
-        </div>
-        <StateBadge state={selectedNode.state} />
-      </div>
+      <AnimatePresence initial={false} mode="sync">
+        <motion.div
+          key={panelKey}
+          className="agent-canvas-panel-motion"
+          data-panel-mode={panelMode}
+          data-testid={`agent-canvas-detail-mode-${panelMode}`}
+          initial="hidden"
+          animate="visible"
+          exit="exit"
+          transition={getCanvasTransition(prefersReducedMotion)}
+          variants={canvasPanelPresenceVariants}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="eyebrow">Selected node</p>
+              <h3
+                className="mt-2 font-display text-2xl text-text"
+                id="agent-canvas-detail-heading"
+              >
+                {selectedNode.label}
+              </h3>
+            </div>
+            <StateBadge state={selectedNode.state} />
+          </div>
 
-      <div className="mt-5 grid gap-4 text-sm leading-6 text-text-muted">
-        <div>
-          <p className="eyebrow">Role</p>
-          <p className="mt-2 text-text">{selectedNode.role}</p>
-        </div>
-        <div>
-          <p className="eyebrow">Task</p>
-          <div
-            aria-label="Selected node task"
-            className="agent-canvas-detail-copy mt-2"
-            role="region"
-          >
-            <p className="whitespace-pre-wrap text-text">
-              {selectedNode.details.taskText ||
-                "This agent has not received a visible task assignment yet."}
-            </p>
+          <div className="mt-5 grid gap-4 text-sm leading-6 text-text-muted">
+            <div>
+              <p className="eyebrow">Role</p>
+              <p className="mt-2 text-text">{selectedNode.role}</p>
+            </div>
+            <div>
+              <p className="eyebrow">Task</p>
+              <div
+                aria-label="Selected node task"
+                className="agent-canvas-detail-copy mt-2"
+                role="region"
+              >
+                <p className="whitespace-pre-wrap text-text">
+                  {selectedNode.details.taskText ||
+                    "This agent has not received a visible task assignment yet."}
+                </p>
+              </div>
+            </div>
+            <div>
+              <p className="eyebrow">Summary</p>
+              <div
+                aria-label="Selected node summary"
+                className="agent-canvas-detail-copy mt-2"
+                role="region"
+              >
+                <FormattedMarkdown content={selectedNode.details.summary} />
+              </div>
+            </div>
+            <div>
+              <p className="eyebrow">Incoming handoff</p>
+              <p className="mt-2 text-text">
+                {selectedNode.details.incomingFrom.length
+                  ? selectedNode.details.incomingFrom.join(", ")
+                  : "This node currently starts the orchestration flow."}
+              </p>
+            </div>
+            <div>
+              <p className="eyebrow">Outgoing handoff</p>
+              <p className="mt-2 text-text">
+                {selectedNode.details.outgoingTo.length
+                  ? selectedNode.details.outgoingTo.join(", ")
+                  : "No downstream handoff has been recorded for this node yet."}
+              </p>
+            </div>
+            {selectedNode.details.errorMessage ? (
+              <div className="rounded-2xl border border-[var(--color-error)] bg-raised/80 p-4 text-text">
+                <p className="eyebrow">{nodeFailureTitle}</p>
+                <p className="mt-2 text-sm leading-6">
+                  {selectedNode.details.errorMessage}
+                </p>
+              </div>
+            ) : null}
+            {showRunHalt ? (
+              <div className="rounded-2xl border border-[var(--color-error)] bg-raised/80 p-4 text-text">
+                <p className="eyebrow">{getRunFailureTitle(haltCode)}</p>
+                <p className="mt-2 text-sm leading-6">{haltMessage}</p>
+              </div>
+            ) : null}
+            <div>
+              <p className="eyebrow">Transcript</p>
+              <div
+                aria-live="polite"
+                aria-label="Selected node transcript"
+                className="agent-canvas-detail-copy relay-transcript-copy mt-2 max-h-[24rem]"
+                role="region"
+              >
+                <FormattedMarkdown
+                  className="relay-transcript-markdown text-sm leading-6 text-text"
+                  content={
+                    selectedNode.details.transcript ||
+                    "Visible output will appear here as this agent streams or after replay restores its saved transcript."
+                  }
+                />
+              </div>
+            </div>
           </div>
-        </div>
-        <div>
-          <p className="eyebrow">Summary</p>
-          <div
-            aria-label="Selected node summary"
-            className="agent-canvas-detail-copy mt-2"
-            role="region"
-          >
-            <FormattedMarkdown content={selectedNode.details.summary} />
-          </div>
-        </div>
-        <div>
-          <p className="eyebrow">Incoming handoff</p>
-          <p className="mt-2 text-text">
-            {selectedNode.details.incomingFrom.length
-              ? selectedNode.details.incomingFrom.join(", ")
-              : "This node currently starts the orchestration flow."}
-          </p>
-        </div>
-        <div>
-          <p className="eyebrow">Outgoing handoff</p>
-          <p className="mt-2 text-text">
-            {selectedNode.details.outgoingTo.length
-              ? selectedNode.details.outgoingTo.join(", ")
-              : "No downstream handoff has been recorded for this node yet."}
-          </p>
-        </div>
-        {selectedNode.details.errorMessage ? (
-          <div className="rounded-2xl border border-[var(--color-error)] bg-raised/80 p-4 text-text">
-            <p className="eyebrow">{nodeFailureTitle}</p>
-            <p className="mt-2 text-sm leading-6">
-              {selectedNode.details.errorMessage}
-            </p>
-          </div>
-        ) : null}
-        {showRunHalt ? (
-          <div className="rounded-2xl border border-[var(--color-error)] bg-raised/80 p-4 text-text">
-            <p className="eyebrow">{getRunFailureTitle(haltCode)}</p>
-            <p className="mt-2 text-sm leading-6">{haltMessage}</p>
-          </div>
-        ) : null}
-        <div>
-          <p className="eyebrow">Transcript</p>
-          <div
-            aria-live="polite"
-            aria-label="Selected node transcript"
-            className="agent-canvas-detail-copy relay-transcript-copy mt-2 max-h-[24rem]"
-            role="region"
-          >
-            <FormattedMarkdown
-              className="relay-transcript-markdown text-sm leading-6 text-text"
-              content={
-                selectedNode.details.transcript ||
-                "Visible output will appear here as this agent streams or after replay restores its saved transcript."
-              }
-            />
-          </div>
-        </div>
-      </div>
+        </motion.div>
+      </AnimatePresence>
     </aside>
   );
 }
