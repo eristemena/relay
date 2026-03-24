@@ -48,7 +48,7 @@ Represents the configurable model assignment stored under `[agents]` in `~/.rela
 | `coder` | text | TOML | Required; defaults to `anthropic/claude-sonnet-4-5` |
 | `reviewer` | text | TOML | Required; defaults to `anthropic/claude-sonnet-4-5` |
 | `tester` | text | TOML | Required; defaults to `deepseek/deepseek-chat` |
-| `explainer` | text | TOML | Required; defaults to `google/gemini-flash-1.5` |
+| `explainer` | text | TOML | Required; defaults to `google/gemini-2.0-flash-001` |
 
 ### Validation
 

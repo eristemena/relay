@@ -26,7 +26,7 @@ planner = "anthropic/claude-opus-4"
 coder = "anthropic/claude-sonnet-4-5"
 reviewer = "anthropic/claude-sonnet-4-5"
 tester = "deepseek/deepseek-chat"
-explainer = "google/gemini-flash-1.5"
+explainer = "google/gemini-2.0-flash-001"
 ```
 
 Expected behavior:
@@ -34,7 +34,7 @@ Expected behavior:
 - The API key remains on the Go side only.
 - `project_root` is configured manually in `config.toml` for this phase; there is no folder-picker UI yet.
 - Invalid or missing model strings fall back to Relay defaults.
-- The recommended default role-to-model assignments are Planner -> `anthropic/claude-opus-4`, Coder -> `anthropic/claude-sonnet-4-5`, Reviewer -> `anthropic/claude-sonnet-4-5`, Tester -> `deepseek/deepseek-chat`, and Explainer -> `google/gemini-flash-1.5`.
+- The recommended default role-to-model assignments are Planner -> `anthropic/claude-opus-4`, Coder -> `anthropic/claude-sonnet-4-5`, Reviewer -> `anthropic/claude-sonnet-4-5`, Tester -> `deepseek/deepseek-chat`, and Explainer -> `google/gemini-2.0-flash-001`.
 - The frontend sees only whether credentials are configured and which model was used for each run.
 - Read-only repo tools require a valid absolute `project_root`.
 - Mutating tools (`write_file`, `run_command`) stop and wait for approval before they execute.

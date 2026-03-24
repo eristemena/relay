@@ -2,7 +2,7 @@
 
 Relay is a local developer workspace that launches a browser-based AI coding shell from a single command.
 
-The current workspace includes a live agent panel where Relay selects one built-in role, streams visible output from OpenRouter over WebSocket, and saves completed or errored runs for later replay.
+The current workspace includes a live multi-agent orchestration surface where Relay coordinates the Planner, Coder, Tester, Reviewer, and Explainer, streams visible output from OpenRouter over WebSocket, and saves completed, halted, or errored runs for later replay.
 
 The browser never receives the saved OpenRouter API key. Relay persists configuration and run history locally, gates mutating tools behind explicit approval, and reattaches active runs after reconnects.
 
@@ -44,7 +44,7 @@ planner = "anthropic/claude-opus-4"
 coder = "anthropic/claude-sonnet-4-5"
 reviewer = "anthropic/claude-sonnet-4-5"
 tester = "deepseek/deepseek-chat"
-explainer = "google/gemini-flash-1.5"
+explainer = "google/gemini-2.0-flash-001"
 ```
 
 Relay keeps the key server-side, exposes only configuration status to the browser, and stores run history in SQLite for replay.
@@ -59,21 +59,22 @@ Relay keeps the key server-side, exposes only configuration status to the browse
 
 Relay keeps the prompts and tool allowlists fixed in code per role. The config file only controls model assignment.
 
-## Isolated Agent Canvas
+## Live Agent Orchestration
 
-Relay now includes a frontend-only agent canvas inside the workspace shell.
+Relay now includes a live orchestration canvas inside the workspace shell.
 
-- Add Planner, Coder, Reviewer, Tester, and Explainer nodes from the local toolbar.
-- Inspect a selected node in a side panel without leaving the canvas surface.
-- Change the selected node's local state to `idle`, `thinking`, `executing`, `complete`, or `error` without triggering a relayout.
-- Pan and zoom the graph while the canvas recalculates layout after structural changes.
+- Submit one goal and Relay starts a prompt-only run with Planner first, then Coder and Tester in parallel, then Reviewer, then Explainer.
+- Nodes are appended only when an agent is spawned, then patched in place as state, transcript, handoff, and failure events arrive.
+- Selecting a node opens that agent's current or preserved output in the side panel without interrupting the run.
+- Opening a saved run replays the stored orchestration timeline into the same canvas surface.
 
-The canvas is intentionally isolated from backend runs, WebSocket events, and SQLite persistence. It exists to validate the workflow design surface, not to mirror live execution.
+This orchestration mode is intentionally prompt-only. It does not read the repository, write files, or run shell commands as part of the orchestration DAG.
 
 ## Frontend Validation
 
 - `npm --prefix web run typecheck`: run the frontend TypeScript checker
-- `npm --prefix web test`: run the frontend component and store tests, including the isolated canvas suite
+- `npm --prefix web test`: run the frontend component and store tests, including the live canvas suite
+- `npm --prefix web test -- src/features/canvas/AgentCanvas.test.tsx src/features/workspace-shell/WorkspaceShell.test.tsx`: run the focused orchestration canvas coverage
 - If `make dev` opens Relay with a "frontend dev server is unavailable" page, start the Relay Next.js app on any free port from `3000` to `3010` and restart the backend so the dev proxy can rediscover it.
 
 ## Approval Flow
@@ -86,14 +87,26 @@ The canvas is intentionally isolated from backend runs, WebSocket events, and SQ
 ## Run Review And Reconnect
 
 - Relay allows only one active run at a time.
-- Completed and errored runs are stored in `~/.relay/relay.db` as ordered events.
+- Completed, halted, and errored runs are stored in `~/.relay/relay.db` as ordered events.
 - Opening a saved run replays its stored timeline without contacting OpenRouter.
 - If the browser reconnects during an active run, Relay can reattach the live stream and continue delivery after replaying stored events.
+
+## Orchestration Validation
+
+- `go test -cover ./internal/agents ./internal/orchestrator/workspace ./internal/handlers/ws ./internal/storage/sqlite`: verify the current orchestration coverage threshold across the touched core packages
+- `go test ./tests/integration -run 'TestAgentStreaming_|TestWorkspaceWebSocket_' -count=1`: run the broader orchestration ordering, replay, and reconnect regressions
+- `go test ./tests/integration/run_history_replay_test.go`: run the replay-focused integration file directly
+- `npm --prefix web test -- src/features/canvas/AgentCanvas.test.tsx src/features/workspace-shell/WorkspaceShell.test.tsx`: run the current canvas and workspace-shell regression suite
+- `npm --prefix web test -- src/features/canvas/layoutGraph.test.ts src/features/canvas/AgentCanvas.test.tsx src/features/workspace-shell/WorkspaceShell.test.tsx`: run the canvas model, layout, and shell regression suite together
+- `make build && ./bin/relay serve --help`: verify the packaged frontend assets and built `relay serve` entrypoint
+- `env -u RELAY_DEV ./bin/relay serve --no-browser --port 4851`: smoke-test the packaged server path against the embedded frontend; if `RELAY_DEV=true` is still set, Relay will intentionally switch to the dev-proxy frontend mode instead
 
 ## Notes
 
 - Relay prefers port `4747` and falls back to a free local port for the current run if needed.
 - In development, Relay keeps `/ws` and `/api/healthz` in Go and proxies other browser routes to the discovered Next.js dev server.
 - Production builds embed the exported frontend assets into the Go binary.
-- The live agent panel supports one active run at a time and replays saved runs from the local SQLite database.
+- The live orchestration surface supports one active run at a time and replays saved runs from the local SQLite database.
+- Active-run hydration reuses the existing bootstrap and open-run flow: when the browser reconnects and Relay reports an `active_run_id`, the frontend reopens that run once to replay stored events before live delivery resumes.
+- Planner failures emit `agent_error` for the planner node and a terminal `run_error` for the run, while later agent-scoped failures can remain inspectable without forcing an immediate run halt.
 - Repository-aware tools stay disabled until `project_root` is configured as a valid absolute directory.
