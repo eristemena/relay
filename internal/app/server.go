@@ -92,6 +92,7 @@ func NewServer(ctx context.Context, options Options) (*Server, error) {
 	}
 
 	service := workspaceorchestrator.NewService(store, paths)
+	service.SetLogger(logger)
 	status := &runtimeStatus{
 		health: healthhandler.Response{
 			Status:        "starting",

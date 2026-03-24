@@ -1,5 +1,6 @@
 import type { AgentRunSummary } from "@/shared/lib/workspace-protocol";
 import { StateBadge } from "@/features/agent-panel/StateBadge";
+import { getRunSummaryBadgeState } from "@/features/agent-panel/runStatus";
 
 interface RunHeaderProps {
   run: AgentRunSummary | null;
@@ -25,7 +26,7 @@ export function RunHeader({ run }: RunHeaderProps) {
         <h2 className="mt-2 font-display text-2xl capitalize text-text">{run.role}</h2>
         <p className="mt-2 text-sm text-text-muted">Model {run.model}</p>
       </div>
-      <StateBadge state={run.state} />
+      <StateBadge state={getRunSummaryBadgeState(run)} />
     </div>
   );
 }

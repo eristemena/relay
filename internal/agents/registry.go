@@ -7,8 +7,8 @@ import (
 
 	"github.com/erisristemena/relay/internal/agents/openrouter"
 	"github.com/erisristemena/relay/internal/config"
-	"github.com/sashabaranov/go-openai/jsonschema"
 	"github.com/erisristemena/relay/internal/storage/sqlite"
+	"github.com/sashabaranov/go-openai/jsonschema"
 )
 
 type Registry struct {
@@ -50,6 +50,43 @@ func (r *Registry) NewRunner(apiKey string, task string, toolExecutor ToolExecut
 	profile := r.SelectProfile(task)
 	client := r.clientFactory(apiKey)
 	return &profileRunner{profile: profile, client: client, toolExecutor: toolExecutor}
+}
+
+func (r *Registry) NewAgent(apiKey string, role sqlite.AgentRole, toolExecutor ToolExecutor) Agent {
+	profile := r.profileForRole(role)
+	client := r.clientFactory(apiKey)
+	return &profileRunner{profile: profile, client: client, toolExecutor: toolExecutor}
+}
+
+func (r *Registry) NewPromptOnlyAgent(apiKey string, role sqlite.AgentRole) Agent {
+	client := r.clientFactory(apiKey)
+	switch role {
+	case sqlite.RolePlanner:
+		return NewPlannerAgent(r.models.Planner, client)
+	case sqlite.RoleReviewer:
+		return NewReviewerAgent(r.models.Reviewer, client)
+	case sqlite.RoleTester:
+		return NewTesterAgent(r.models.Tester, client)
+	case sqlite.RoleExplainer:
+		return NewExplainerAgent(r.models.Explainer, client)
+	default:
+		return NewCoderAgent(r.models.Coder, client)
+	}
+}
+
+func (r *Registry) profileForRole(role sqlite.AgentRole) Profile {
+	switch role {
+	case sqlite.RolePlanner:
+		return NewPlanner(r.models.Planner)
+	case sqlite.RoleReviewer:
+		return NewReviewer(r.models.Reviewer)
+	case sqlite.RoleTester:
+		return NewTester(r.models.Tester)
+	case sqlite.RoleExplainer:
+		return NewExplainer(r.models.Explainer)
+	default:
+		return NewCoder(r.models.Coder)
+	}
 }
 
 type profileRunner struct {
@@ -146,4 +183,41 @@ func toOpenRouterTools(definitions []ToolDefinition) []openrouter.ToolDefinition
 
 func stringProperty(description string) jsonschema.Definition {
 	return jsonschema.Definition{Type: jsonschema.String, Description: description}
+}
+
+type promptOnlyStreamAgent struct {
+	profile Profile
+	client  openrouter.StreamClient
+}
+
+func (a *promptOnlyStreamAgent) Profile() Profile {
+	return a.profile
+}
+
+func (a *promptOnlyStreamAgent) Run(ctx context.Context, task string, handlers StreamEventHandlers) error {
+	if handlers.OnStateChange != nil {
+		handlers.OnStateChange(sqlite.AgentExecutionStateThinking)
+	}
+
+	return a.client.Stream(ctx, openrouter.StreamRequest{
+		Model:        a.profile.Model,
+		SystemPrompt: a.profile.SystemPrompt,
+		UserPrompt:   task,
+	}, openrouter.StreamHandlers{
+		OnToken: func(text string) {
+			if handlers.OnToken != nil {
+				handlers.OnToken(text)
+			}
+		},
+		OnComplete: func(finishReason string) {
+			if handlers.OnComplete != nil {
+				handlers.OnComplete(finishReason)
+			}
+		},
+		OnError: func(code string, message string) {
+			if handlers.OnError != nil {
+				handlers.OnError(code, message)
+			}
+		},
+	})
 }

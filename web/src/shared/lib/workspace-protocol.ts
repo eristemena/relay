@@ -18,6 +18,14 @@ export type ConnectionMessageType =
   | "tool_call"
   | "tool_result"
   | "complete"
+  | "agent_spawned"
+  | "agent_state_changed"
+  | "task_assigned"
+  | "handoff_start"
+  | "handoff_complete"
+  | "agent_error"
+  | "run_complete"
+  | "run_error"
   | "error";
 
 export interface Envelope<TPayload> {
@@ -129,11 +137,15 @@ export interface AgentRunSummary {
   model: string;
   state:
     | "accepted"
+    | "active"
     | "thinking"
     | "tool_running"
     | "approval_required"
     | "completed"
+    | "cancelled"
+    | "halted"
     | "errored";
+  error_code?: string;
   started_at: string;
   completed_at?: string;
   has_tool_activity: boolean;
@@ -151,6 +163,7 @@ export interface RunEventBase {
   role: AgentRunSummary["role"];
   model: string;
   occurred_at: string;
+  agent_id?: string;
 }
 
 export interface StateChangePayload extends RunEventBase {
@@ -192,6 +205,41 @@ export interface CompletePayload extends RunEventBase {
   finish_reason: string;
 }
 
+export interface AgentSpawnedPayload extends RunEventBase {
+  agent_id: string;
+  label: string;
+  spawn_order: number;
+}
+
+export interface AgentStateChangedPayload extends RunEventBase {
+  agent_id: string;
+  state:
+    | "queued"
+    | "assigned"
+    | "thinking"
+    | "streaming"
+    | "completed"
+    | "errored"
+    | "cancelled"
+    | "blocked";
+  message: string;
+}
+
+export interface TaskAssignedPayload extends RunEventBase {
+  agent_id: string;
+  task_text: string;
+}
+
+export interface HandoffPayload extends RunEventBase {
+  from_agent_id: string;
+  to_agent_id: string;
+  reason: string;
+}
+
+export interface RunCompletePayload extends RunEventBase {
+  summary: string;
+}
+
 export interface WorkspaceStatusPayload {
   phase: string;
   message: string;
@@ -202,6 +250,7 @@ export interface ErrorPayload {
   message: string;
   session_id?: string;
   run_id?: string;
+  agent_id?: string;
   sequence?: number;
   replay?: boolean;
   role?: AgentRunSummary["role"];
@@ -216,6 +265,11 @@ export type RunEventPayload =
   | ToolCallPayload
   | ToolResultPayload
   | CompletePayload
+  | AgentSpawnedPayload
+  | AgentStateChangedPayload
+  | TaskAssignedPayload
+  | HandoffPayload
+  | RunCompletePayload
   | ErrorPayload;
 
 export type IncomingEnvelope =
@@ -227,7 +281,12 @@ export type IncomingEnvelope =
   | Envelope<TokenPayload>
   | Envelope<ToolCallPayload>
   | Envelope<ToolResultPayload>
-  | Envelope<CompletePayload>;
+  | Envelope<CompletePayload>
+  | Envelope<AgentSpawnedPayload>
+  | Envelope<AgentStateChangedPayload>
+  | Envelope<TaskAssignedPayload>
+  | Envelope<HandoffPayload>
+  | Envelope<RunCompletePayload>;
 
 export function createBootstrapRequest(lastSessionId?: string): Envelope<WorkspaceBootstrapRequestPayload> {
   return {

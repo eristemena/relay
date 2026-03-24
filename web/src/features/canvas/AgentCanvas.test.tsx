@@ -1,7 +1,11 @@
-import { fireEvent, screen, within } from "@testing-library/react";
+import { act, fireEvent, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { AgentCanvas } from "@/features/canvas/AgentCanvas";
-import { renderIsolatedCanvas } from "@/shared/lib/test-helpers";
+import { WorkspaceCanvas } from "@/features/canvas/WorkspaceCanvas";
+import {
+  buildWorkspaceSnapshot,
+  renderWithWorkspace,
+} from "@/shared/lib/test-helpers";
+import { workspaceStore } from "@/shared/lib/workspace-store";
 
 vi.mock("@xyflow/react", async () => {
   const React = await import("react");
@@ -22,7 +26,9 @@ vi.mock("@xyflow/react", async () => {
       Left: "left",
       Right: "right",
     },
-    ReactFlowProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    ReactFlowProvider: ({ children }: { children: React.ReactNode }) => (
+      <>{children}</>
+    ),
     ReactFlow: ({
       children,
       edges,
@@ -33,13 +39,20 @@ vi.mock("@xyflow/react", async () => {
     }: {
       children: React.ReactNode;
       edges: Array<{ id: string }>;
-      nodeTypes: Record<string, (props: Record<string, unknown>) => React.ReactNode>;
+      nodeTypes: Record<
+        string,
+        (props: Record<string, unknown>) => React.ReactNode
+      >;
       nodes: Array<Record<string, unknown>>;
       onNodeClick?: (event: unknown, node: { id: string }) => void;
       onPaneClick?: () => void;
     }) => (
       <div data-testid="react-flow-mock">
-        <button aria-label="Canvas background" onClick={onPaneClick} type="button" />
+        <button
+          aria-label="Canvas background"
+          onClick={onPaneClick}
+          type="button"
+        />
         <div data-testid="react-flow-edge-count">{edges.length}</div>
         {nodes.map((node) => {
           const NodeComponent = nodeTypes[String(node.type)];
@@ -72,107 +85,957 @@ vi.mock("@xyflow/react", async () => {
 });
 
 describe("AgentCanvas", () => {
-  it("replaces the empty state after adding nodes from the toolbar", () => {
-    renderIsolatedCanvas(<AgentCanvas sessionLabel="Inspect relay startup" />);
+  it("shows the orchestration empty state before any node has spawned", () => {
+    const snapshot = buildWorkspaceSnapshot();
+    renderWithWorkspace(
+      <WorkspaceCanvas activeSession={snapshot.sessions[0]} />,
+      snapshot,
+    );
 
     expect(
       screen.getByRole("heading", {
-        name: /start by placing the first agent on the canvas/i,
+        name: /submit a goal to start the orchestration graph/i,
       }),
     ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: /add node/i }));
-
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      /choose an agent role before adding a node/i,
-    );
-
-    fireEvent.change(screen.getByLabelText(/agent role/i), {
-      target: { value: "planner" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /add node/i }));
-
-    expect(
-      screen.getByRole("button", { name: /planner 1, planner node/i }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent(/1 node and 0 handoffs/i);
-
-    fireEvent.change(screen.getByLabelText(/agent role/i), {
-      target: { value: "coder" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /add node/i }));
-
-    expect(
-      screen.getByRole("button", { name: /coder 2, coder node/i }),
-    ).toBeInTheDocument();
-    expect(screen.getByTestId("react-flow-edge-count")).toHaveTextContent("1");
   });
 
-  it("opens details, preserves coordinates on state changes, and clears selection from the canvas background", () => {
-    renderIsolatedCanvas(<AgentCanvas sessionLabel="Inspect relay startup" />);
-
-    fireEvent.change(screen.getByLabelText(/agent role/i), {
-      target: { value: "planner" },
+  it("appends spawned nodes and patches node state without losing interactivity", () => {
+    const snapshot = buildWorkspaceSnapshot({
+      active_run_id: "run_1",
+      run_summaries: [
+        {
+          id: "run_1",
+          task_text_preview: "Inspect relay startup",
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          state: "active",
+          started_at: "2026-03-24T12:00:00Z",
+          has_tool_activity: false,
+        },
+      ],
     });
-    fireEvent.click(screen.getByRole("button", { name: /add node/i }));
-    fireEvent.change(screen.getByLabelText(/agent role/i), {
-      target: { value: "coder" },
+    renderWithWorkspace(
+      <WorkspaceCanvas activeSession={snapshot.sessions[0]} />,
+      snapshot,
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_planner_1",
+          sequence: 1,
+          replay: false,
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          label: "Planner",
+          spawn_order: 1,
+          occurred_at: "2026-03-24T12:00:00Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "task_assigned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_planner_1",
+          sequence: 2,
+          replay: false,
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          task_text: "Break the goal into stages.",
+          occurred_at: "2026-03-24T12:00:01Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "agent_state_changed",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_planner_1",
+          sequence: 3,
+          replay: false,
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          state: "thinking",
+          message: "Planner is breaking the task into stages.",
+          occurred_at: "2026-03-24T12:00:02Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "token",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_planner_1",
+          sequence: 4,
+          replay: false,
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          text: "Plan the work in stages.",
+          occurred_at: "2026-03-24T12:00:03Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_coder_2",
+          sequence: 5,
+          replay: false,
+          role: "coder",
+          model: "anthropic/claude-sonnet-4-5",
+          label: "Coder",
+          spawn_order: 2,
+          occurred_at: "2026-03-24T12:00:04Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "handoff_complete",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_planner_1",
+          sequence: 6,
+          replay: false,
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          from_agent_id: "agent_planner_1",
+          to_agent_id: "agent_coder_2",
+          reason: "planner_completed",
+          occurred_at: "2026-03-24T12:00:05Z",
+        },
+      } as never);
     });
-    fireEvent.click(screen.getByRole("button", { name: /add node/i }));
 
-    const coderNode = screen.getByRole("button", {
-      name: /coder 2, coder node/i,
+    expect(
+      screen.getByRole("button", { name: /planner, planner node/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /coder, coder node/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("react-flow-edge-count")).toHaveTextContent("1");
+
+    const plannerPosition = screen.getByTestId("node-position-agent_planner_1");
+    const leftBefore = plannerPosition.style.left;
+    const topBefore = plannerPosition.style.top;
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /planner, planner node/i })[0],
+    );
+
+    expect(screen.getAllByText("Planner").length).toBeGreaterThan(0);
+    expect(screen.getByText(/break the goal into stages/i)).toBeInTheDocument();
+    expect(
+      screen.getAllByText(/plan the work in stages/i).length,
+    ).toBeGreaterThan(0);
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent_state_changed",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_planner_1",
+          sequence: 7,
+          replay: false,
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          state: "completed",
+          message: "Planner completed its task.",
+          occurred_at: "2026-03-24T12:00:06Z",
+        },
+      } as never);
     });
-    const coderPosition = screen.getByTestId("node-position-node_2");
-    const leftBefore = coderPosition.style.left;
-    const topBefore = coderPosition.style.top;
 
-    fireEvent.click(coderNode);
-
-    expect(screen.getAllByText("Coder 2")).toHaveLength(2);
-    expect(screen.getByText(/local-only detail panel/i)).toBeInTheDocument();
-
-    fireEvent.change(screen.getByLabelText(/local node state/i), {
-      target: { value: "thinking" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /apply state/i }));
-
-    expect(within(coderPosition).getByText("Thinking")).toBeInTheDocument();
-    expect(coderPosition.style.left).toBe(leftBefore);
-    expect(coderPosition.style.top).toBe(topBefore);
+    expect(within(plannerPosition).getByText("Completed")).toBeInTheDocument();
+    expect(plannerPosition.style.left).toBe(leftBefore);
+    expect(plannerPosition.style.top).toBe(topBefore);
 
     fireEvent.click(screen.getByRole("button", { name: /canvas background/i }));
 
     expect(
-      screen.queryByText(/local-only detail panel/i),
-    ).not.toBeInTheDocument();
+      screen.getByText(/select a node on the canvas/i),
+    ).toBeInTheDocument();
   });
 
-  it("keeps viewport controls available while nodes and local states change", () => {
-    renderIsolatedCanvas(<AgentCanvas sessionLabel="Inspect relay startup" />);
+  it("keeps viewport controls available while orchestration nodes stream and fail", () => {
+    const snapshot = buildWorkspaceSnapshot({
+      active_run_id: "run_1",
+      run_summaries: [
+        {
+          id: "run_1",
+          task_text_preview: "Inspect relay startup",
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          state: "active",
+          started_at: "2026-03-24T12:00:00Z",
+          has_tool_activity: false,
+        },
+      ],
+    });
+    renderWithWorkspace(
+      <WorkspaceCanvas activeSession={snapshot.sessions[0]} />,
+      snapshot,
+    );
 
-    fireEvent.change(screen.getByLabelText(/agent role/i), {
-      target: { value: "planner" },
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_tester_3",
+          sequence: 1,
+          replay: false,
+          role: "tester",
+          model: "deepseek/deepseek-chat",
+          label: "Tester",
+          spawn_order: 3,
+          occurred_at: "2026-03-24T12:00:00Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "token",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_tester_3",
+          sequence: 2,
+          replay: false,
+          role: "tester",
+          model: "deepseek/deepseek-chat",
+          text: "Validate the plan against constraints.",
+          occurred_at: "2026-03-24T12:00:01Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "agent_error",
+        payload: {
+          code: "agent_generation_failed",
+          message: "Tester could not finish the summary.",
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_tester_3",
+          sequence: 3,
+          replay: false,
+          role: "tester",
+          model: "deepseek/deepseek-chat",
+          terminal: true,
+          occurred_at: "2026-03-24T12:00:02Z",
+        },
+      } as never);
     });
-    fireEvent.click(screen.getByRole("button", { name: /add node/i }));
-    fireEvent.change(screen.getByLabelText(/agent role/i), {
-      target: { value: "coder" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /add node/i }));
 
     const zoomIn = screen.getByRole("button", { name: /zoom in/i });
     const fitView = screen.getByRole("button", { name: /fit view/i });
 
     fireEvent.click(
-      screen.getByRole("button", { name: /coder 2, coder node/i }),
+      screen.getAllByRole("button", { name: /tester, tester node/i })[0],
     );
-    fireEvent.change(screen.getByLabelText(/agent role/i), {
-      target: { value: "tester" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /add node/i }));
 
-    expect(screen.getByText(/local-only detail panel/i)).toBeInTheDocument();
+    expect(
+      screen.getAllByText(/tester could not finish the summary/i).length,
+    ).toBeGreaterThan(0);
     expect(zoomIn).toBeEnabled();
     expect(fitView).toBeEnabled();
+  });
+
+  it("switches the detail panel between nodes while transcripts continue updating", () => {
+    const snapshot = buildWorkspaceSnapshot({
+      active_run_id: "run_1",
+      run_summaries: [
+        {
+          id: "run_1",
+          task_text_preview: "Inspect relay startup",
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          state: "active",
+          started_at: "2026-03-24T12:00:00Z",
+          has_tool_activity: false,
+        },
+      ],
+    });
+    renderWithWorkspace(
+      <WorkspaceCanvas activeSession={snapshot.sessions[0]} />,
+      snapshot,
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_planner_1",
+          sequence: 1,
+          replay: false,
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          label: "Planner",
+          spawn_order: 1,
+          occurred_at: "2026-03-24T12:00:00Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_coder_2",
+          sequence: 2,
+          replay: false,
+          role: "coder",
+          model: "anthropic/claude-sonnet-4-5",
+          label: "Coder",
+          spawn_order: 2,
+          occurred_at: "2026-03-24T12:00:01Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "token",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_planner_1",
+          sequence: 3,
+          replay: false,
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          text: "Planner transcript.",
+          occurred_at: "2026-03-24T12:00:02Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "token",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_coder_2",
+          sequence: 4,
+          replay: false,
+          role: "coder",
+          model: "anthropic/claude-sonnet-4-5",
+          text: "Coder transcript.",
+          occurred_at: "2026-03-24T12:00:03Z",
+        },
+      } as never);
+    });
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /planner, planner node/i })[0],
+    );
+    expect(screen.getAllByText(/planner transcript\./i).length).toBeGreaterThan(
+      0,
+    );
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /coder, coder node/i })[0],
+    );
+    expect(screen.getAllByText(/coder transcript\./i).length).toBeGreaterThan(
+      0,
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "token",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_coder_2",
+          sequence: 5,
+          replay: false,
+          role: "coder",
+          model: "anthropic/claude-sonnet-4-5",
+          text: " More output.",
+          occurred_at: "2026-03-24T12:00:04Z",
+        },
+      } as never);
+    });
+
+    expect(
+      screen.getAllByText(/coder transcript\. more output\./i).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("renders long task and summary text inside dedicated detail regions", () => {
+    const snapshot = buildWorkspaceSnapshot({
+      active_run_id: "run_1",
+      run_summaries: [
+        {
+          id: "run_1",
+          task_text_preview: "Review the environment notes",
+          role: "reviewer",
+          model: "anthropic/claude-sonnet-4-5",
+          state: "completed",
+          started_at: "2026-03-24T12:00:00Z",
+          completed_at: "2026-03-24T12:00:03Z",
+          has_tool_activity: false,
+        },
+      ],
+    });
+
+    renderWithWorkspace(
+      <WorkspaceCanvas activeSession={snapshot.sessions[0]} />,
+      snapshot,
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_reviewer_4",
+          sequence: 1,
+          replay: false,
+          role: "reviewer",
+          model: "anthropic/claude-sonnet-4-5",
+          label: "Reviewer",
+          spawn_order: 4,
+          occurred_at: "2026-03-24T12:00:00Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "task_assigned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_reviewer_4",
+          sequence: 2,
+          replay: false,
+          role: "reviewer",
+          model: "anthropic/claude-sonnet-4-5",
+          task_text:
+            "Original goal: add note to each variable in .env.example\n\nPlanner output: I'll help you add explanatory notes to each variable so the file stays readable even when each line gets very long and includes connection strings, tokens, and URLs.",
+          occurred_at: "2026-03-24T12:00:01Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "agent_state_changed",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_reviewer_4",
+          sequence: 3,
+          replay: false,
+          role: "reviewer",
+          model: "anthropic/claude-sonnet-4-5",
+          state: "completed",
+          message:
+            "Reviewer condensed the orchestration into a readable handoff with long notes, URLs, and inline examples.",
+          occurred_at: "2026-03-24T12:00:02Z",
+        },
+      } as never);
+    });
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /reviewer, reviewer node/i })[0],
+    );
+
+    expect(
+      screen.getByRole("region", { name: /selected node task/i }),
+    ).toHaveClass("agent-canvas-detail-copy");
+    expect(
+      screen.getByRole("region", { name: /selected node summary/i }),
+    ).toHaveClass("agent-canvas-detail-copy");
+    expect(
+      screen.getByRole("region", { name: /selected node transcript/i }),
+    ).toHaveClass("agent-canvas-detail-copy");
+  });
+
+  it("renders markdown in the final run result and selected node summary", () => {
+    const snapshot = buildWorkspaceSnapshot({
+      active_run_id: "run_1",
+      run_summaries: [
+        {
+          id: "run_1",
+          task_text_preview: "Explain the env example",
+          role: "reviewer",
+          model: "anthropic/claude-sonnet-4-5",
+          state: "completed",
+          started_at: "2026-03-24T12:00:00Z",
+          completed_at: "2026-03-24T12:00:03Z",
+          has_tool_activity: false,
+        },
+      ],
+    });
+
+    renderWithWorkspace(
+      <WorkspaceCanvas activeSession={snapshot.sessions[0]} />,
+      snapshot,
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_reviewer_4",
+          sequence: 1,
+          replay: false,
+          role: "reviewer",
+          model: "anthropic/claude-sonnet-4-5",
+          label: "Reviewer",
+          spawn_order: 4,
+          occurred_at: "2026-03-24T12:00:00Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "agent_state_changed",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_reviewer_4",
+          sequence: 2,
+          replay: false,
+          role: "reviewer",
+          model: "anthropic/claude-sonnet-4-5",
+          state: "completed",
+          message:
+            "**Goal:** Explain each setting in `.env.example` with a readable checklist.",
+          occurred_at: "2026-03-24T12:00:01Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "run_complete",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          sequence: 3,
+          replay: false,
+          role: "reviewer",
+          model: "anthropic/claude-sonnet-4-5",
+          summary:
+            "**Goal:** Explain the file clearly.\n\n1. Ask for the `.env.example` file.\n2. Add comments above each variable.",
+          occurred_at: "2026-03-24T12:00:02Z",
+        },
+      } as never);
+    });
+
+    const status = screen
+      .getAllByRole("status")
+      .find((element) => /Ask for the/i.test(element.textContent ?? ""));
+
+    expect(status).toBeDefined();
+    expect(
+      within(status as HTMLElement).getByText("Goal:", { selector: "strong" }),
+    ).toBeInTheDocument();
+    expect(
+      within(status as HTMLElement).getByText(".env.example", {
+        selector: "code",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(status as HTMLElement).getByText(/Ask for the/i),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /reviewer, reviewer node/i })[0],
+    );
+
+    const summaryRegion = screen.getByRole("region", {
+      name: /selected node summary/i,
+    });
+    expect(
+      within(summaryRegion).queryByText(/\*\*Goal:\*\*/i),
+    ).not.toBeInTheDocument();
+    expect(
+      within(summaryRegion).getByText("Goal:", { selector: "strong" }),
+    ).toBeInTheDocument();
+    expect(
+      within(summaryRegion).getByText(".env.example", { selector: "code" }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders markdown in the selected node transcript with transcript wrapping styles", () => {
+    const snapshot = buildWorkspaceSnapshot({
+      active_run_id: "run_1",
+      run_summaries: [
+        {
+          id: "run_1",
+          task_text_preview: "Explain the env example",
+          role: "reviewer",
+          model: "anthropic/claude-sonnet-4-5",
+          state: "completed",
+          started_at: "2026-03-24T12:00:00Z",
+          completed_at: "2026-03-24T12:00:03Z",
+          has_tool_activity: false,
+        },
+      ],
+    });
+
+    renderWithWorkspace(
+      <WorkspaceCanvas activeSession={snapshot.sessions[0]} />,
+      snapshot,
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_reviewer_4",
+          sequence: 1,
+          replay: false,
+          role: "reviewer",
+          model: "anthropic/claude-sonnet-4-5",
+          label: "Reviewer",
+          spawn_order: 4,
+          occurred_at: "2026-03-24T12:00:00Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "token",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_reviewer_4",
+          sequence: 2,
+          replay: false,
+          role: "reviewer",
+          model: "anthropic/claude-sonnet-4-5",
+          text: [
+            "## Transcript summary",
+            "",
+            "- Includes security reminders for sensitive keys",
+            "- Groups related configurations together",
+            "",
+            "```text",
+            "Offers guidance on when to modify defaults",
+            "```",
+          ].join("\n"),
+          occurred_at: "2026-03-24T12:00:01Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "agent_state_changed",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_reviewer_4",
+          sequence: 3,
+          replay: false,
+          role: "reviewer",
+          model: "anthropic/claude-sonnet-4-5",
+          state: "completed",
+          message: "Reviewer finished the transcript.",
+          occurred_at: "2026-03-24T12:00:02Z",
+        },
+      } as never);
+    });
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /reviewer, reviewer node/i })[0],
+    );
+
+    const transcriptRegion = screen.getByRole("region", {
+      name: /selected node transcript/i,
+    });
+
+    expect(transcriptRegion).toHaveClass("relay-transcript-copy");
+    expect(transcriptRegion.querySelector(".relay-markdown")).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: /transcript summary/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/includes security reminders/i),
+    ).toBeInTheDocument();
+    expect(
+      transcriptRegion.querySelector(".relay-markdown-pre"),
+    ).not.toBeNull();
+  });
+
+  it("shows a halted run reason without spawning downstream nodes after planner failure", () => {
+    const snapshot = buildWorkspaceSnapshot({
+      active_run_id: "run_1",
+      run_summaries: [
+        {
+          id: "run_1",
+          task_text_preview: "Stop after planner failure",
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          state: "active",
+          started_at: "2026-03-24T12:00:00Z",
+          has_tool_activity: false,
+        },
+      ],
+    });
+    renderWithWorkspace(
+      <WorkspaceCanvas activeSession={snapshot.sessions[0]} />,
+      snapshot,
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_planner_1",
+          sequence: 1,
+          replay: false,
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          label: "Planner",
+          spawn_order: 1,
+          occurred_at: "2026-03-24T12:00:00Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "agent_error",
+        payload: {
+          code: "agent_generation_failed",
+          message: "Planner could not break the goal into stages.",
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_planner_1",
+          sequence: 2,
+          replay: false,
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          terminal: true,
+          occurred_at: "2026-03-24T12:00:01Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "run_error",
+        payload: {
+          code: "planner_required",
+          message:
+            "The run stopped because the planner did not complete and downstream work could not continue.",
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_planner_1",
+          sequence: 3,
+          replay: false,
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          terminal: true,
+          occurred_at: "2026-03-24T12:00:02Z",
+        },
+      } as never);
+    });
+
+    expect(
+      screen.getByRole("alert", {
+        name: "",
+      }),
+    ).toHaveTextContent(
+      /planner did not complete and downstream work could not continue/i,
+    );
+    expect(
+      screen.getByRole("button", { name: /planner, planner node/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /coder, coder node/i }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /planner, planner node/i }),
+    );
+
+    expect(
+      screen.getAllByText(/planner could not break the goal into stages/i)
+        .length,
+    ).toBeGreaterThan(0);
+    expect(screen.getAllByText(/run halt/i).length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText(
+        /the run stopped because the planner did not complete and downstream work could not continue/i,
+      ).length,
+    ).toBeGreaterThan(1);
+  });
+
+  it("matches planner halt details when the run_error payload sends a blank agent_id", () => {
+    const snapshot = buildWorkspaceSnapshot({
+      active_run_id: "run_1",
+      run_summaries: [
+        {
+          id: "run_1",
+          task_text_preview: "Stop after planner failure",
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          state: "active",
+          started_at: "2026-03-24T12:00:00Z",
+          has_tool_activity: false,
+        },
+      ],
+    });
+    renderWithWorkspace(
+      <WorkspaceCanvas activeSession={snapshot.sessions[0]} />,
+      snapshot,
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_planner_1",
+          sequence: 1,
+          replay: false,
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          label: "Planner",
+          spawn_order: 1,
+          occurred_at: "2026-03-24T12:00:00Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "run_error",
+        payload: {
+          code: "run_stage_failed",
+          message:
+            "The run stopped because Relay could not finish the planner stage.",
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "",
+          sequence: 2,
+          replay: false,
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          terminal: true,
+          occurred_at: "2026-03-24T12:00:02Z",
+        },
+      } as never);
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /planner, planner node/i }),
+    );
+
+    expect(screen.getAllByText(/run halt/i).length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText(
+        /the run stopped because relay could not finish the planner stage/i,
+      ).length,
+    ).toBeGreaterThan(1);
+  });
+
+  it("surfaces clarification-required halts with a dedicated label", () => {
+    const snapshot = buildWorkspaceSnapshot({
+      active_run_id: "run_1",
+      run_summaries: [
+        {
+          id: "run_1",
+          task_text_preview: "Comment the env example",
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          state: "active",
+          started_at: "2026-03-24T12:00:00Z",
+          has_tool_activity: false,
+        },
+      ],
+    });
+    renderWithWorkspace(
+      <WorkspaceCanvas activeSession={snapshot.sessions[0]} />,
+      snapshot,
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_planner_1",
+          sequence: 1,
+          replay: false,
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          label: "Planner",
+          spawn_order: 1,
+          occurred_at: "2026-03-24T12:00:00Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_coder_2",
+          sequence: 2,
+          replay: false,
+          role: "coder",
+          model: "anthropic/claude-sonnet-4-5",
+          label: "Coder",
+          spawn_order: 2,
+          occurred_at: "2026-03-24T12:00:01Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "agent_error",
+        payload: {
+          code: "coder_clarification_required",
+          message:
+            "The run stopped because the coder asked for user clarification instead of producing actionable output.",
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_coder_2",
+          sequence: 3,
+          replay: false,
+          role: "coder",
+          model: "anthropic/claude-sonnet-4-5",
+          terminal: true,
+          occurred_at: "2026-03-24T12:00:02Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "run_error",
+        payload: {
+          code: "coder_clarification_required",
+          message:
+            "The run stopped because the coder asked for user clarification instead of producing actionable output.",
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_coder_2",
+          sequence: 4,
+          replay: false,
+          role: "coder",
+          model: "anthropic/claude-sonnet-4-5",
+          terminal: true,
+          occurred_at: "2026-03-24T12:00:03Z",
+        },
+      } as never);
+    });
+
+    expect(
+      screen.getAllByText(/clarification required/i).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getByText(
+        /relay stopped before continuing to downstream agents because one stage asked for more input instead of taking action/i,
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /coder, coder node/i }));
+
+    expect(
+      screen
+        .getByRole("button", { name: /coder, coder node/i })
+        .closest("[data-state]"),
+    ).toHaveAttribute("data-state", "clarification_required");
+    expect(
+      screen.getAllByRole("heading", { name: "Coder" }).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText("Clarification required", { selector: "span" })
+        .length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText(/clarification required/i).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText(
+        /the run stopped because the coder asked for user clarification instead of producing actionable output/i,
+      ).length,
+    ).toBeGreaterThan(0);
   });
 });

@@ -114,6 +114,10 @@ textarea {
   box-shadow: 0 0 0 1px var(--color-error);
 }
 
+.state-glow-clarification {
+  box-shadow: 0 0 0 1px var(--color-brand-mid), 0 0 0 3px color-mix(in srgb, var(--color-error) 24%, transparent);
+}
+
 .live-cursor {
   display: inline-block;
   width: 0.6rem;
@@ -221,6 +225,7 @@ textarea {
 .agent-canvas-node {
   width: 100%;
   min-width: 0;
+  overflow-wrap: anywhere;
   border-radius: 1.25rem;
   border: 1px solid var(--color-border);
   background: linear-gradient(180deg, rgba(17, 17, 32, 0.96), rgba(13, 13, 24, 0.98));
@@ -231,7 +236,9 @@ textarea {
   border-color: var(--color-brand);
 }
 
-.agent-canvas-node[data-state="idle"] {
+.agent-canvas-node[data-state="queued"],
+.agent-canvas-node[data-state="assigned"],
+.agent-canvas-node[data-state="blocked"] {
   box-shadow: 0 0 0 1px var(--color-border);
 }
 
@@ -239,15 +246,21 @@ textarea {
   box-shadow: 0 0 0 1px var(--color-brand-mid), 0 0 20px rgba(124, 58, 237, 0.22);
 }
 
-.agent-canvas-node[data-state="executing"] {
+.agent-canvas-node[data-state="streaming"] {
   box-shadow: 0 0 0 1px var(--color-brand-dim), 0 0 14px color-mix(in srgb, var(--color-brand-dim) 36%, transparent);
 }
 
-.agent-canvas-node[data-state="complete"] {
+.agent-canvas-node[data-state="completed"] {
   box-shadow: 0 0 0 1px var(--color-success), 0 0 12px rgba(52, 211, 153, 0.16);
 }
 
-.agent-canvas-node[data-state="error"] {
+.agent-canvas-node[data-state="clarification_required"] {
+  border-style: dashed;
+  box-shadow: 0 0 0 1px var(--color-brand-mid), 0 0 0 4px color-mix(in srgb, var(--color-error) 20%, transparent), 0 0 16px color-mix(in srgb, var(--color-brand-mid) 28%, transparent);
+}
+
+.agent-canvas-node[data-state="errored"],
+.agent-canvas-node[data-state="cancelled"] {
   box-shadow: 0 0 0 1px var(--color-error);
 }
 
@@ -275,6 +288,139 @@ textarea {
 
 .agent-canvas-detail-panel {
   min-width: 0;
+}
+
+.agent-canvas-detail-copy {
+  min-width: 0;
+  max-width: 100%;
+  max-height: 12rem;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--color-raised) 84%, transparent);
+  padding: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.agent-canvas-detail-panel,
+.agent-canvas-stage,
+.agent-canvas-shell {
+  overflow-wrap: anywhere;
+}
+
+.relay-markdown {
+  min-width: 0;
+  color: var(--color-text);
+}
+
+.relay-transcript-copy {
+  min-width: 0;
+  max-width: 100%;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+
+.relay-transcript-markdown {
+  min-width: 0;
+}
+
+.relay-transcript-markdown .relay-markdown-pre {
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.relay-transcript-markdown .relay-markdown-code-block {
+  display: block;
+  white-space: inherit;
+  overflow-wrap: inherit;
+}
+
+.relay-transcript-cursor {
+  margin-top: 0.75rem;
+  line-height: 0;
+}
+
+.relay-transcript-cursor .live-cursor {
+  margin-left: 0;
+}
+
+.relay-markdown > :first-child {
+  margin-top: 0;
+}
+
+.relay-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.relay-markdown p,
+.relay-markdown ul,
+.relay-markdown ol,
+.relay-markdown pre,
+.relay-markdown blockquote {
+  margin: 0.875rem 0 0;
+}
+
+.relay-markdown li + li {
+  margin-top: 0.35rem;
+}
+
+.relay-markdown ul,
+.relay-markdown ol {
+  padding-left: 1.4rem;
+}
+
+.relay-markdown strong {
+  color: var(--color-text);
+  font-weight: 700;
+}
+
+.relay-markdown em {
+  font-style: italic;
+}
+
+.relay-markdown-link {
+  color: var(--color-text);
+  text-decoration: underline;
+  text-decoration-color: var(--color-brand-dim);
+  text-underline-offset: 0.2em;
+}
+
+.relay-markdown-code-inline {
+  border: 1px solid var(--color-border);
+  border-radius: 0.55rem;
+  background: color-mix(in srgb, var(--color-raised) 88%, transparent);
+  padding: 0.1rem 0.4rem;
+  font-family: var(--font-jetbrains-mono);
+  font-size: 0.92em;
+}
+
+.relay-markdown-pre {
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 0.9rem;
+  background: color-mix(in srgb, var(--color-base) 84%, transparent);
+  padding: 0.9rem 1rem;
+}
+
+.relay-markdown-code-block {
+  font-family: var(--font-jetbrains-mono);
+  font-size: 0.92rem;
+  color: var(--color-text);
+}
+
+@media (forced-colors: active) {
+  .relay-markdown-link {
+    color: LinkText;
+  }
+
+  .relay-markdown-code-inline,
+  .relay-markdown-pre {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
 }
 
 .workspace-utility-shell {
@@ -322,6 +468,146 @@ textarea {
   min-width: min(100%, 24rem);
 }
 
+.workspace-task-dock {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 50;
+  display: flex;
+  justify-content: center;
+  padding: 0 1rem 1rem;
+  pointer-events: none;
+}
+
+.workspace-task-dock-inner {
+  width: min(72rem, 100%);
+  pointer-events: auto;
+}
+
+.workspace-task-dock-card {
+  border: 1px solid var(--color-border);
+  background:
+    linear-gradient(180deg, rgba(17, 17, 32, 0.98), rgba(13, 13, 24, 0.98));
+  box-shadow: 0 -16px 40px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(10px);
+}
+
+.workspace-task-dock-card[data-expanded="false"] {
+  border-radius: 999px;
+}
+
+.agent-command-label {
+  display: inline-flex;
+  margin-bottom: 0.6rem;
+  padding: 0 0.25rem;
+  color: var(--color-text-muted);
+  font-family: var(--font-jetbrains-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.agent-command-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 4.6rem;
+  border: 1px solid color-mix(in srgb, var(--color-brand-mid) 38%, var(--color-border));
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, rgba(9, 9, 15, 0.86), rgba(13, 13, 24, 0.92));
+  padding: 0.6rem 0.75rem 0.6rem 1rem;
+  box-shadow: inset 0 1px 0 rgba(167, 139, 250, 0.08);
+}
+
+.workspace-task-dock-card[data-expanded="true"] .agent-command-row {
+  align-items: flex-start;
+  border-radius: 1.8rem;
+}
+
+.agent-command-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  color: color-mix(in srgb, var(--color-brand) 72%, var(--color-text));
+}
+
+.agent-command-input {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 1.05rem;
+  line-height: 1.55;
+  outline: none;
+  overflow-wrap: anywhere;
+  resize: none;
+}
+
+.agent-command-input::placeholder {
+  color: color-mix(in srgb, var(--color-text-muted) 88%, transparent);
+}
+
+.agent-command-input-collapsed {
+  height: 2.8rem;
+  min-height: 2.8rem;
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
+}
+
+.agent-command-input-expanded {
+  min-height: 5.1rem;
+  padding-top: 0.75rem;
+  padding-bottom: 0.35rem;
+}
+
+.agent-command-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  align-self: center;
+}
+
+.workspace-task-dock-card[data-expanded="true"] .agent-command-actions {
+  align-self: flex-end;
+}
+
+.agent-command-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 3rem;
+  padding: 0 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-raised);
+  color: var(--color-text);
+  font-size: 0.92rem;
+}
+
+.agent-command-submit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 3rem;
+  padding: 0 1rem 0 1.1rem;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--color-brand), var(--color-brand-mid));
+  color: var(--color-base);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-brand) 38%, transparent);
+}
+
+.agent-command-submit-label {
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
 @media (max-width: 860px) {
   .workspace-grid {
     grid-template-columns: 1fr;
@@ -339,11 +625,38 @@ textarea {
     min-width: 0;
     width: 100%;
   }
+
+  .workspace-task-dock {
+    padding-right: 0.75rem;
+    padding-left: 0.75rem;
+  }
+
+  .agent-command-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .agent-command-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+    padding-left: 3rem;
+  }
 }
 
 @media (max-width: 420px) {
   .workspace-grid {
     gap: 0.75rem;
+  }
+
+  .agent-canvas-stage {
+    min-height: 26rem;
+  }
+
+  .agent-canvas-node-button {
+    padding: 0.875rem;
+  }
+
+  .agent-canvas-detail-panel {
+    padding: 1rem;
   }
 
   .workspace-grid > aside,
@@ -358,6 +671,116 @@ textarea {
     overflow-wrap: anywhere;
   }
 
+  .workspace-task-dock {
+    padding: 0;
+  }
+
+  .workspace-task-dock-inner {
+    width: 100%;
+  }
+
+  .workspace-task-dock-card {
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 1.5rem 1.5rem 0 0;
+    box-shadow: 0 -20px 44px rgba(0, 0, 0, 0.38);
+  }
+
+  .workspace-task-dock-card[data-expanded="false"] {
+    border-radius: 1.5rem 1.5rem 0 0;
+  }
+
+  .agent-command-row {
+    gap: 0.6rem;
+    padding: 0.55rem 0.7rem 0.7rem 0.8rem;
+    border-radius: 1.4rem;
+  }
+
+  .agent-command-mark {
+    width: 2.3rem;
+    height: 2.3rem;
+  }
+
+  .agent-command-input {
+    font-size: 0.98rem;
+  }
+
+  .agent-command-actions {
+    padding-left: 0;
+  }
+
+  .agent-command-cancel,
+  .agent-command-submit {
+    min-height: 2.75rem;
+  }
+
+
+@media (forced-colors: active) {
+  .skip-link,
+  .panel-surface,
+  .stream-card,
+  .agent-canvas-stage,
+  .agent-canvas-node,
+  .agent-canvas-detail-panel,
+  .workspace-status-inline,
+  .workspace-utility-drawer,
+  .workspace-task-dock-card {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .agent-canvas-node-button,
+  .agent-canvas-flow .react-flow__controls-button {
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .agent-command-row,
+  .agent-command-cancel,
+  .agent-command-submit {
+    border-color: ButtonBorder;
+    background: Canvas;
+    color: ButtonText;
+    box-shadow: none;
+  }
+
+  .agent-canvas-flow .react-flow__controls,
+  .agent-canvas-flow .react-flow__controls-button {
+    border-color: ButtonBorder;
+  }
+
+  .state-glow-idle,
+  .state-glow-thinking,
+  .state-glow-executing,
+  .state-glow-complete,
+  .state-glow-clarification,
+  .state-glow-error,
+  .agent-canvas-node[data-state="queued"],
+  .agent-canvas-node[data-state="assigned"],
+  .agent-canvas-node[data-state="blocked"],
+  .agent-canvas-node[data-state="thinking"],
+  .agent-canvas-node[data-state="streaming"],
+  .agent-canvas-node[data-state="completed"],
+  .agent-canvas-node[data-state="clarification_required"],
+  .agent-canvas-node[data-state="errored"],
+  .agent-canvas-node[data-state="cancelled"] {
+    box-shadow: none;
+    border: 2px solid ButtonBorder;
+  }
+
+  .agent-canvas-node[data-selected="true"] {
+    border-color: Highlight;
+  }
+
+  :focus-visible,
+  .agent-canvas-node-button:focus-visible,
+  .skip-link:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 3px;
+  }
+}
   .agent-canvas-stage {
     min-height: 24rem;
   }
@@ -388,8 +811,10 @@ textarea {
   .state-glow-thinking,
   .state-glow-executing,
   .state-glow-complete,
+  .state-glow-clarification,
   .state-glow-error,
-  .stream-card {
+  .stream-card,
+  .workspace-task-dock-card {
     box-shadow: none;
     border-color: ButtonBorder;
     background: Canvas;
@@ -407,11 +832,21 @@ textarea {
     stroke: ButtonText;
   }
 
+  .agent-canvas-node[data-state="clarification_required"] {
+    border-style: dashed;
+  }
+
   .agent-canvas-node-button:focus-visible {
     outline-color: Highlight;
   }
 
   .live-cursor {
     background: ButtonText;
+  }
+
+  .agent-command-input,
+  .agent-command-label,
+  .agent-command-mark {
+    color: CanvasText;
   }
 }

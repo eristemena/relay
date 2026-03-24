@@ -146,6 +146,211 @@ func TestRunHistoryReplay_RestartHydratesBootstrapAndReplaysRun(t *testing.T) {
 	}
 }
 
+func TestRunHistoryReplay_RestartReplaysStoredOrchestrationNodeEvents(t *testing.T) {
+	homeDir := t.TempDir()
+
+	firstServer, firstCancel := startServerAtHome(t, homeDir)
+	firstCancel()
+	_ = firstServer.Close()
+
+	paths, err := config.EnsurePaths(homeDir)
+	if err != nil {
+		t.Fatalf("EnsurePaths() error = %v", err)
+	}
+	store, err := sqlite.NewStore(paths.Database)
+	if err != nil {
+		t.Fatalf("sqlite.NewStore() error = %v", err)
+	}
+
+	ctx := context.Background()
+	session, err := store.CreateSession(ctx, "Replay orchestration after restart")
+	if err != nil {
+		store.Close()
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	run, err := store.CreateAgentRun(ctx, session.ID, "Replay node transcript", sqlite.RolePlanner, config.DefaultPlannerModel)
+	if err != nil {
+		store.Close()
+		t.Fatalf("CreateAgentRun() error = %v", err)
+	}
+	completedAt := time.Now().UTC()
+	run.State = sqlite.RunStateCompleted
+	run.CompletedAt = &completedAt
+	if err := store.UpdateAgentRun(ctx, run); err != nil {
+		store.Close()
+		t.Fatalf("UpdateAgentRun() error = %v", err)
+	}
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeAgentSpawned, sqlite.RolePlanner, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_planner_1","role":"planner","model":"`+run.Model+`","label":"Planner","spawn_order":1,"occurred_at":"2026-03-24T12:00:00Z"}`); err != nil {
+		store.Close()
+		t.Fatalf("AppendRunEvent() agent_spawned error = %v", err)
+	}
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeTaskAssigned, sqlite.RolePlanner, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_planner_1","role":"planner","model":"`+run.Model+`","task_text":"Break the goal into stages.","occurred_at":"2026-03-24T12:00:01Z"}`); err != nil {
+		store.Close()
+		t.Fatalf("AppendRunEvent() task_assigned error = %v", err)
+	}
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeToken, sqlite.RolePlanner, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_planner_1","role":"planner","model":"`+run.Model+`","text":"planner transcript","occurred_at":"2026-03-24T12:00:02Z"}`); err != nil {
+		store.Close()
+		t.Fatalf("AppendRunEvent() token error = %v", err)
+	}
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeRunComplete, sqlite.RoleExplainer, config.DefaultExplainerModel, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_explainer_5","summary":"Finished orchestration.","occurred_at":"2026-03-24T12:00:03Z"}`); err != nil {
+		store.Close()
+		t.Fatalf("AppendRunEvent() run_complete error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("store.Close() error = %v", err)
+	}
+
+	cfg, warnings, err := config.Load(paths)
+	if err != nil {
+		t.Fatalf("config.Load() error = %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("config warnings = %v, want none", warnings)
+	}
+	cfg.OpenRouter.APIKey = "or-test-key"
+	cfg.ProjectRoot = homeDir
+	cfg.LastSessionID = session.ID
+	if err := config.Save(paths, cfg); err != nil {
+		t.Fatalf("config.Save() error = %v", err)
+	}
+
+	secondServer, secondCancel := startServerAtHome(t, homeDir)
+	defer func() {
+		secondCancel()
+		_ = secondServer.Close()
+	}()
+
+	connection := dialWorkspace(t, secondServer.BaseURL())
+	writeMessage(t, connection, map[string]any{
+		"type": "agent.run.open",
+		"payload": map[string]any{
+			"session_id": session.ID,
+			"run_id":     run.ID,
+		},
+	})
+
+	spawned := readUntilType(t, connection, "agent_spawned")
+	assigned := readUntilType(t, connection, "task_assigned")
+	token := readUntilType(t, connection, "token")
+	complete := readUntilType(t, connection, "run_complete")
+
+	spawnedPayload := spawned["payload"].(map[string]any)
+	assignedPayload := assigned["payload"].(map[string]any)
+	tokenPayload := token["payload"].(map[string]any)
+	completePayload := complete["payload"].(map[string]any)
+	if spawnedPayload["replay"] != true || assignedPayload["replay"] != true || tokenPayload["replay"] != true || completePayload["replay"] != true {
+		t.Fatalf("replay flags were not restored for orchestration replay")
+	}
+	if spawnedPayload["agent_id"] != "agent_planner_1" || assignedPayload["agent_id"] != "agent_planner_1" || tokenPayload["agent_id"] != "agent_planner_1" {
+		t.Fatalf("agent ids were not stable across replay: spawned=%v assigned=%v token=%v", spawnedPayload["agent_id"], assignedPayload["agent_id"], tokenPayload["agent_id"])
+	}
+	if tokenPayload["text"] != "planner transcript" {
+		t.Fatalf("tokenPayload.text = %v, want planner transcript", tokenPayload["text"])
+	}
+	if completePayload["summary"] != "Finished orchestration." {
+		t.Fatalf("completePayload.summary = %v, want Finished orchestration.", completePayload["summary"])
+	}
+}
+
+func TestRunHistoryReplay_RestartReplaysHaltedOrchestrationRun(t *testing.T) {
+	homeDir := t.TempDir()
+
+	firstServer, firstCancel := startServerAtHome(t, homeDir)
+	firstCancel()
+	_ = firstServer.Close()
+
+	paths, err := config.EnsurePaths(homeDir)
+	if err != nil {
+		t.Fatalf("EnsurePaths() error = %v", err)
+	}
+	store, err := sqlite.NewStore(paths.Database)
+	if err != nil {
+		t.Fatalf("sqlite.NewStore() error = %v", err)
+	}
+
+	ctx := context.Background()
+	session, err := store.CreateSession(ctx, "Replay halted orchestration")
+	if err != nil {
+		store.Close()
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	run, err := store.CreateAgentRun(ctx, session.ID, "Stop after planner", sqlite.RolePlanner, config.DefaultPlannerModel)
+	if err != nil {
+		store.Close()
+		t.Fatalf("CreateAgentRun() error = %v", err)
+	}
+	completedAt := time.Now().UTC()
+	run.State = sqlite.RunStateHalted
+	run.ErrorCode = "planner_required"
+	run.ErrorMessage = "The run stopped because the planner did not complete and downstream work could not continue."
+	run.CompletedAt = &completedAt
+	if err := store.UpdateAgentRun(ctx, run); err != nil {
+		store.Close()
+		t.Fatalf("UpdateAgentRun() error = %v", err)
+	}
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeAgentSpawned, sqlite.RolePlanner, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_planner_1","role":"planner","model":"`+run.Model+`","label":"Planner","spawn_order":1,"occurred_at":"2026-03-24T12:00:00Z"}`); err != nil {
+		store.Close()
+		t.Fatalf("AppendRunEvent() agent_spawned error = %v", err)
+	}
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeAgentError, sqlite.RolePlanner, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_planner_1","role":"planner","model":"`+run.Model+`","code":"agent_generation_failed","message":"Planner could not break the goal into stages.","terminal":true,"occurred_at":"2026-03-24T12:00:01Z"}`); err != nil {
+		store.Close()
+		t.Fatalf("AppendRunEvent() agent_error error = %v", err)
+	}
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeRunError, sqlite.RolePlanner, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_planner_1","role":"planner","model":"`+run.Model+`","code":"planner_required","message":"The run stopped because the planner did not complete and downstream work could not continue.","terminal":true,"occurred_at":"2026-03-24T12:00:02Z"}`); err != nil {
+		store.Close()
+		t.Fatalf("AppendRunEvent() run_error error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("store.Close() error = %v", err)
+	}
+
+	cfg, warnings, err := config.Load(paths)
+	if err != nil {
+		t.Fatalf("config.Load() error = %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("config warnings = %v, want none", warnings)
+	}
+	cfg.OpenRouter.APIKey = "or-test-key"
+	cfg.ProjectRoot = homeDir
+	cfg.LastSessionID = session.ID
+	if err := config.Save(paths, cfg); err != nil {
+		t.Fatalf("config.Save() error = %v", err)
+	}
+
+	secondServer, secondCancel := startServerAtHome(t, homeDir)
+	defer func() {
+		secondCancel()
+		_ = secondServer.Close()
+	}()
+
+	connection := dialWorkspace(t, secondServer.BaseURL())
+	writeMessage(t, connection, map[string]any{
+		"type": "agent.run.open",
+		"payload": map[string]any{
+			"session_id": session.ID,
+			"run_id":     run.ID,
+		},
+	})
+
+	spawned := readUntilType(t, connection, "agent_spawned")
+	agentError := readUntilType(t, connection, "agent_error")
+	runError := readUntilType(t, connection, "run_error")
+
+	spawnedPayload := spawned["payload"].(map[string]any)
+	agentErrorPayload := agentError["payload"].(map[string]any)
+	runErrorPayload := runError["payload"].(map[string]any)
+	if spawnedPayload["replay"] != true || agentErrorPayload["replay"] != true || runErrorPayload["replay"] != true {
+		t.Fatalf("halt replay flags were not restored")
+	}
+	if runErrorPayload["message"] != "The run stopped because the planner did not complete and downstream work could not continue." {
+		t.Fatalf("runErrorPayload.message = %v, want planner halt reason", runErrorPayload["message"])
+	}
+	if runErrorPayload["agent_id"] != "agent_planner_1" {
+		t.Fatalf("runErrorPayload.agent_id = %v, want agent_planner_1", runErrorPayload["agent_id"])
+	}
+}
+
 func startServerAtHome(t *testing.T, homeDir string) (*app.Server, context.CancelFunc) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())

@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -109,6 +110,9 @@ func TestStore_ListRunSummariesAndReplayEvents(t *testing.T) {
 	if summaries[0].HasToolActivity {
 		t.Fatal("summaries[0].HasToolActivity = true, want false")
 	}
+	if summaries[0].ErrorCode != "run_failed" {
+		t.Fatalf("summaries[0].ErrorCode = %q, want run_failed", summaries[0].ErrorCode)
+	}
 	if summaries[1].ID != firstRun.ID {
 		t.Fatalf("summaries[1].ID = %q, want first run %q", summaries[1].ID, firstRun.ID)
 	}
@@ -131,5 +135,248 @@ func TestStore_ListRunSummariesAndReplayEvents(t *testing.T) {
 	}
 	if events[0].EventType != EventTypeToolCall || events[1].EventType != EventTypeToolResult {
 		t.Fatalf("event types = [%q, %q], want tool_call/tool_result", events[0].EventType, events[1].EventType)
+	}
+}
+
+func TestStore_ListAgentExecutionsAndOrchestrationReplayData(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	session, err := store.CreateSession(ctx, "Orchestration replay")
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	run, err := store.CreateAgentRun(ctx, session.ID, "Replay per-agent output", RolePlanner, "planner-model")
+	if err != nil {
+		t.Fatalf("CreateAgentRun() error = %v", err)
+	}
+
+	startedAt := time.Now().UTC()
+	planner, err := store.CreateAgentExecution(ctx, AgentExecution{
+		ID:         "agent_planner_1",
+		RunID:      run.ID,
+		Role:       RolePlanner,
+		Model:      "planner-model",
+		State:      AgentExecutionStateAssigned,
+		TaskText:   "Break the goal into stages.",
+		SpawnOrder: 1,
+		StartedAt:  &startedAt,
+	})
+	if err != nil {
+		t.Fatalf("CreateAgentExecution() planner error = %v", err)
+	}
+	coder, err := store.CreateAgentExecution(ctx, AgentExecution{
+		ID:           "agent_coder_2",
+		RunID:        run.ID,
+		Role:         RoleCoder,
+		Model:        "coder-model",
+		State:        AgentExecutionStateErrored,
+		TaskText:     "Draft the implementation from the planner output.",
+		SpawnOrder:   2,
+		StartedAt:    &startedAt,
+		ErrorCode:    "agent_generation_failed",
+		ErrorMessage: "Coder could not finish the draft.",
+	})
+	if err != nil {
+		t.Fatalf("CreateAgentExecution() coder error = %v", err)
+	}
+
+	completedAt := time.Now().UTC()
+	planner.State = AgentExecutionStateCompleted
+	planner.CompletedAt = &completedAt
+	if err := store.UpdateAgentExecution(ctx, planner); err != nil {
+		t.Fatalf("UpdateAgentExecution() planner error = %v", err)
+	}
+	if err := store.UpdateAgentExecution(ctx, coder); err != nil {
+		t.Fatalf("UpdateAgentExecution() coder error = %v", err)
+	}
+
+	if _, err := store.AppendRunEvent(ctx, run.ID, EventTypeTaskAssigned, RolePlanner, planner.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_planner_1","task_text":"Break the goal into stages.","occurred_at":"2026-03-24T12:00:00Z"}`); err != nil {
+		t.Fatalf("AppendRunEvent() task_assigned error = %v", err)
+	}
+	if _, err := store.AppendRunEvent(ctx, run.ID, EventTypeToken, RolePlanner, planner.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_planner_1","text":"planner transcript","occurred_at":"2026-03-24T12:00:01Z"}`); err != nil {
+		t.Fatalf("AppendRunEvent() token error = %v", err)
+	}
+	if _, err := store.AppendRunEvent(ctx, run.ID, EventTypeAgentError, RoleCoder, coder.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_coder_2","code":"agent_generation_failed","message":"Coder could not finish the draft.","terminal":true,"occurred_at":"2026-03-24T12:00:02Z"}`); err != nil {
+		t.Fatalf("AppendRunEvent() agent_error error = %v", err)
+	}
+
+	executions, err := store.ListAgentExecutions(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("ListAgentExecutions() error = %v", err)
+	}
+	if len(executions) != 2 {
+		t.Fatalf("len(executions) = %d, want 2", len(executions))
+	}
+	if executions[0].TaskText != "Break the goal into stages." {
+		t.Fatalf("executions[0].TaskText = %q, want persisted planner assignment", executions[0].TaskText)
+	}
+	if executions[1].ErrorMessage != "Coder could not finish the draft." {
+		t.Fatalf("executions[1].ErrorMessage = %q, want persisted coder failure", executions[1].ErrorMessage)
+	}
+
+	events, err := store.ListRunEvents(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("ListRunEvents() error = %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("len(events) = %d, want 3", len(events))
+	}
+	if !strings.Contains(events[0].PayloadJSON, `"agent_id":"agent_planner_1"`) {
+		t.Fatalf("events[0].PayloadJSON = %q, want planner agent id", events[0].PayloadJSON)
+	}
+	if !strings.Contains(events[1].PayloadJSON, `"text":"planner transcript"`) {
+		t.Fatalf("events[1].PayloadJSON = %q, want planner transcript chunk", events[1].PayloadJSON)
+	}
+	if !strings.Contains(events[2].PayloadJSON, `"agent_id":"agent_coder_2"`) {
+		t.Fatalf("events[2].PayloadJSON = %q, want coder agent id", events[2].PayloadJSON)
+	}
+}
+
+func TestStore_GetSessionAndRunLookups(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	session, err := store.CreateSession(ctx, "Lookup session")
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+
+	loadedSession, err := store.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("GetSession() error = %v", err)
+	}
+	if loadedSession.ID != session.ID {
+		t.Fatalf("loadedSession.ID = %q, want %q", loadedSession.ID, session.ID)
+	}
+
+	run, err := store.CreateAgentRun(ctx, session.ID, "Inspect active lookup", RolePlanner, "planner-model")
+	if err != nil {
+		t.Fatalf("CreateAgentRun() error = %v", err)
+	}
+	if !run.Active() {
+		t.Fatal("run.Active() = false, want true for accepted run")
+	}
+
+	activeRun, err := store.GetActiveRun(ctx)
+	if err != nil {
+		t.Fatalf("GetActiveRun() error = %v", err)
+	}
+	if activeRun.ID != run.ID {
+		t.Fatalf("activeRun.ID = %q, want %q", activeRun.ID, run.ID)
+	}
+
+	loadedRun, err := store.GetAgentRun(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("GetAgentRun() error = %v", err)
+	}
+	if loadedRun.ID != run.ID {
+		t.Fatalf("loadedRun.ID = %q, want %q", loadedRun.ID, run.ID)
+	}
+
+	run.State = RunStateCompleted
+	completedAt := time.Now().UTC()
+	firstTokenAt := completedAt.Add(-time.Second)
+	run.CompletedAt = &completedAt
+	run.FirstTokenAt = &firstTokenAt
+	if err := store.UpdateAgentRun(ctx, run); err != nil {
+		t.Fatalf("UpdateAgentRun() error = %v", err)
+	}
+	if run.Active() {
+		t.Fatal("run.Active() = true, want false for completed run")
+	}
+
+	completedRun, err := store.GetAgentRun(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("GetAgentRun() completed error = %v", err)
+	}
+	if completedRun.CompletedAt == nil || completedRun.CompletedAt.Format(time.RFC3339) != completedAt.Format(time.RFC3339) {
+		t.Fatalf("completedRun.CompletedAt = %#v, want %v", completedRun.CompletedAt, completedAt)
+	}
+	if completedRun.FirstTokenAt == nil || completedRun.FirstTokenAt.Format(time.RFC3339) != firstTokenAt.Format(time.RFC3339) {
+		t.Fatalf("completedRun.FirstTokenAt = %#v, want %v", completedRun.FirstTokenAt, firstTokenAt)
+	}
+
+	if _, err := store.GetActiveRun(ctx); !errors.Is(err, ErrRunNotFound) {
+		t.Fatalf("GetActiveRun() error = %v, want ErrRunNotFound", err)
+	}
+}
+
+func TestStore_ReturnsNotFoundErrorsForMissingRows(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	if _, err := store.GetSession(ctx, "session_missing"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("GetSession() error = %v, want ErrSessionNotFound", err)
+	}
+	if _, err := store.OpenSession(ctx, "session_missing"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("OpenSession() error = %v, want ErrSessionNotFound", err)
+	}
+	if _, err := store.GetAgentRun(ctx, "run_missing"); !errors.Is(err, ErrRunNotFound) {
+		t.Fatalf("GetAgentRun() error = %v, want ErrRunNotFound", err)
+	}
+	if err := store.UpdateAgentRun(ctx, AgentRun{ID: "run_missing", State: RunStateCompleted}); !errors.Is(err, ErrRunNotFound) {
+		t.Fatalf("UpdateAgentRun() error = %v, want ErrRunNotFound", err)
+	}
+	if err := store.UpdateAgentExecution(ctx, AgentExecution{ID: "agent_missing", State: AgentExecutionStateCompleted}); !errors.Is(err, ErrRunNotFound) {
+		t.Fatalf("UpdateAgentExecution() error = %v, want ErrRunNotFound", err)
+	}
+}
+
+func TestStore_CreateAgentExecutionAppliesDefaults(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	session, err := store.CreateSession(ctx, "Execution defaults")
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	run, err := store.CreateAgentRun(ctx, session.ID, "Assign defaults", RolePlanner, "planner-model")
+	if err != nil {
+		t.Fatalf("CreateAgentRun() error = %v", err)
+	}
+
+	execution, err := store.CreateAgentExecution(ctx, AgentExecution{
+		RunID:      run.ID,
+		Role:       RoleTester,
+		Model:      "tester-model",
+		TaskText:   "Validate the plan.",
+		SpawnOrder: 1,
+	})
+	if err != nil {
+		t.Fatalf("CreateAgentExecution() error = %v", err)
+	}
+	if !strings.HasPrefix(execution.ID, "agent_") {
+		t.Fatalf("execution.ID = %q, want generated agent_ prefix", execution.ID)
+	}
+	if execution.State != AgentExecutionStateQueued {
+		t.Fatalf("execution.State = %q, want %q", execution.State, AgentExecutionStateQueued)
+	}
+
+	executions, err := store.ListAgentExecutions(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("ListAgentExecutions() error = %v", err)
+	}
+	if len(executions) != 1 {
+		t.Fatalf("len(executions) = %d, want 1", len(executions))
+	}
+	if executions[0].ID != execution.ID {
+		t.Fatalf("executions[0].ID = %q, want %q", executions[0].ID, execution.ID)
 	}
 }

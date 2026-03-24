@@ -23,7 +23,7 @@ export function RunHistoryPanel({ activeRunId, historyState, runSummaries, selec
       {historyState === "error" ? <p className="mt-6 text-sm text-error">Relay could not load the saved run history.</p> : null}
       {historyState === "ready" && runSummaries.length === 0 ? (
         <p className="mt-6 rounded-3xl border border-dashed border-border bg-raised/60 p-5 text-sm leading-6 text-text-muted">
-          No saved runs yet. Your first completed or errored agent task will appear here for replay.
+          No saved runs yet. Completed, clarification-required, and errored agent tasks will appear here for replay.
         </p>
       ) : null}
 

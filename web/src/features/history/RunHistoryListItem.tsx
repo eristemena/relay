@@ -1,5 +1,10 @@
 import clsx from "clsx";
 import type { AgentRunSummary } from "@/shared/lib/workspace-protocol";
+import { StateBadge } from "@/features/agent-panel/StateBadge";
+import {
+  getRunSummaryBadgeState,
+  getRunSummaryStateLabel,
+} from "@/features/agent-panel/runStatus";
 
 interface RunHistoryListItemProps {
   isActive: boolean;
@@ -18,9 +23,12 @@ export function RunHistoryListItem({ isActive, onOpen, run }: RunHistoryListItem
         onClick={() => onOpen(run.id)}
         type="button"
       >
-        <span className="eyebrow">{run.role}</span>
+        <div className="flex items-start justify-between gap-3">
+          <span className="eyebrow">{run.role}</span>
+          <StateBadge state={getRunSummaryBadgeState(run)} />
+        </div>
         <span className="mt-2 block text-sm leading-6">{run.task_text_preview}</span>
-        <span className="mt-3 block text-xs uppercase tracking-[0.18em] text-text-muted">{run.state} • {run.model}</span>
+        <span className="mt-3 block text-xs uppercase tracking-[0.18em] text-text-muted">{getRunSummaryStateLabel(run)} • {run.model}</span>
       </button>
     </li>
   );

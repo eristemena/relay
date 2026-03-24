@@ -1,6 +1,10 @@
 import type { StoredRunEvent } from "@/shared/lib/workspace-store";
 import { ToolEventRow } from "@/features/agent-panel/ToolEventRow";
-import { getTerminalRunError } from "@/features/agent-panel/runStatus";
+import {
+  getRunFailureTitle,
+  getTerminalRunError,
+  isClarificationRequiredCode,
+} from "@/features/agent-panel/runStatus";
 
 interface RunTimelineProps {
   events: StoredRunEvent[];
@@ -50,12 +54,25 @@ function describeEvent(event: StoredRunEvent) {
 	if (event.type === "complete" && "finish_reason" in event.payload) {
 		return `Run finished: ${event.payload.finish_reason}`;
 	}
-	if (event.type === "error" && "message" in event.payload) {
-    const terminalError = getTerminalRunError([event]);
-    if (terminalError?.code === "run_cancelled") {
-      return "Run cancelled: Relay stopped the active run before it produced more output.";
+  if (event.type === "run_complete" && "summary" in event.payload) {
+    return event.payload.summary;
+  }
+  if (
+    (event.type === "error" ||
+      event.type === "agent_error" ||
+      event.type === "run_error") &&
+    "message" in event.payload
+  ) {
+    if (event.type !== "agent_error") {
+      const terminalError = getTerminalRunError([event]);
+      if (terminalError?.code === "run_cancelled") {
+        return "Run cancelled: Relay stopped the active run before it produced more output.";
+      }
+      if (isClarificationRequiredCode(terminalError?.code)) {
+        return `${getRunFailureTitle(terminalError?.code)}: ${event.payload.message}`;
+      }
     }
-		return event.payload.message;
-	}
+    return event.payload.message;
+  }
 	return "Run event recorded.";
 }

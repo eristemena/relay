@@ -75,13 +75,15 @@ describe("WorkspaceShell", () => {
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", {
-        name: /start by placing the first agent on the canvas/i,
-      }),
-    ).toBeInTheDocument();
-    expect(
       screen.getByRole("button", { name: /open workspace menu/i }),
     ).toBeInTheDocument();
+    expect(screen.getByLabelText(/agent task/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /run task/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: /watch relay work in order/i }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("navigation", {
         name: /session history and switching/i,
@@ -104,6 +106,9 @@ describe("WorkspaceShell", () => {
       }),
     ).toBeInTheDocument();
     expect(
+      screen.getByRole("heading", { name: /watch relay work in order/i }),
+    ).toBeInTheDocument();
+    expect(
       screen.getByRole("navigation", {
         name: /session history and switching/i,
       }),
@@ -113,6 +118,80 @@ describe("WorkspaceShell", () => {
     expect(screen.getByText(/theme midnight/i)).toBeInTheDocument();
     expect(screen.getAllByText(/saved runs/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/local settings/i)).toBeInTheDocument();
+  });
+
+  it("submits tasks from the floating bottom composer", () => {
+    primeWorkspaceStore(buildWorkspaceSnapshot());
+    render(<WorkspaceShell />);
+
+    fireEvent.change(screen.getByLabelText(/agent task/i), {
+      target: { value: "Trace the orchestration history flow" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /run task/i }));
+
+    expect(socketActions.submitRun).toHaveBeenCalledWith(
+      "session_alpha",
+      "Trace the orchestration history flow",
+    );
+  });
+
+  it("cancels the active run with the session and run ids", () => {
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        active_run_id: "run_active",
+        run_summaries: [
+          {
+            id: "run_active",
+            task_text_preview: "Inspect relay startup",
+            role: "planner",
+            model: "anthropic/claude-opus-4",
+            state: "active",
+            started_at: "2026-03-24T12:00:00Z",
+            has_tool_activity: false,
+          },
+        ],
+      }),
+    );
+
+    render(<WorkspaceShell />);
+
+    fireEvent.click(screen.getByRole("button", { name: /cancel run/i }));
+
+    expect(socketActions.cancelRun).toHaveBeenCalledWith(
+      "session_alpha",
+      "run_active",
+    );
+  });
+
+  it("keeps the floating composer available when project root warnings are shown", () => {
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        preferences: {
+          preferred_port: 4747,
+          appearance_variant: "midnight",
+          has_credentials: false,
+          openrouter_configured: true,
+          project_root: "",
+          project_root_configured: false,
+          project_root_valid: false,
+          project_root_message:
+            "Repository-reading tools stay disabled until Relay has a valid project_root in config.toml.",
+          agent_models: {
+            planner: "anthropic/claude-opus-4",
+            coder: "anthropic/claude-sonnet-4-5",
+            reviewer: "anthropic/claude-sonnet-4-5",
+            tester: "deepseek/deepseek-chat",
+            explainer: "google/gemini-2.0-flash-001",
+          },
+          open_browser_on_start: true,
+        },
+      }),
+    );
+
+    render(<WorkspaceShell />);
+
+    expect(screen.getByLabelText(/agent task/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /run task/i })).toBeEnabled();
   });
 
   it("renders a recoverable error state", () => {
@@ -135,6 +214,143 @@ describe("WorkspaceShell", () => {
     );
   });
 
+  it("describes halted orchestration runs with the preserved halt reason", () => {
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        preferences: {
+          preferred_port: 4747,
+          appearance_variant: "midnight",
+          has_credentials: false,
+          openrouter_configured: true,
+          project_root: "/tmp/project",
+          project_root_configured: true,
+          project_root_valid: true,
+          agent_models: {
+            planner: "anthropic/claude-opus-4",
+            coder: "anthropic/claude-sonnet-4-5",
+            reviewer: "anthropic/claude-sonnet-4-5",
+            tester: "deepseek/deepseek-chat",
+            explainer: "google/gemini-2.0-flash-001",
+          },
+          open_browser_on_start: true,
+        },
+        run_summaries: [
+          {
+            id: "run_halted",
+            task_text_preview: "Replay the halted orchestration",
+            role: "planner",
+            model: "anthropic/claude-opus-4",
+            state: "halted",
+            started_at: "2026-03-24T12:00:00Z",
+            completed_at: "2026-03-24T12:00:03Z",
+            has_tool_activity: false,
+          },
+        ],
+      }),
+    );
+
+    render(<WorkspaceShell />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /open workspace menu/i }),
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "run_error",
+        payload: {
+          code: "planner_required",
+          message:
+            "The run stopped because the planner did not complete and downstream work could not continue.",
+          session_id: "session_alpha",
+          run_id: "run_halted",
+          agent_id: "agent_planner_1",
+          sequence: 3,
+          replay: true,
+          role: "planner",
+          model: "anthropic/claude-opus-4",
+          terminal: true,
+          occurred_at: "2026-03-24T12:00:02Z",
+        },
+      } as never);
+    });
+
+    expect(
+      screen.getAllByText(
+        /the run stopped because the planner did not complete and downstream work could not continue/i,
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("labels clarification-required halts explicitly", () => {
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        preferences: {
+          preferred_port: 4747,
+          appearance_variant: "midnight",
+          has_credentials: false,
+          openrouter_configured: true,
+          project_root: "/tmp/project",
+          project_root_configured: true,
+          project_root_valid: true,
+          agent_models: {
+            planner: "anthropic/claude-opus-4",
+            coder: "anthropic/claude-sonnet-4-5",
+            reviewer: "anthropic/claude-sonnet-4-5",
+            tester: "deepseek/deepseek-chat",
+            explainer: "google/gemini-2.0-flash-001",
+          },
+          open_browser_on_start: true,
+        },
+        run_summaries: [
+          {
+            id: "run_clarification",
+            task_text_preview: "Comment the env example",
+            role: "coder",
+            model: "anthropic/claude-sonnet-4-5",
+            state: "halted",
+            started_at: "2026-03-24T12:00:00Z",
+            completed_at: "2026-03-24T12:00:03Z",
+            has_tool_activity: false,
+          },
+        ],
+      }),
+    );
+
+    render(<WorkspaceShell />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /open workspace menu/i }),
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "run_error",
+        payload: {
+          code: "coder_clarification_required",
+          message:
+            "The run stopped because the coder asked for user clarification instead of producing actionable output.",
+          session_id: "session_alpha",
+          run_id: "run_clarification",
+          agent_id: "agent_run_clarification_coder_2",
+          sequence: 3,
+          replay: true,
+          role: "coder",
+          model: "anthropic/claude-sonnet-4-5",
+          terminal: true,
+          occurred_at: "2026-03-24T12:00:02Z",
+        },
+      } as never);
+    });
+
+    expect(screen.getAllByText(/clarification required/i).length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText(
+        /the run stopped because the coder asked for user clarification instead of producing actionable output/i,
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
   it("surfaces the saved project root warning in the status banner", () => {
     primeWorkspaceStore(
       buildWorkspaceSnapshot({
@@ -153,7 +369,7 @@ describe("WorkspaceShell", () => {
             coder: "anthropic/claude-sonnet-4-5",
             reviewer: "anthropic/claude-sonnet-4-5",
             tester: "deepseek/deepseek-chat",
-            explainer: "google/gemini-flash-1.5",
+            explainer: "google/gemini-2.0-flash-001",
           },
           open_browser_on_start: true,
         },
@@ -202,7 +418,7 @@ describe("WorkspaceShell", () => {
             coder: "anthropic/claude-sonnet-4-5",
             reviewer: "anthropic/claude-sonnet-4-5",
             tester: "deepseek/deepseek-chat",
-            explainer: "google/gemini-flash-1.5",
+            explainer: "google/gemini-2.0-flash-001",
           },
           open_browser_on_start: true,
         },
@@ -226,6 +442,10 @@ describe("WorkspaceShell", () => {
     });
 
     render(<WorkspaceShell />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /open workspace menu/i }),
+    );
 
     act(() => {
       screen.getByRole("button", { name: /approve tool/i }).click();
@@ -321,7 +541,21 @@ describe("WorkspaceShell", () => {
       } as never);
     });
 
-    expect(screen.getAllByText(/inspect saved startup run/i)).toHaveLength(1);
+    fireEvent.click(
+      screen.getByRole("button", { name: /open workspace menu/i }),
+    );
+
+    const reopenedDrawer = screen.getByRole("dialog", {
+      name: /sessions, saved runs, and preferences/i,
+    });
+
+    expect(
+      within(reopenedDrawer)
+        .getAllByRole("button")
+        .filter((button) =>
+          /inspect saved startup run/i.test(button.textContent ?? ""),
+        ),
+    ).toHaveLength(1);
     expect(
       consoleErrorSpy.mock.calls.some(([message]) =>
         String(message).includes("Encountered two children with the same key"),

@@ -21,6 +21,8 @@ func TestRegistrySelectProfileUsesRoleSpecificPromptsModelsAndToolAllowlists(t *
 		wantRole     sqlite.AgentRole
 		wantModel    string
 		promptNeedle string
+		policyNeedle string
+		extraNeedle  string
 		wantTools    []ToolName
 	}{
 		{
@@ -29,6 +31,8 @@ func TestRegistrySelectProfileUsesRoleSpecificPromptsModelsAndToolAllowlists(t *
 			wantRole:     sqlite.RolePlanner,
 			wantModel:    config.DefaultPlannerModel,
 			promptNeedle: "Break developer tasks into a concrete sequence of steps",
+			policyNeedle: "Do not ask the user for confirmation before taking allowed actions.",
+			extraNeedle:  "Never ask questions such as 'Would you like me to search for related configuration files or documentation?'",
 			wantTools:    []ToolName{ToolReadFile, ToolSearchCodebase},
 		},
 		{
@@ -37,6 +41,7 @@ func TestRegistrySelectProfileUsesRoleSpecificPromptsModelsAndToolAllowlists(t *
 			wantRole:     sqlite.RoleCoder,
 			wantModel:    config.DefaultCoderModel,
 			promptNeedle: "Produce focused implementation guidance",
+			policyNeedle: "Do not ask the user for confirmation before taking allowed actions.",
 			wantTools:    []ToolName{ToolReadFile, ToolSearchCodebase, ToolWriteFile, ToolRunCommand},
 		},
 		{
@@ -45,6 +50,7 @@ func TestRegistrySelectProfileUsesRoleSpecificPromptsModelsAndToolAllowlists(t *
 			wantRole:     sqlite.RoleReviewer,
 			wantModel:    config.DefaultReviewerModel,
 			promptNeedle: "Prioritize correctness, regressions, missing tests, and security issues",
+			policyNeedle: "Do not ask the user for confirmation before taking allowed actions.",
 			wantTools:    []ToolName{ToolReadFile, ToolSearchCodebase},
 		},
 		{
@@ -53,6 +59,7 @@ func TestRegistrySelectProfileUsesRoleSpecificPromptsModelsAndToolAllowlists(t *
 			wantRole:     sqlite.RoleTester,
 			wantModel:    config.DefaultTesterModel,
 			promptNeedle: "Focus on validation strategy, failure modes",
+			policyNeedle: "Do not ask the user for confirmation before taking allowed actions.",
 			wantTools:    []ToolName{ToolReadFile, ToolSearchCodebase, ToolWriteFile, ToolRunCommand},
 		},
 		{
@@ -61,7 +68,8 @@ func TestRegistrySelectProfileUsesRoleSpecificPromptsModelsAndToolAllowlists(t *
 			wantRole:     sqlite.RoleExplainer,
 			wantModel:    config.DefaultExplainerModel,
 			promptNeedle: "Explain code and architecture clearly",
-			wantTools:    []ToolName{ToolReadFile},
+			policyNeedle: "Do not ask the user for confirmation before taking allowed actions.",
+			wantTools:    []ToolName{ToolReadFile, ToolSearchCodebase},
 		},
 	}
 
@@ -77,6 +85,12 @@ func TestRegistrySelectProfileUsesRoleSpecificPromptsModelsAndToolAllowlists(t *
 			}
 			if !strings.Contains(profile.SystemPrompt, test.promptNeedle) {
 				t.Fatalf("profile.SystemPrompt = %q, want substring %q", profile.SystemPrompt, test.promptNeedle)
+			}
+			if !strings.Contains(profile.SystemPrompt, test.policyNeedle) {
+				t.Fatalf("profile.SystemPrompt = %q, want substring %q", profile.SystemPrompt, test.policyNeedle)
+			}
+			if test.extraNeedle != "" && !strings.Contains(profile.SystemPrompt, test.extraNeedle) {
+				t.Fatalf("profile.SystemPrompt = %q, want substring %q", profile.SystemPrompt, test.extraNeedle)
 			}
 			if !reflect.DeepEqual(profile.AllowedTools, test.wantTools) {
 				t.Fatalf("profile.AllowedTools = %v, want %v", profile.AllowedTools, test.wantTools)
@@ -123,6 +137,85 @@ func TestRegistrySelectProfileFallsBackToCoderForGeneralTasks(t *testing.T) {
 	}
 }
 
+func TestRegistryNewPromptOnlyAgentUsesRoleSpecificPromptOnlyProfiles(t *testing.T) {
+	roles := []sqlite.AgentRole{
+		sqlite.RolePlanner,
+		sqlite.RoleCoder,
+		sqlite.RoleReviewer,
+		sqlite.RoleTester,
+		sqlite.RoleExplainer,
+	}
+
+	for _, role := range roles {
+		t.Run(string(role), func(t *testing.T) {
+			fakeClient := &fakeStreamClient{}
+			registry := NewRegistry(config.AgentModels{}).WithClientFactory(func(string) openrouter.StreamClient {
+				return fakeClient
+			})
+
+			agent := registry.NewPromptOnlyAgent("or-test-key", role)
+			profile := agent.Profile()
+			if profile.Role != role {
+				t.Fatalf("profile.Role = %q, want %q", profile.Role, role)
+			}
+			if len(profile.AllowedTools) != 0 {
+				t.Fatalf("len(profile.AllowedTools) = %d, want 0 for prompt-only agent", len(profile.AllowedTools))
+			}
+
+			err := agent.Run(context.Background(), "Summarize this orchestration stage", StreamEventHandlers{})
+			if err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if len(fakeClient.request.Tools) != 0 {
+				t.Fatalf("len(request.Tools) = %d, want 0 for prompt-only agent", len(fakeClient.request.Tools))
+			}
+		})
+	}
+}
+
+func TestRegistryNewAgentUsesRoleSpecificProfilesAndAdvertisesAllowedTools(t *testing.T) {
+	roles := []sqlite.AgentRole{
+		sqlite.RolePlanner,
+		sqlite.RoleCoder,
+		sqlite.RoleReviewer,
+		sqlite.RoleTester,
+		sqlite.RoleExplainer,
+	}
+
+	for _, role := range roles {
+		t.Run(string(role), func(t *testing.T) {
+			fakeClient := &fakeStreamClient{}
+			registry := NewRegistry(config.AgentModels{}).WithClientFactory(func(string) openrouter.StreamClient {
+				return fakeClient
+			})
+			executor := &fakeToolExecutor{}
+
+			agent := registry.NewAgent("or-test-key", role, executor)
+			profile := agent.Profile()
+			if profile.Role != role {
+				t.Fatalf("profile.Role = %q, want %q", profile.Role, role)
+			}
+			if len(profile.AllowedTools) == 0 {
+				t.Fatal("profile.AllowedTools = empty, want role-specific tools")
+			}
+
+			err := agent.Run(context.Background(), "Inspect the repository before responding", StreamEventHandlers{})
+			if err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+
+			if len(fakeClient.request.Tools) != len(profile.AllowedTools) {
+				t.Fatalf("len(request.Tools) = %d, want %d", len(fakeClient.request.Tools), len(profile.AllowedTools))
+			}
+			for index, tool := range fakeClient.request.Tools {
+				if tool.Name != string(profile.AllowedTools[index]) {
+					t.Fatalf("request.Tools[%d].Name = %q, want %q", index, tool.Name, profile.AllowedTools[index])
+				}
+			}
+		})
+	}
+}
+
 func TestRegistryRunnerAdvertisesAndExecutesReadOnlyTools(t *testing.T) {
 	fakeClient := &fakeStreamClient{}
 	registry := NewRegistry(config.AgentModels{}).WithClientFactory(func(string) openrouter.StreamClient {
@@ -145,11 +238,14 @@ func TestRegistryRunnerAdvertisesAndExecutesReadOnlyTools(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	if len(fakeClient.request.Tools) != 1 {
-		t.Fatalf("len(request.Tools) = %d, want 1", len(fakeClient.request.Tools))
+	if len(fakeClient.request.Tools) != 2 {
+		t.Fatalf("len(request.Tools) = %d, want 2", len(fakeClient.request.Tools))
 	}
 	if fakeClient.request.Tools[0].Name != string(ToolReadFile) {
 		t.Fatalf("request.Tools[0].Name = %q, want %q", fakeClient.request.Tools[0].Name, ToolReadFile)
+	}
+	if fakeClient.request.Tools[1].Name != string(ToolSearchCodebase) {
+		t.Fatalf("request.Tools[1].Name = %q, want %q", fakeClient.request.Tools[1].Name, ToolSearchCodebase)
 	}
 	if len(toolCalls) != 1 {
 		t.Fatalf("len(toolCalls) = %d, want 1", len(toolCalls))
@@ -211,12 +307,16 @@ type fakeToolExecutor struct {
 	executedArgs string
 }
 
-func (f *fakeToolExecutor) Definitions(_ []ToolName) []ToolDefinition {
-	return []ToolDefinition{{
-		Name:        ToolReadFile,
-		Description: "Read a text file.",
-		Parameters:  map[string]any{"type": "object"},
-	}}
+func (f *fakeToolExecutor) Definitions(allowedTools []ToolName) []ToolDefinition {
+	definitions := make([]ToolDefinition, 0, len(allowedTools))
+	for _, tool := range allowedTools {
+		definitions = append(definitions, ToolDefinition{
+			Name:        tool,
+			Description: "Tool definition for tests.",
+			Parameters:  map[string]any{"type": "object"},
+		})
+	}
+	return definitions
 }
 
 func (f *fakeToolExecutor) PreviewToolCall(_ ToolName, arguments json.RawMessage) map[string]any {

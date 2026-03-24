@@ -22,6 +22,14 @@ const (
 	TypeToolCall                  = "tool_call"
 	TypeToolResult                = "tool_result"
 	TypeComplete                  = "complete"
+	TypeAgentSpawned              = "agent_spawned"
+	TypeAgentStateChanged         = "agent_state_changed"
+	TypeTaskAssigned              = "task_assigned"
+	TypeHandoffStart              = "handoff_start"
+	TypeHandoffComplete           = "handoff_complete"
+	TypeAgentError                = "agent_error"
+	TypeRunComplete               = "run_complete"
+	TypeRunError                  = "run_error"
 	TypeError                     = "error"
 )
 
@@ -139,6 +147,7 @@ type AgentRunSummary struct {
 	Role            string `json:"role"`
 	Model           string `json:"model"`
 	State           string `json:"state"`
+	ErrorCode       string `json:"error_code,omitempty"`
 	StartedAt       string `json:"started_at"`
 	CompletedAt     string `json:"completed_at,omitempty"`
 	HasToolActivity bool   `json:"has_tool_activity"`
@@ -158,6 +167,7 @@ type ErrorPayload struct {
 	Message    string `json:"message"`
 	SessionID  string `json:"session_id,omitempty"`
 	RunID      string `json:"run_id,omitempty"`
+	AgentID    string `json:"agent_id,omitempty"`
 	Sequence   int64  `json:"sequence,omitempty"`
 	Replay     bool   `json:"replay,omitempty"`
 	Role       string `json:"role,omitempty"`
@@ -176,4 +186,44 @@ type ApprovalRequestPayload struct {
 	InputPreview map[string]any `json:"input_preview"`
 	Message      string         `json:"message"`
 	OccurredAt   string         `json:"occurred_at,omitempty"`
+}
+
+type OrchestrationEventBase struct {
+	SessionID  string `json:"session_id"`
+	RunID      string `json:"run_id"`
+	AgentID    string `json:"agent_id,omitempty"`
+	Sequence   int64  `json:"sequence,omitempty"`
+	Replay     bool   `json:"replay,omitempty"`
+	Role       string `json:"role,omitempty"`
+	Model      string `json:"model,omitempty"`
+	OccurredAt string `json:"occurred_at,omitempty"`
+}
+
+type AgentSpawnedPayload struct {
+	OrchestrationEventBase
+	Label      string `json:"label"`
+	SpawnOrder int    `json:"spawn_order"`
+}
+
+type AgentStateChangedPayload struct {
+	OrchestrationEventBase
+	State   string `json:"state"`
+	Message string `json:"message"`
+}
+
+type TaskAssignedPayload struct {
+	OrchestrationEventBase
+	TaskText string `json:"task_text"`
+}
+
+type HandoffPayload struct {
+	OrchestrationEventBase
+	FromAgentID string `json:"from_agent_id"`
+	ToAgentID   string `json:"to_agent_id"`
+	Reason      string `json:"reason"`
+}
+
+type RunCompletePayload struct {
+	OrchestrationEventBase
+	Summary string `json:"summary"`
 }

@@ -2,6 +2,7 @@
 
 import { startTransition, useEffect, useState } from "react";
 import { AgentPanel } from "@/features/agent-panel/AgentPanel";
+import { AgentCommandBar } from "@/features/agent-panel/AgentCommandBar";
 import { WorkspaceCanvas } from "@/features/canvas/WorkspaceCanvas";
 import { RunHistoryPanel } from "@/features/history/RunHistoryPanel";
 import { SessionSidebar } from "@/features/history/SessionSidebar";
@@ -77,8 +78,10 @@ export function WorkspaceShell() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [menuOpen]);
 
+  const commandBarDisabled = !activeSessionId || Boolean(activeRunId);
+
   return (
-    <div className="mx-auto flex min-h-screen w-full max-w-[112rem] flex-col px-4 py-4 md:px-6 md:py-6">
+    <div className="mx-auto flex min-h-screen w-full max-w-[112rem] flex-col px-4 py-4 pb-56 md:px-6 md:py-6 md:pb-60">
       <header className="panel-surface rounded-[2rem] px-5 py-5 shadow-idle">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -124,14 +127,45 @@ export function WorkspaceShell() {
         tabIndex={-1}
       >
         <section className="grid min-w-0 gap-4">
+          <WorkspaceCanvas activeSession={activeSession} />
+        </section>
+      </main>
+
+      <div className="workspace-task-dock" role="presentation">
+        <section
+          aria-label="Task composer"
+          className="workspace-task-dock-inner"
+        >
+          <AgentCommandBar
+            disabled={commandBarDisabled}
+            hasActiveRun={Boolean(activeRunId)}
+            onCancel={() =>
+              startTransition(() => {
+                if (!activeSessionId || !activeRunId) {
+                  return;
+                }
+
+                cancelRun(activeSessionId, activeRunId);
+              })
+            }
+            onSubmit={(task) =>
+              startTransition(() => {
+                submitRun(activeSessionId, task);
+              })
+            }
+            panelClassName="workspace-task-dock-card"
+          />
+        </section>
+      </div>
+
+      <WorkspaceUtilityDrawer
+        onClose={() => setMenuOpen(false)}
+        open={menuOpen}
+      >
+        <div className="grid gap-4 p-5">
           <AgentPanel
             activeRunId={activeRunId}
             activeSessionId={activeSessionId}
-            onCancel={(runId) =>
-              startTransition(() => {
-                cancelRun(activeSessionId, runId);
-              })
-            }
             preferences={preferences}
             pendingApproval={selectedPendingApproval}
             runEvents={selectedRunEvents}
@@ -148,21 +182,7 @@ export function WorkspaceShell() {
                 );
               })
             }
-            onSubmit={(task) =>
-              startTransition(() => {
-                submitRun(activeSessionId, task);
-              })
-            }
           />
-          <WorkspaceCanvas activeSession={activeSession} />
-        </section>
-      </main>
-
-      <WorkspaceUtilityDrawer
-        onClose={() => setMenuOpen(false)}
-        open={menuOpen}
-      >
-        <div className="grid gap-4 p-5">
           <nav aria-label="Session history and switching">
             <SessionSidebar
               activeSessionId={activeSessionId}

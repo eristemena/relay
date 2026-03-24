@@ -186,7 +186,7 @@ func toolSchema(name agents.ToolName) jsonschema.Definition {
 		return jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
-				"query":           {Type: jsonschema.String, Description: "Text to search for in the repository."},
+				"query":           {Type: jsonschema.String, Description: "Text or filename fragment to search for in the repository."},
 				"include_pattern": {Type: jsonschema.String, Description: "Optional filename glob to limit the search."},
 				"max_results":     {Type: jsonschema.Number, Description: "Optional maximum number of matches to return."},
 			},

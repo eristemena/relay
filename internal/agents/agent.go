@@ -65,7 +65,19 @@ type StreamEventHandlers struct {
 	OnError       func(code string, message string)
 }
 
-type Runner interface {
+type Agent interface {
 	Run(ctx context.Context, task string, handlers StreamEventHandlers) error
 	Profile() Profile
+}
+
+type Runner = Agent
+
+type promptOnlyAgentRunner interface {
+	stream(ctx context.Context, request PromptOnlyRequest, handlers StreamEventHandlers) error
+}
+
+type PromptOnlyRequest struct {
+	Model        string
+	SystemPrompt string
+	Task         string
 }

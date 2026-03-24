@@ -20,7 +20,7 @@ const (
 	DefaultCoderModel        = "anthropic/claude-sonnet-4-5"
 	DefaultReviewerModel     = "anthropic/claude-sonnet-4-5"
 	DefaultTesterModel       = "deepseek/deepseek-chat"
-	DefaultExplainerModel    = "google/gemini-flash-1.5"
+	DefaultExplainerModel    = "google/gemini-2.0-flash-001"
 )
 
 var supportedAppearanceVariants = map[string]struct{}{

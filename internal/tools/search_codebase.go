@@ -27,7 +27,7 @@ func NewSearchCodebaseTool(projectRoot string) *SearchCodebaseTool {
 func (t *SearchCodebaseTool) Definition() Definition {
 	return Definition{
 		Name:        SearchCodebaseName,
-		Description: "Search text files inside Relay's configured project root.",
+		Description: "Search filenames and text files inside Relay's configured project root.",
 		Parameters:  map[string]any{"query": "string", "include_pattern": "string", "max_results": "number"},
 	}
 }
@@ -68,12 +68,23 @@ func (t *SearchCodebaseTool) Execute(_ context.Context, arguments json.RawMessag
 				return nil
 			}
 		}
+		relativePath, err := filepath.Rel(t.projectRoot, path)
+		if err != nil {
+			return nil
+		}
+		lowerRelativePath := strings.ToLower(relativePath)
+		if strings.Contains(lowerRelativePath, needle) {
+			matches = append(matches, relativePath)
+			if len(matches) >= maxResults {
+				return fs.SkipAll
+			}
+			return nil
+		}
 		body, err := os.ReadFile(path)
 		if err != nil {
 			return nil
 		}
 		if strings.Contains(strings.ToLower(string(body)), needle) {
-			relativePath, _ := filepath.Rel(t.projectRoot, path)
 			matches = append(matches, relativePath)
 			if len(matches) >= maxResults {
 				return fs.SkipAll

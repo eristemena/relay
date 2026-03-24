@@ -7,14 +7,24 @@ interface AgentCommandBarProps {
   hasActiveRun: boolean;
   onCancel: () => void;
   onSubmit: (task: string) => void;
+  panelClassName?: string;
 }
 
-export function AgentCommandBar({ disabled, hasActiveRun, onCancel, onSubmit }: AgentCommandBarProps) {
+export function AgentCommandBar({
+  disabled,
+  hasActiveRun,
+  onCancel,
+  onSubmit,
+  panelClassName,
+}: AgentCommandBarProps) {
   const [task, setTask] = useState("");
+  const [isExpanded, setIsExpanded] = useState(false);
+  const expanded = isExpanded || task.trim().length > 0;
 
   return (
     <form
-      className="stream-card rounded-[1.75rem] p-5"
+      className={`stream-card rounded-[1.75rem] p-4 ${panelClassName ?? ""}`.trim()}
+      data-expanded={expanded ? "true" : "false"}
       onSubmit={(event) => {
         event.preventDefault();
         const trimmed = task.trim();
@@ -23,34 +33,76 @@ export function AgentCommandBar({ disabled, hasActiveRun, onCancel, onSubmit }: 
         }
         onSubmit(trimmed);
         setTask("");
+        setIsExpanded(false);
       }}
     >
-      <label className="flex flex-col gap-3 text-sm text-text" htmlFor="agent-task-input">
-        <span className="eyebrow">Agent task</span>
+      <label className="agent-command-label" htmlFor="agent-task-input">
+        Agent task
+      </label>
+      <div className="agent-command-row">
+        <div aria-hidden="true" className="agent-command-mark">
+          <svg fill="none" height="28" viewBox="0 0 28 28" width="28">
+            <path
+              d="M14 2.75L16.78 10.22L24.25 13L16.78 15.78L14 23.25L11.22 15.78L3.75 13L11.22 10.22L14 2.75Z"
+              fill="currentColor"
+              opacity="0.95"
+            />
+            <path
+              d="M22.25 4.75L23.26 7.49L26 8.5L23.26 9.51L22.25 12.25L21.24 9.51L18.5 8.5L21.24 7.49L22.25 4.75Z"
+              fill="currentColor"
+              opacity="0.72"
+            />
+          </svg>
+        </div>
         <textarea
-          className="min-h-28 rounded-[1.5rem] border border-border bg-raised px-4 py-4 text-text"
+          aria-expanded={expanded}
+          className={`agent-command-input ${expanded ? "agent-command-input-expanded" : "agent-command-input-collapsed"}`}
           disabled={disabled}
           id="agent-task-input"
           name="agent-task-input"
-          onChange={(event) => setTask(event.target.value)}
-          placeholder="Describe the task you want Relay to handle."
+          onBlur={() => {
+            if (task.trim().length === 0) {
+              setIsExpanded(false);
+            }
+          }}
+          onChange={(event) => {
+            setTask(event.target.value);
+            if (event.target.value.trim().length > 0) {
+              setIsExpanded(true);
+            }
+          }}
+          onFocus={() => setIsExpanded(true)}
+          placeholder="Ask Relay to code, refactor, or debug..."
+          rows={expanded ? 3 : 1}
           value={task}
         />
-      </label>
-      <div className="mt-4 flex items-center justify-between gap-3">
-        <p className="text-sm text-text-muted">Relay chooses one role automatically and streams its visible output here.</p>
-        <div className="flex items-center gap-3">
+        <div className="agent-command-actions">
           {hasActiveRun ? (
             <button
-              className="rounded-full border border-border bg-raised px-5 py-3 font-medium text-text disabled:cursor-not-allowed disabled:opacity-60"
+              aria-label="Cancel run"
+              className="agent-command-cancel"
               onClick={onCancel}
               type="button"
             >
-              Cancel run
+              Cancel
             </button>
           ) : null}
-          <button className="rounded-full border border-brand-mid bg-brand-mid px-5 py-3 font-medium text-text disabled:cursor-not-allowed disabled:opacity-60" disabled={disabled} type="submit">
-            Run task
+          <button
+            aria-label="Run task"
+            className="agent-command-submit disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={disabled}
+            type="submit"
+          >
+            <span className="agent-command-submit-label">Run</span>
+            <svg fill="none" height="18" viewBox="0 0 18 18" width="18">
+              <path
+                d="M9 14.25V3.75M9 3.75L4.5 8.25M9 3.75L13.5 8.25"
+                stroke="currentColor"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="1.8"
+              />
+            </svg>
           </button>
         </div>
       </div>

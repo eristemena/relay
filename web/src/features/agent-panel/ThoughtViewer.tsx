@@ -1,7 +1,9 @@
 import type { AgentRunSummary } from "@/shared/lib/workspace-protocol";
 import type { PendingApproval, StoredRunEvent } from "@/shared/lib/workspace-store";
 import { LiveCursor } from "@/features/agent-panel/LiveCursor";
+import { FormattedMarkdown } from "@/shared/lib/FormattedMarkdown";
 import {
+  describeRunSummaryPlaceholder,
   describeApprovalState,
   describeRunFailure,
   describeToolRunningState,
@@ -31,22 +33,44 @@ export function ThoughtViewer({ pendingApproval, run, runEvents, transcript }: T
   const statusNote = describeStatusNote(pendingApproval, run, runEvents);
 
   return (
-    <section aria-labelledby="thought-viewer-heading" className="stream-card rounded-[1.75rem] p-5">
+    <section
+      aria-labelledby="thought-viewer-heading"
+      className="stream-card rounded-[1.75rem] p-5"
+    >
       <div className="flex items-center justify-between gap-3">
-        <h3 id="thought-viewer-heading" className="font-display text-xl text-text">
+        <h3
+          id="thought-viewer-heading"
+          className="font-display text-xl text-text"
+        >
           Visible output
         </h3>
-        {run ? <p className="text-sm text-text-muted">{run.task_text_preview}</p> : null}
+        {run ? (
+          <p className="text-sm text-text-muted">{run.task_text_preview}</p>
+        ) : null}
       </div>
 
       {transcript ? (
         <>
-          <p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-text">
-            {transcript}
-            {isStreaming ? <LiveCursor /> : null}
-          </p>
+          <div
+            aria-live="polite"
+            aria-label="Visible output transcript"
+            className="relay-transcript-copy mt-4"
+            role="region"
+          >
+            <FormattedMarkdown
+              className="relay-transcript-markdown text-sm leading-7 text-text"
+              content={transcript}
+            />
+            {isStreaming ? (
+              <div aria-hidden="true" className="relay-transcript-cursor">
+                <LiveCursor />
+              </div>
+            ) : null}
+          </div>
           {statusNote ? (
-            <p className="mt-4 text-sm leading-6 text-text-muted">{statusNote}</p>
+            <p className="mt-4 text-sm leading-6 text-text-muted">
+              {statusNote}
+            </p>
           ) : null}
         </>
       ) : (
@@ -70,6 +94,7 @@ function describePlaceholder(
   }
 
   const hasTimelineActivity = runEvents.some((event) => event.type !== "token");
+  const summaryPlaceholder = describeRunSummaryPlaceholder(run);
   if (run.state === "accepted" || run.state === "thinking") {
     return "Relay accepted this task and is waiting for the first visible provider output.";
   }
@@ -84,6 +109,12 @@ function describePlaceholder(
       ? "This run completed without streamed text. Review the timeline for the ordered state changes and tool activity."
       : "This run completed without streamed text.";
   }
+  if (run.state === "halted") {
+    return hasTimelineActivity
+      ? describeRunFailure(runEvents)
+      : (summaryPlaceholder ??
+          "This run halted before any visible output arrived.");
+  }
   if (run.state === "errored") {
     if (isCancelledRun(runEvents)) {
       return hasTimelineActivity
@@ -92,7 +123,8 @@ function describePlaceholder(
     }
     return hasTimelineActivity
       ? describeRunFailure(runEvents)
-      : "This run ended before any visible output arrived.";
+      : (summaryPlaceholder ??
+          "This run ended before any visible output arrived.");
   }
   return "Relay is preparing the visible output for this run.";
 }
@@ -111,6 +143,9 @@ function describeStatusNote(
   }
   if (run.state === "tool_running") {
     return describeToolRunningState(runEvents);
+  }
+  if (run.state === "halted") {
+    return describeRunFailure(runEvents);
   }
   if (run.state === "errored") {
     return describeRunFailure(runEvents);

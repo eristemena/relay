@@ -21,7 +21,7 @@ describe("PreferencesPanel", () => {
             coder: "anthropic/claude-sonnet-4-5",
             reviewer: "anthropic/claude-sonnet-4-5",
             tester: "deepseek/deepseek-chat",
-            explainer: "google/gemini-flash-1.5",
+            explainer: "google/gemini-2.0-flash-001",
           },
           open_browser_on_start: true,
         }}
@@ -69,7 +69,7 @@ describe("PreferencesPanel", () => {
             coder: "anthropic/claude-sonnet-4-5",
             reviewer: "anthropic/claude-sonnet-4-5",
             tester: "deepseek/deepseek-chat",
-            explainer: "google/gemini-flash-1.5",
+            explainer: "google/gemini-2.0-flash-001",
           },
           open_browser_on_start: true,
         }}
@@ -93,7 +93,7 @@ describe("PreferencesPanel", () => {
             coder: "anthropic/claude-sonnet-4-5",
             reviewer: "anthropic/claude-sonnet-4-5",
             tester: "deepseek/deepseek-chat",
-            explainer: "google/gemini-flash-1.5",
+            explainer: "google/gemini-2.0-flash-001",
           },
           open_browser_on_start: true,
         }}

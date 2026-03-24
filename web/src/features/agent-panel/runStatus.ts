@@ -1,4 +1,5 @@
 import type {
+  AgentRunSummary,
   ErrorPayload,
   ToolCallPayload,
   ToolResultPayload,
@@ -11,7 +12,7 @@ import type {
 export function getTerminalRunError(events: StoredRunEvent[]): ErrorPayload | null {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
-    if (event.type !== "error") {
+    if (event.type !== "error" && event.type !== "run_error") {
       continue;
     }
 
@@ -19,6 +20,60 @@ export function getTerminalRunError(events: StoredRunEvent[]): ErrorPayload | nu
     if (payload.terminal) {
       return payload;
     }
+  }
+
+  return null;
+}
+
+export function isClarificationRequiredCode(code?: string | null) {
+  return Boolean(code && code.endsWith("_clarification_required"));
+}
+
+export function getRunFailureTitle(code?: string | null) {
+  if (isClarificationRequiredCode(code)) {
+    return "Clarification required";
+  }
+  if (code === "run_cancelled") {
+    return "Run cancelled";
+  }
+  return "Run halted";
+}
+
+export function getRunSummaryBadgeState(
+  run: AgentRunSummary | null,
+): import("@/features/agent-panel/StateBadge").StateBadgeState {
+  if (!run) {
+    return "accepted";
+  }
+  if (isClarificationRequiredCode(run.error_code)) {
+    return "clarification_required";
+  }
+  return run.state;
+}
+
+export function getRunSummaryStateLabel(run: AgentRunSummary) {
+  return isClarificationRequiredCode(run.error_code)
+    ? "Clarification required"
+    : run.state;
+}
+
+export function describeRunSummaryReplayBanner(run: AgentRunSummary) {
+  if (isClarificationRequiredCode(run.error_code)) {
+    return `Reviewing saved run ${run.id} in read-only mode. Clarification was required before Relay could continue this run.`;
+  }
+
+  return `Reviewing saved run ${run.id} in read-only mode.`;
+}
+
+export function describeRunSummaryPlaceholder(run: AgentRunSummary) {
+  if (isClarificationRequiredCode(run.error_code)) {
+    return "Clarification required before Relay could continue this run. Update the task or missing context, then rerun when ready.";
+  }
+  if (run.state === "halted") {
+    return "This run halted before any visible output arrived.";
+  }
+  if (run.state === "errored") {
+    return "This run ended before any visible output arrived.";
   }
 
   return null;
@@ -86,7 +141,11 @@ export function describeApprovalState(
 export function describeRunFailure(events: StoredRunEvent[]) {
   const terminalError = getTerminalRunError(events);
   if (!terminalError) {
-    return "This run ended with an error. Review the timeline for the failure details.";
+    return "This run halted before Relay could finish the orchestration. Review the timeline for the failure details.";
+  }
+
+  if (isClarificationRequiredCode(terminalError.code)) {
+    return `Clarification required. ${terminalError.message} Update the task or supply the missing context, then rerun.`;
   }
 
   if (terminalError.code === "run_cancelled") {
@@ -101,5 +160,8 @@ export function describeRunFailure(events: StoredRunEvent[]) {
     return `This run ended after ${formatToolName(latestToolResult.tool_name)} failed. Review the timeline for the tool failure details.`;
   }
 
-  return terminalError.message || "This run ended with an error. Review the timeline for the failure details.";
+  return (
+    terminalError.message ||
+    "This run halted before Relay could finish the orchestration. Review the timeline for the failure details."
+  );
 }

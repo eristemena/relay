@@ -29,8 +29,8 @@ func (s *Service) SubmitRun(ctx context.Context, input SubmitRunInput, emit func
 		return WorkspaceSnapshot{}, fmt.Errorf("OpenRouter is not configured yet. Save an API key in preferences before starting a run")
 	}
 
-	runner := s.runnerFactory(cfg, input.Task)
-	profile := runner.Profile()
+	agent := s.agentFactory(cfg, sqlite.RolePlanner)
+	profile := agent.Profile()
 
 	run, err := s.store.CreateAgentRun(ctx, input.SessionID, input.Task, profile.Role, profile.Model)
 	if errors.Is(err, sqlite.ErrActiveRunExists) {
@@ -43,7 +43,7 @@ func (s *Service) SubmitRun(ctx context.Context, input SubmitRunInput, emit func
 	runCtx, cancel := context.WithCancel(context.Background())
 	s.registerActiveRun(run.ID, cancel)
 	s.attachRunSubscriber(ctx, run.ID, emit, false)
-	go s.executeRun(runCtx, run, input.Task, runner)
+	go s.executeRun(runCtx, run, input.Task, cfg)
 
 	snapshot, err := s.Bootstrap(ctx, input.SessionID)
 	if err != nil {
@@ -67,14 +67,17 @@ func (s *Service) CancelRun(ctx context.Context, input CancelRunInput, _ func(St
 
 	cancel, ok := s.activeRunCancel(run.ID)
 	if !ok {
-		return WorkspaceSnapshot{}, fmt.Errorf("run %s cannot be cancelled because it is not attached to an active execution", input.RunID)
+		if err := s.failRun(ctx, run.ID, "run_cancelled", "Relay cancelled the active run.", nil); err != nil {
+			return WorkspaceSnapshot{}, err
+		}
+		return s.Bootstrap(ctx, input.SessionID)
 	}
 	cancel()
 
 	return s.Bootstrap(ctx, input.SessionID)
 }
 
-func (s *Service) executeRun(runCtx context.Context, run sqlite.AgentRun, task string, runner agents.Runner) {
+func (s *Service) executeRun(runCtx context.Context, run sqlite.AgentRun, task string, cfg config.Config) {
 	defer s.clearActiveRun(run.ID)
 	runCtx = withRunExecutionContext(runCtx, runExecutionContext{
 		SessionID: run.SessionID,
@@ -83,7 +86,21 @@ func (s *Service) executeRun(runCtx context.Context, run sqlite.AgentRun, task s
 			return s.dispatchRunEnvelope(run.ID, envelope)
 		},
 	})
+	if s.forceLegacyRunnerPath {
+		s.executeLegacyRun(runCtx, run, task, s.runnerFactory(cfg, task))
+		return
+	}
+	if err := s.executeOrchestrationRun(runCtx, run, task, cfg); err == nil {
+		return
+	} else if errors.Is(err, context.Canceled) || errors.Is(runCtx.Err(), context.Canceled) {
+		_ = s.emitRunError(context.WithoutCancel(runCtx), run, "run_cancelled", "Relay cancelled the active run.", nil)
+		return
+	} else {
+		_ = s.emitRunError(context.WithoutCancel(runCtx), run, "run_failed", "Relay could not complete the orchestration run.", nil)
+	}
+}
 
+func (s *Service) executeLegacyRun(runCtx context.Context, run sqlite.AgentRun, task string, runner agents.Runner) {
 	terminalEventWritten := false
 	markTerminal := func() {
 		terminalEventWritten = true

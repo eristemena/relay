@@ -1,10 +1,13 @@
 import type { AgentRunSummary, PreferencesView } from "@/shared/lib/workspace-protocol";
-import type { PendingApproval, StoredRunEvent } from "@/shared/lib/workspace-store";
-import { AgentCommandBar } from "@/features/agent-panel/AgentCommandBar";
+import type {
+  PendingApproval,
+  StoredRunEvent,
+} from "@/shared/lib/workspace-store";
 import { RunHeader } from "@/features/agent-panel/RunHeader";
 import { RunTimeline } from "@/features/agent-panel/RunTimeline";
 import { ThoughtViewer } from "@/features/agent-panel/ThoughtViewer";
 import {
+  describeRunSummaryReplayBanner,
   describeApprovalState,
   describeRunFailure,
   describeToolRunningState,
@@ -21,16 +24,29 @@ interface AgentPanelProps {
   runTranscript?: string;
   selectedRunId: string;
   selectedRunSummary: AgentRunSummary | null;
-  onApprovalDecision: (toolCallId: string, decision: "approved" | "rejected") => void;
-  onCancel: (runId: string) => void;
-  onSubmit: (task: string) => void;
+  onApprovalDecision: (
+    toolCallId: string,
+    decision: "approved" | "rejected",
+  ) => void;
 }
 
-export function AgentPanel({ activeRunId, activeSessionId, preferences, pendingApproval, runEvents, runTranscript, selectedRunId, selectedRunSummary, onApprovalDecision, onCancel, onSubmit }: AgentPanelProps) {
-  const transcript = runTranscript ?? runEvents
-    .filter((event) => event.type === "token")
-    .map((event) => ("text" in event.payload ? event.payload.text : ""))
-    .join("");
+export function AgentPanel({
+  activeRunId,
+  activeSessionId,
+  preferences,
+  pendingApproval,
+  runEvents,
+  runTranscript,
+  selectedRunId,
+  selectedRunSummary,
+  onApprovalDecision,
+}: AgentPanelProps) {
+  const transcript =
+    runTranscript ??
+    runEvents
+      .filter((event) => event.type === "token")
+      .map((event) => ("text" in event.payload ? event.payload.text : ""))
+      .join("");
   const hasTokenOutput = transcript.length > 0;
   const runSelected = Boolean(selectedRunSummary);
   const showingReplay = Boolean(selectedRunId) && selectedRunId !== activeRunId;
@@ -48,7 +64,8 @@ export function AgentPanel({ activeRunId, activeSessionId, preferences, pendingA
     pendingApproval,
   });
   const rootWarning = !preferences.project_root_valid
-    ? preferences.project_root_message || "Repository-reading tools stay blocked until Relay has a valid project root."
+    ? preferences.project_root_message ||
+      "Repository-reading tools stay blocked until Relay has a valid project root."
     : null;
 
   return (
@@ -117,12 +134,6 @@ export function AgentPanel({ activeRunId, activeSessionId, preferences, pendingA
           </div>
         ) : null}
 
-        <AgentCommandBar
-          disabled={submitDisabled}
-          hasActiveRun={Boolean(activeRunId)}
-          onCancel={() => onCancel(activeRunId)}
-          onSubmit={onSubmit}
-        />
         <RunHeader run={selectedRunSummary} />
         <ThoughtViewer
           pendingApproval={pendingApproval}
@@ -174,7 +185,7 @@ function describeHelpMessage({
     return describeApprovalState(pendingApproval, runEvents);
   }
   if (showingReplay && selectedRunSummary) {
-    return `Reviewing saved run ${selectedRunSummary.id} in read-only mode.`;
+    return describeRunSummaryReplayBanner(selectedRunSummary);
   }
   if (activeRunId && !selectedRunId) {
     return "A Relay run is already active. Select it from history or wait for it to finish before submitting another task.";
@@ -199,6 +210,9 @@ function describeHelpMessage({
     return hasTokenOutput
       ? "This run is complete. You can review the transcript and timeline or submit another task."
       : "This run is complete. Review the timeline for the ordered state changes and tool activity, then submit another task when ready.";
+  }
+  if (selectedRunSummary?.state === "halted") {
+    return describeRunFailure(runEvents);
   }
   if (selectedRunSummary?.state === "errored") {
     return describeRunFailure(runEvents);

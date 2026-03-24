@@ -18,7 +18,7 @@ const jetBrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Relay workspace - Live agent panel - Relay",
+  title: "Relay workspace - Agent graph - Relay",
   description: "Local browser workspace for Relay.",
 };
 

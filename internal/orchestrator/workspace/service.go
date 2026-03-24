@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -19,21 +20,27 @@ type Store interface {
 	CreateSession(ctx context.Context, displayName string) (sqlite.Session, error)
 	OpenSession(ctx context.Context, sessionID string) (sqlite.Session, error)
 	CreateAgentRun(ctx context.Context, sessionID string, taskText string, role sqlite.AgentRole, model string) (sqlite.AgentRun, error)
+	CreateAgentExecution(ctx context.Context, execution sqlite.AgentExecution) (sqlite.AgentExecution, error)
 	GetActiveRun(ctx context.Context) (sqlite.AgentRun, error)
 	GetAgentRun(ctx context.Context, runID string) (sqlite.AgentRun, error)
+	ListAgentExecutions(ctx context.Context, runID string) ([]sqlite.AgentExecution, error)
 	ListRunSummaries(ctx context.Context, sessionID string) ([]sqlite.RunSummary, error)
 	AppendRunEvent(ctx context.Context, runID string, eventType string, role sqlite.AgentRole, model string, payloadJSON string) (sqlite.AgentRunEvent, error)
 	ListRunEvents(ctx context.Context, runID string) ([]sqlite.AgentRunEvent, error)
 	UpdateAgentRun(ctx context.Context, run sqlite.AgentRun) error
+	UpdateAgentExecution(ctx context.Context, execution sqlite.AgentExecution) error
 }
 
 type Service struct {
-	store Store
-	paths config.Paths
-	mu    sync.Mutex
-	runnerFactory func(cfg config.Config, task string) agents.Runner
-	activeRuns    map[string]activeRunRegistration
-	pendingApprovals map[string]pendingApproval
+	store                 Store
+	paths                 config.Paths
+	logger                *slog.Logger
+	mu                    sync.Mutex
+	runnerFactory         func(cfg config.Config, task string) agents.Runner
+	agentFactory          func(cfg config.Config, role sqlite.AgentRole) agents.Agent
+	forceLegacyRunnerPath bool
+	activeRuns            map[string]activeRunRegistration
+	pendingApprovals      map[string]pendingApproval
 }
 
 type activeRunRegistration struct {
@@ -96,14 +103,14 @@ type UIState struct {
 }
 
 type WorkspaceSnapshot struct {
-	ActiveSessionID string                 `json:"active_session_id"`
-	Sessions        []SessionSummary       `json:"sessions"`
-	Preferences     config.SafePreferences `json:"preferences"`
-	UIState         UIState                `json:"ui_state"`
-	ActiveRunID     string                 `json:"active_run_id,omitempty"`
-	RunSummaries    []RunSummary           `json:"run_summaries,omitempty"`
-	CredentialStatus CredentialStatus      `json:"credential_status"`
-	Warnings        []string               `json:"warnings,omitempty"`
+	ActiveSessionID  string                 `json:"active_session_id"`
+	Sessions         []SessionSummary       `json:"sessions"`
+	Preferences      config.SafePreferences `json:"preferences"`
+	UIState          UIState                `json:"ui_state"`
+	ActiveRunID      string                 `json:"active_run_id,omitempty"`
+	RunSummaries     []RunSummary           `json:"run_summaries,omitempty"`
+	CredentialStatus CredentialStatus       `json:"credential_status"`
+	Warnings         []string               `json:"warnings,omitempty"`
 }
 
 type CredentialStatus struct {
@@ -111,14 +118,15 @@ type CredentialStatus struct {
 }
 
 type RunSummary struct {
-	ID              string             `json:"id"`
-	TaskTextPreview string             `json:"task_text_preview"`
-	Role            sqlite.AgentRole   `json:"role"`
-	Model           string             `json:"model"`
-	State           string             `json:"state"`
-	StartedAt       time.Time          `json:"started_at"`
-	CompletedAt     *time.Time         `json:"completed_at,omitempty"`
-	HasToolActivity bool               `json:"has_tool_activity"`
+	ID              string           `json:"id"`
+	TaskTextPreview string           `json:"task_text_preview"`
+	Role            sqlite.AgentRole `json:"role"`
+	Model           string           `json:"model"`
+	State           string           `json:"state"`
+	ErrorCode       string           `json:"error_code,omitempty"`
+	StartedAt       time.Time        `json:"started_at"`
+	CompletedAt     *time.Time       `json:"completed_at,omitempty"`
+	HasToolActivity bool             `json:"has_tool_activity"`
 }
 
 type SubmitRunInput struct {
@@ -159,16 +167,28 @@ type PreferencesInput struct {
 
 func NewService(store Store, paths config.Paths) *Service {
 	service := &Service{
-		store:      store,
-		paths:      paths,
-		activeRuns: make(map[string]activeRunRegistration),
+		store:            store,
+		paths:            paths,
+		logger:           slog.Default(),
+		activeRuns:       make(map[string]activeRunRegistration),
 		pendingApprovals: make(map[string]pendingApproval),
 	}
 	service.runnerFactory = func(cfg config.Config, task string) agents.Runner {
 		registry := agents.NewRegistry(cfg.Agents.WithDefaults())
 		return registry.NewRunner(cfg.OpenRouter.APIKey, task, newCatalogToolExecutor(cfg.ProjectRoot, service))
 	}
+	service.agentFactory = func(cfg config.Config, role sqlite.AgentRole) agents.Agent {
+		registry := agents.NewRegistry(cfg.Agents.WithDefaults())
+		return registry.NewAgent(cfg.OpenRouter.APIKey, role, newCatalogToolExecutor(cfg.ProjectRoot, service))
+	}
 	return service
+}
+
+func (s *Service) SetLogger(logger *slog.Logger) {
+	if logger == nil {
+		return
+	}
+	s.logger = logger
 }
 
 func (s *Service) SetRunnerFactory(factory func(cfg config.Config, task string) agents.Runner) {
@@ -176,6 +196,15 @@ func (s *Service) SetRunnerFactory(factory func(cfg config.Config, task string) 
 		return
 	}
 	s.runnerFactory = factory
+	s.forceLegacyRunnerPath = true
+}
+
+func (s *Service) SetAgentFactory(factory func(cfg config.Config, role sqlite.AgentRole) agents.Agent) {
+	if factory == nil {
+		return
+	}
+	s.agentFactory = factory
+	s.forceLegacyRunnerPath = false
 }
 
 func (s *Service) registerActiveRun(runID string, cancel context.CancelFunc) {
@@ -195,6 +224,13 @@ func (s *Service) activeRunCancel(runID string) (context.CancelFunc, bool) {
 		return nil, false
 	}
 	return registration.cancel, true
+}
+
+func (s *Service) hasTrackedActiveRun(runID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.activeRuns[runID]
+	return ok
 }
 
 func (s *Service) clearActiveRun(runID string) {
@@ -399,7 +435,7 @@ func (s *Service) RequestApproval(ctx context.Context, request ApprovalRequest) 
 	}()
 
 	if err := runContext.Emit(StreamEnvelope{
-		Type: "approval_request",
+		Type:    "approval_request",
 		Payload: pending.Payload,
 	}); err != nil {
 		return ApprovalDecision{}, err
@@ -474,13 +510,17 @@ func (s *Service) Bootstrap(ctx context.Context, lastSessionID string) (Workspac
 	runSummaries := make([]RunSummary, 0)
 	activeRunID := ""
 	if activeSessionID != "" {
+		activeRun, hasActiveRun, err := s.reconcileActiveRun(ctx)
+		if err != nil {
+			return WorkspaceSnapshot{}, fmt.Errorf("reconcile active run: %w", err)
+		}
+
 		storedRuns, err := s.store.ListRunSummaries(ctx, activeSessionID)
 		if err != nil {
 			return WorkspaceSnapshot{}, fmt.Errorf("load run summaries: %w", err)
 		}
 		runSummaries = summarizeRuns(storedRuns)
-		activeRun, err := s.store.GetActiveRun(ctx)
-		if err == nil && activeRun.SessionID == activeSessionID {
+		if hasActiveRun && activeRun.SessionID == activeSessionID {
 			activeRunID = activeRun.ID
 		}
 	}
@@ -497,8 +537,34 @@ func (s *Service) Bootstrap(ctx context.Context, lastSessionID string) (Workspac
 		ActiveRunID:      activeRunID,
 		RunSummaries:     runSummaries,
 		CredentialStatus: CredentialStatus{Configured: cfg.HasOpenRouterKey()},
-		Warnings: warnings,
+		Warnings:         warnings,
 	}, nil
+}
+
+func (s *Service) reconcileActiveRun(ctx context.Context) (sqlite.AgentRun, bool, error) {
+	activeRun, err := s.store.GetActiveRun(ctx)
+	if errors.Is(err, sqlite.ErrRunNotFound) {
+		return sqlite.AgentRun{}, false, nil
+	}
+	if err != nil {
+		return sqlite.AgentRun{}, false, err
+	}
+	if s.hasTrackedActiveRun(activeRun.ID) {
+		return activeRun, true, nil
+	}
+	if activeRun.State != sqlite.RunStateToolRunning {
+		return activeRun, true, nil
+	}
+	if err := s.failRun(
+		ctx,
+		activeRun.ID,
+		"run_interrupted",
+		"Relay lost the active run before it reached a terminal state. The run was marked as interrupted so you can start another task.",
+		nil,
+	); err != nil {
+		return sqlite.AgentRun{}, false, err
+	}
+	return sqlite.AgentRun{}, false, nil
 }
 
 func (s *Service) CreateSession(ctx context.Context, displayName string) (WorkspaceSnapshot, error) {
@@ -626,6 +692,7 @@ func summarizeRuns(runs []sqlite.RunSummary) []RunSummary {
 			Role:            run.Role,
 			Model:           run.Model,
 			State:           run.State,
+			ErrorCode:       run.ErrorCode,
 			StartedAt:       run.StartedAt,
 			CompletedAt:     run.CompletedAt,
 			HasToolActivity: run.HasToolActivity,

@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -25,7 +26,8 @@ var ErrRunNotFound = errors.New("agent run not found")
 var ErrActiveRunExists = errors.New("agent run already active")
 
 type Store struct {
-	db *sql.DB
+	db      *sql.DB
+	writeMu sync.Mutex
 }
 
 func NewStore(databasePath string) (*Store, error) {
@@ -102,6 +104,9 @@ func (s *Store) GetSession(ctx context.Context, sessionID string) (Session, erro
 }
 
 func (s *Store) CreateSession(ctx context.Context, displayName string) (Session, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
 	if strings.TrimSpace(displayName) == "" {
 		displayName = fmt.Sprintf("Session %s", time.Now().Format("2006-01-02 15:04"))
 	}
@@ -151,6 +156,9 @@ func (s *Store) CreateSession(ctx context.Context, displayName string) (Session,
 }
 
 func (s *Store) OpenSession(ctx context.Context, sessionID string) (Session, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
 	now := time.Now().UTC()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -196,6 +204,9 @@ func (s *Store) OpenSession(ctx context.Context, sessionID string) (Session, err
 }
 
 func (s *Store) CreateAgentRun(ctx context.Context, sessionID string, taskText string, role AgentRole, model string) (AgentRun, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
 	now := time.Now().UTC()
 	runID, err := generateID("run")
 	if err != nil {
@@ -217,8 +228,8 @@ func (s *Store) CreateAgentRun(ctx context.Context, sessionID string, taskText s
 	if err := tx.QueryRowContext(ctx, `
 		SELECT COUNT(*)
 		FROM agent_runs
-		WHERE state IN (?, ?, ?)
-	`, RunStateAccepted, RunStateThinking, RunStateToolRunning).Scan(&activeCount); err != nil {
+		WHERE state IN (?, ?, ?, ?)
+	`, RunStateAccepted, RunStateActive, RunStateThinking, RunStateToolRunning).Scan(&activeCount); err != nil {
 		return AgentRun{}, fmt.Errorf("check active run: %w", err)
 	}
 	if activeCount > 0 {
@@ -248,6 +259,7 @@ func (s *Store) CreateAgentRun(ctx context.Context, sessionID string, taskText s
 		Model:     strings.TrimSpace(model),
 		State:     RunStateAccepted,
 		StartedAt: now,
+		Mode:      RunModeOrchestration,
 	}, nil
 }
 
@@ -255,10 +267,10 @@ func (s *Store) GetActiveRun(ctx context.Context) (AgentRun, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, session_id, task_text, role, model, state, started_at, completed_at, error_code, error_message, first_token_at
 		FROM agent_runs
-		WHERE state IN (?, ?, ?)
+		WHERE state IN (?, ?, ?, ?)
 		ORDER BY datetime(started_at) DESC
 		LIMIT 1
-	`, RunStateAccepted, RunStateThinking, RunStateToolRunning)
+	`, RunStateAccepted, RunStateActive, RunStateThinking, RunStateToolRunning)
 
 	run, err := scanAgentRun(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -301,6 +313,7 @@ func (s *Store) ListRunSummaries(ctx context.Context, sessionID string) ([]RunSu
 		       r.state,
 		       r.started_at,
 		       r.completed_at,
+		       r.error_code,
 		       EXISTS (
 		         SELECT 1 FROM agent_run_events e
 		         WHERE e.run_id = r.id AND e.event_type IN (?, ?)
@@ -319,10 +332,11 @@ func (s *Store) ListRunSummaries(ctx context.Context, sessionID string) ([]RunSu
 		var (
 			summary     RunSummary
 			role        string
+			errorCode   sql.NullString
 			startedAt   string
 			completedAt sql.NullString
 		)
-		if err := rows.Scan(&summary.ID, &summary.TaskTextPreview, &role, &summary.Model, &summary.State, &startedAt, &completedAt, &summary.HasToolActivity); err != nil {
+		if err := rows.Scan(&summary.ID, &summary.TaskTextPreview, &role, &summary.Model, &summary.State, &startedAt, &completedAt, &errorCode, &summary.HasToolActivity); err != nil {
 			return nil, fmt.Errorf("scan run summary: %w", err)
 		}
 		parsedStartedAt, err := time.Parse(time.RFC3339, startedAt)
@@ -338,6 +352,9 @@ func (s *Store) ListRunSummaries(ctx context.Context, sessionID string) ([]RunSu
 			}
 			summary.CompletedAt = &parsedCompletedAt
 		}
+		if errorCode.Valid {
+			summary.ErrorCode = errorCode.String
+		}
 		if summary.TaskTextPreview == "" {
 			summary.TaskTextPreview = "Untitled task"
 		}
@@ -352,6 +369,9 @@ func (s *Store) ListRunSummaries(ctx context.Context, sessionID string) ([]RunSu
 }
 
 func (s *Store) AppendRunEvent(ctx context.Context, runID string, eventType string, role AgentRole, model string, payloadJSON string) (AgentRunEvent, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return AgentRunEvent{}, fmt.Errorf("begin append run event: %w", err)
@@ -429,6 +449,9 @@ func (s *Store) ListRunEvents(ctx context.Context, runID string) ([]AgentRunEven
 }
 
 func (s *Store) UpdateAgentRun(ctx context.Context, run AgentRun) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
 	completedAt := sql.NullString{}
 	if run.CompletedAt != nil {
 		completedAt.Valid = true
@@ -458,6 +481,108 @@ func (s *Store) UpdateAgentRun(ctx context.Context, run AgentRun) error {
 	}
 
 	return nil
+}
+
+func (s *Store) CreateAgentExecution(ctx context.Context, execution AgentExecution) (AgentExecution, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	if strings.TrimSpace(execution.ID) == "" {
+		id, err := generateID("agent")
+		if err != nil {
+			return AgentExecution{}, err
+		}
+		execution.ID = id
+	}
+
+	if strings.TrimSpace(execution.RunID) == "" {
+		return AgentExecution{}, fmt.Errorf("create agent execution: run id is required")
+	}
+	if strings.TrimSpace(execution.TaskText) == "" {
+		return AgentExecution{}, fmt.Errorf("create agent execution: task text is required")
+	}
+	if strings.TrimSpace(execution.State) == "" {
+		execution.State = AgentExecutionStateQueued
+	}
+
+	var startedAt any
+	if execution.StartedAt != nil {
+		startedAt = execution.StartedAt.Format(time.RFC3339)
+	}
+	var completedAt any
+	if execution.CompletedAt != nil {
+		completedAt = execution.CompletedAt.Format(time.RFC3339)
+	}
+
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO agent_executions (id, run_id, role, model, state, task_text, spawn_order, started_at, completed_at, error_code, error_message)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, execution.ID, execution.RunID, string(execution.Role), strings.TrimSpace(execution.Model), execution.State, execution.TaskText, execution.SpawnOrder, startedAt, completedAt, strings.TrimSpace(execution.ErrorCode), strings.TrimSpace(execution.ErrorMessage)); err != nil {
+		return AgentExecution{}, fmt.Errorf("insert agent execution: %w", err)
+	}
+
+	return execution, nil
+}
+
+func (s *Store) UpdateAgentExecution(ctx context.Context, execution AgentExecution) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	var startedAt any
+	if execution.StartedAt != nil {
+		startedAt = execution.StartedAt.Format(time.RFC3339)
+	}
+	var completedAt any
+	if execution.CompletedAt != nil {
+		completedAt = execution.CompletedAt.Format(time.RFC3339)
+	}
+
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE agent_executions
+		SET state = ?, started_at = ?, completed_at = ?, error_code = ?, error_message = ?
+		WHERE id = ?
+	`, execution.State, startedAt, completedAt, strings.TrimSpace(execution.ErrorCode), strings.TrimSpace(execution.ErrorMessage), execution.ID)
+	if err != nil {
+		return fmt.Errorf("update agent execution: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read updated agent execution rows: %w", err)
+	}
+	if rowsAffected == 0 {
+		return ErrRunNotFound
+	}
+
+	return nil
+}
+
+func (s *Store) ListAgentExecutions(ctx context.Context, runID string) ([]AgentExecution, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, run_id, role, model, state, task_text, spawn_order, started_at, completed_at, error_code, error_message
+		FROM agent_executions
+		WHERE run_id = ?
+		ORDER BY spawn_order ASC
+	`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("list agent executions: %w", err)
+	}
+	defer rows.Close()
+
+	executions := make([]AgentExecution, 0)
+	for rows.Next() {
+		execution, err := scanAgentExecution(rows)
+		if err != nil {
+			return nil, err
+		}
+		executions = append(executions, execution)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate agent executions: %w", err)
+	}
+
+	return executions, nil
 }
 
 func (s *Store) migrate(ctx context.Context) error {
@@ -525,6 +650,37 @@ func scanSession(scanner rowScanner) (Session, error) {
 	}
 
 	return session, nil
+}
+
+func scanAgentExecution(scanner rowScanner) (AgentExecution, error) {
+	var (
+		execution   AgentExecution
+		role        string
+		startedAt   sql.NullString
+		completedAt sql.NullString
+	)
+
+	if err := scanner.Scan(&execution.ID, &execution.RunID, &role, &execution.Model, &execution.State, &execution.TaskText, &execution.SpawnOrder, &startedAt, &completedAt, &execution.ErrorCode, &execution.ErrorMessage); err != nil {
+		return AgentExecution{}, err
+	}
+
+	execution.Role = AgentRole(role)
+	if startedAt.Valid {
+		parsedStartedAt, err := time.Parse(time.RFC3339, startedAt.String)
+		if err != nil {
+			return AgentExecution{}, fmt.Errorf("parse agent execution started_at: %w", err)
+		}
+		execution.StartedAt = &parsedStartedAt
+	}
+	if completedAt.Valid {
+		parsedCompletedAt, err := time.Parse(time.RFC3339, completedAt.String)
+		if err != nil {
+			return AgentExecution{}, fmt.Errorf("parse agent execution completed_at: %w", err)
+		}
+		execution.CompletedAt = &parsedCompletedAt
+	}
+
+	return execution, nil
 }
 
 func scanAgentRun(scanner rowScanner) (AgentRun, error) {

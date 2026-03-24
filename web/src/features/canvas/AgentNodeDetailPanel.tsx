@@ -1,18 +1,60 @@
 "use client";
 
 import { StateBadge } from "@/features/agent-panel/StateBadge";
-import type { AgentCanvasNodeModel } from "@/features/canvas/canvasModel";
+import { getRunFailureTitle } from "@/features/agent-panel/runStatus";
+import type {
+  AgentCanvasRole,
+  SelectedCanvasNodeView,
+} from "@/features/canvas/canvasModel";
+import { FormattedMarkdown } from "@/shared/lib/FormattedMarkdown";
 
 interface AgentNodeDetailPanelProps {
-  selectedNode: AgentCanvasNodeModel | null;
+  haltAgentId: string | null;
+  haltCode: string | null;
+  haltMessage: string;
+  haltRole: AgentCanvasRole | null;
+  selectedNode: SelectedCanvasNodeView | null;
 }
 
 export function AgentNodeDetailPanel({
+  haltAgentId,
+  haltCode,
+  haltMessage,
+  haltRole,
   selectedNode,
 }: AgentNodeDetailPanelProps) {
   if (!selectedNode) {
-    return null;
+    return (
+      <aside
+        aria-labelledby="agent-canvas-detail-heading"
+        className="agent-canvas-detail-panel panel-surface rounded-[1.5rem] p-5 shadow-idle"
+      >
+        <div>
+          <p className="eyebrow">Selected node</p>
+          <h3
+            className="mt-2 font-display text-2xl text-text"
+            id="agent-canvas-detail-heading"
+          >
+            Inspect an agent
+          </h3>
+          <p className="mt-4 text-sm leading-6 text-text-muted">
+            Select a node on the canvas to review its task handoff, live
+            transcript, and any preserved failure details.
+          </p>
+        </div>
+      </aside>
+    );
   }
+
+  const showRunHalt =
+    Boolean(haltMessage) &&
+    (haltAgentId === selectedNode.id ||
+      (haltAgentId === null && haltRole === selectedNode.role)) &&
+    haltMessage !== selectedNode.details.errorMessage;
+  const nodeFailureTitle =
+    selectedNode.state === "clarification_required"
+      ? "Clarification required"
+      : "Failure";
 
   return (
     <aside
@@ -38,15 +80,34 @@ export function AgentNodeDetailPanel({
           <p className="mt-2 text-text">{selectedNode.role}</p>
         </div>
         <div>
+          <p className="eyebrow">Task</p>
+          <div
+            aria-label="Selected node task"
+            className="agent-canvas-detail-copy mt-2"
+            role="region"
+          >
+            <p className="whitespace-pre-wrap text-text">
+              {selectedNode.details.taskText ||
+                "This agent has not received a visible task assignment yet."}
+            </p>
+          </div>
+        </div>
+        <div>
           <p className="eyebrow">Summary</p>
-          <p className="mt-2">{selectedNode.details.summary}</p>
+          <div
+            aria-label="Selected node summary"
+            className="agent-canvas-detail-copy mt-2"
+            role="region"
+          >
+            <FormattedMarkdown content={selectedNode.details.summary} />
+          </div>
         </div>
         <div>
           <p className="eyebrow">Incoming handoff</p>
           <p className="mt-2 text-text">
             {selectedNode.details.incomingFrom.length
               ? selectedNode.details.incomingFrom.join(", ")
-              : "This node currently starts the local workflow."}
+              : "This node currently starts the orchestration flow."}
           </p>
         </div>
         <div>
@@ -54,12 +115,40 @@ export function AgentNodeDetailPanel({
           <p className="mt-2 text-text">
             {selectedNode.details.outgoingTo.length
               ? selectedNode.details.outgoingTo.join(", ")
-              : "No downstream node yet. Add another role to extend the graph."}
+              : "No downstream handoff has been recorded for this node yet."}
           </p>
         </div>
-        <p className="rounded-2xl border border-border bg-raised/70 p-4">
-          Local-only detail panel. These values simulate the canvas experience and do not reflect a live Relay run.
-        </p>
+        {selectedNode.details.errorMessage ? (
+          <div className="rounded-2xl border border-[var(--color-error)] bg-raised/80 p-4 text-text">
+            <p className="eyebrow">{nodeFailureTitle}</p>
+            <p className="mt-2 text-sm leading-6">
+              {selectedNode.details.errorMessage}
+            </p>
+          </div>
+        ) : null}
+        {showRunHalt ? (
+          <div className="rounded-2xl border border-[var(--color-error)] bg-raised/80 p-4 text-text">
+            <p className="eyebrow">{getRunFailureTitle(haltCode)}</p>
+            <p className="mt-2 text-sm leading-6">{haltMessage}</p>
+          </div>
+        ) : null}
+        <div>
+          <p className="eyebrow">Transcript</p>
+          <div
+            aria-live="polite"
+            aria-label="Selected node transcript"
+            className="agent-canvas-detail-copy relay-transcript-copy mt-2 max-h-[24rem]"
+            role="region"
+          >
+            <FormattedMarkdown
+              className="relay-transcript-markdown text-sm leading-6 text-text"
+              content={
+                selectedNode.details.transcript ||
+                "Visible output will appear here as this agent streams or after replay restores its saved transcript."
+              }
+            />
+          </div>
+        </div>
       </div>
     </aside>
   );

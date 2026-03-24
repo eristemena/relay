@@ -12,6 +12,7 @@ import {
   createSessionOpenRequest,
   type Envelope,
   type PreferencesSavePayload,
+  type WorkspaceSnapshotPayload,
 } from "@/shared/lib/workspace-protocol";
 import { workspaceStore } from "@/shared/lib/workspace-store";
 
@@ -24,6 +25,7 @@ export function useWorkspaceSocket() {
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const isMountedRef = useRef(false);
+  const hydratedActiveRunRef = useRef<string>("");
 
   const sendEnvelope = useEffectEvent((message: Envelope<unknown>) => {
     if (socketRef.current?.readyState === WebSocket.OPEN) {
@@ -34,6 +36,30 @@ export function useWorkspaceSocket() {
   const handleMessage = useEffectEvent((event: MessageEvent<string>) => {
     const parsed = JSON.parse(event.data) as Envelope<unknown>;
     workspaceStore.handleEnvelope(parsed);
+
+    if (
+      parsed.type === "workspace.bootstrap" ||
+      parsed.type === "session.opened" ||
+      parsed.type === "preferences.saved"
+    ) {
+      const payload = parsed.payload as WorkspaceSnapshotPayload;
+      if (!payload.active_run_id) {
+        hydratedActiveRunRef.current = "";
+        return;
+      }
+
+      if (hydratedActiveRunRef.current === payload.active_run_id) {
+        return;
+      }
+
+      hydratedActiveRunRef.current = payload.active_run_id;
+      sendEnvelope(
+        createAgentRunOpenRequest(
+          payload.active_session_id,
+          payload.active_run_id,
+        ),
+      );
+    }
   });
 
   const connect = useEffectEvent(() => {
@@ -65,6 +91,8 @@ export function useWorkspaceSocket() {
       if (socketRef.current === socket) {
         socketRef.current = null;
       }
+
+      hydratedActiveRunRef.current = "";
 
       if (!isMountedRef.current) {
         return;

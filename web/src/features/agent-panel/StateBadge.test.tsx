@@ -16,6 +16,12 @@ describe("StateBadge", () => {
 
     expect(screen.getByText("Completed").className).toContain("state-glow-complete");
 
+    rerender(<StateBadge state="clarification_required" />);
+
+    expect(screen.getByText("Clarification required").className).toContain(
+      "state-glow-clarification",
+    );
+
     rerender(<StateBadge state="errored" />);
 
     expect(screen.getByText("Errored").className).toContain("state-glow-error");

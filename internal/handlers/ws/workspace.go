@@ -342,6 +342,7 @@ func summarizeRunPayload(runs []workspaceorchestrator.RunSummary) []AgentRunSumm
 			Role:            string(run.Role),
 			Model:           run.Model,
 			State:           run.State,
+			ErrorCode:       run.ErrorCode,
 			StartedAt:       run.StartedAt.Format(time.RFC3339),
 			HasToolActivity: run.HasToolActivity,
 		}

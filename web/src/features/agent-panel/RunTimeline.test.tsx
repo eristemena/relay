@@ -110,4 +110,102 @@ describe("RunTimeline", () => {
 
     expect(screen.getByText(/run cancelled: relay stopped the active run before it produced more output/i)).toBeInTheDocument();
   });
+
+  it("renders the planner run_error message instead of a generic placeholder", () => {
+    render(
+      <RunTimeline
+        events={[
+          {
+            type: "run_error",
+            payload: {
+              session_id: "session_alpha",
+              run_id: "run_1",
+              agent_id: "agent_planner_1",
+              sequence: 5,
+              replay: false,
+              role: "planner",
+              model: "anthropic/claude-opus-4",
+              code: "planner_required",
+              message:
+                "The run stopped because the planner did not complete and downstream work could not continue.",
+              terminal: true,
+              occurred_at: "2026-03-23T12:00:04Z",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        /the run stopped because the planner did not complete and downstream work could not continue/i,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/run event recorded/i)).not.toBeInTheDocument();
+  });
+
+  it("prefixes clarification-required timeline rows with the dedicated label", () => {
+    render(
+      <RunTimeline
+        events={[
+          {
+            type: "run_error",
+            payload: {
+              session_id: "session_alpha",
+              run_id: "run_1",
+              agent_id: "agent_coder_2",
+              sequence: 6,
+              replay: false,
+              role: "coder",
+              model: "anthropic/claude-sonnet-4-5",
+              code: "coder_clarification_required",
+              message:
+                "The run stopped because the coder asked for user clarification instead of producing actionable output.",
+              terminal: true,
+              occurred_at: "2026-03-23T12:00:05Z",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        /clarification required: the run stopped because the coder asked for user clarification instead of producing actionable output/i,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the orchestration agent_error message for a failed node", () => {
+    render(
+      <RunTimeline
+        events={[
+          {
+            type: "agent_error",
+            payload: {
+              session_id: "session_alpha",
+              run_id: "run_1",
+              agent_id: "agent_planner_1",
+              sequence: 4,
+              replay: false,
+              role: "planner",
+              model: "anthropic/claude-opus-4",
+              code: "provider_error",
+              message:
+                "OpenRouter returned a planner failure before any visible output arrived.",
+              terminal: true,
+              occurred_at: "2026-03-23T12:00:03Z",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        /openrouter returned a planner failure before any visible output arrived/i,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/run event recorded/i)).not.toBeInTheDocument();
+  });
 });

@@ -26,6 +26,24 @@ func TestSearchCodebaseToolFindsMatchesAndRespectsPattern(t *testing.T) {
 	}
 }
 
+func TestSearchCodebaseToolFindsFilenameMatches(t *testing.T) {
+	projectRoot := t.TempDir()
+	writeTextFile(t, filepath.Join(projectRoot, ".env.example"), "API_KEY=placeholder\n")
+	writeTextFile(t, filepath.Join(projectRoot, "config", "app.env"), "ENV=dev\n")
+
+	tool := NewSearchCodebaseTool(projectRoot)
+	result, err := tool.Execute(context.Background(), json.RawMessage(`{"query":".env.example"}`))
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Output != `[".env.example"]` {
+		t.Fatalf("result.Output = %q, want [\".env.example\"]", result.Output)
+	}
+	if got := result.Preview["match_count"]; got != 1 {
+		t.Fatalf("result.Preview[match_count] = %v, want 1", got)
+	}
+}
+
 func TestSearchCodebaseToolRequiresQuery(t *testing.T) {
 	tool := NewSearchCodebaseTool(t.TempDir())
 	_, err := tool.Execute(context.Background(), json.RawMessage(`{"query":"  "}`))

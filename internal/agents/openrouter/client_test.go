@@ -292,3 +292,34 @@ func TestClientStreamBatchesTokenCallbacksPerChunk(t *testing.T) {
 		t.Fatalf("tokens = %#v, want one batched callback", tokens)
 	}
 }
+
+func TestClientStreamOmitsToolsForPromptOnlyRequests(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+
+		var requestBody map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+		if _, ok := requestBody["tools"]; ok {
+			t.Fatalf("tools = %#v, want omitted tools for prompt-only request", requestBody["tools"])
+		}
+
+		_, _ = w.Write([]byte("data: {\"id\":\"cmpl_5\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Done\"},\"finish_reason\":\"stop\"}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	config := openai.DefaultConfig("test-key")
+	config.BaseURL = server.URL
+	client := &Client{client: openai.NewClientWithConfig(config)}
+
+	err := client.Stream(context.Background(), StreamRequest{
+		Model:        "test-model",
+		SystemPrompt: "You are prompt only.",
+		UserPrompt:   "Summarize the orchestration state.",
+	}, StreamHandlers{})
+	if err != nil {
+		t.Fatalf("Stream() error = %v", err)
+	}
+}

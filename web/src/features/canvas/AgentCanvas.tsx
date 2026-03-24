@@ -9,72 +9,68 @@ import {
   type Edge,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useEffect, useMemo, useReducer } from "react";
+import { useEffect, useMemo } from "react";
 import { CanvasEmptyState } from "@/features/canvas/CanvasEmptyState";
 import {
   AgentCanvasNode,
   type AgentCanvasFlowNode,
-  type AgentCanvasNodeData,
 } from "@/features/canvas/AgentCanvasNode";
-import { AgentCanvasToolbar } from "@/features/canvas/AgentCanvasToolbar";
 import { AgentNodeDetailPanel } from "@/features/canvas/AgentNodeDetailPanel";
 import {
-  addNodeToCanvas,
-  clearCanvasSelection,
-  createEmptyCanvasDocument,
   getRoleLabel,
   getSelectedCanvasNode,
-  selectCanvasNode,
-  updateSelectedCanvasNodeState,
   type AgentCanvasDocument,
 } from "@/features/canvas/canvasModel";
+import {
+  clearWorkspaceCanvasSelection,
+  selectWorkspaceCanvasNode,
+} from "@/shared/lib/workspace-store";
+import { FormattedMarkdown } from "@/shared/lib/FormattedMarkdown";
+import {
+  getRunFailureTitle,
+  isClarificationRequiredCode,
+} from "@/features/agent-panel/runStatus";
 
 interface AgentCanvasProps {
   sessionLabel: string;
+  runId: string;
+  document: AgentCanvasDocument | null;
 }
 
-type AgentCanvasAction =
-  | { type: "add-node"; role: Parameters<typeof addNodeToCanvas>[1] }
-  | { type: "apply-state"; state: Parameters<typeof updateSelectedCanvasNodeState>[1] }
-  | { type: "select-node"; nodeId: string }
-  | { type: "clear-selection" };
+const nodeTypes = { agentCanvasNode: AgentCanvasNode };
 
-const nodeTypes = {
-  agentCanvasNode: AgentCanvasNode,
-};
-
-function reducer(
-  document: AgentCanvasDocument,
-  action: AgentCanvasAction,
-): AgentCanvasDocument {
-  switch (action.type) {
-    case "add-node":
-      return addNodeToCanvas(document, action.role);
-    case "apply-state":
-      return updateSelectedCanvasNodeState(document, action.state);
-    case "select-node":
-      return selectCanvasNode(document, action.nodeId);
-    case "clear-selection":
-      return clearCanvasSelection(document);
-    default:
-      return document;
-  }
-}
-
-export function AgentCanvas({ sessionLabel }: AgentCanvasProps) {
+export function AgentCanvas({
+  sessionLabel,
+  runId,
+  document,
+}: AgentCanvasProps) {
   return (
     <ReactFlowProvider>
-      <AgentCanvasSurface sessionLabel={sessionLabel} />
+      <AgentCanvasSurface
+        document={document}
+        runId={runId}
+        sessionLabel={sessionLabel}
+      />
     </ReactFlowProvider>
   );
 }
 
-function AgentCanvasSurface({ sessionLabel }: AgentCanvasProps) {
-  const [document, dispatch] = useReducer(reducer, undefined, createEmptyCanvasDocument);
-  const selectedNode = getSelectedCanvasNode(document);
+function AgentCanvasSurface({
+  sessionLabel,
+  runId,
+  document,
+}: AgentCanvasProps) {
+  const canvasDocument = document;
+  const selectedNode = canvasDocument
+    ? getSelectedCanvasNode(canvasDocument)
+    : null;
+  const haltTitle = getRunFailureTitle(canvasDocument?.haltCode);
+  const haltNote = isClarificationRequiredCode(canvasDocument?.haltCode)
+    ? "Relay stopped before continuing to downstream agents because one stage asked for more input instead of taking action."
+    : null;
   const flowNodes = useMemo<AgentCanvasFlowNode[]>(
     () =>
-      document.nodes.map((node) => ({
+      (canvasDocument?.nodes ?? []).map((node) => ({
         id: node.id,
         type: "agentCanvasNode",
         position: node.position,
@@ -88,69 +84,98 @@ function AgentCanvasSurface({ sessionLabel }: AgentCanvasProps) {
           state: node.state,
           summary: node.details.summary,
         },
-        selected: node.id === document.selectedNodeId,
+        selected: node.id === canvasDocument?.selectedNodeId,
         draggable: false,
         selectable: true,
       })),
-    [document.nodes, document.selectedNodeId],
+    [canvasDocument],
   );
   const flowEdges = useMemo<Edge[]>(
     () =>
-      document.edges.map((edge) => ({
+      (canvasDocument?.edges ?? []).map((edge) => ({
         id: edge.id,
         source: edge.sourceNodeId,
         target: edge.targetNodeId,
         animated: false,
         selectable: false,
       })),
-    [document.edges],
+    [canvasDocument],
   );
 
   return (
     <section
+      aria-describedby="agent-canvas-description agent-canvas-status"
       aria-labelledby="agent-canvas-heading"
       className="panel-surface noise-overlay relative overflow-hidden rounded-[2rem] p-5 shadow-idle"
     >
       <div className="relative z-10 space-y-5">
         <div className="max-w-3xl">
-          <p className="eyebrow">Isolated canvas</p>
+          <p className="eyebrow">Live orchestration</p>
           <h2
             className="mt-2 font-display text-3xl text-text"
             id="agent-canvas-heading"
           >
             {sessionLabel} agent graph
           </h2>
-          <p className="mt-3 text-sm leading-6 text-text-muted">
-            Build a local-only agent workflow, inspect each node, and tune states without waiting for backend events or live execution.
+          <p
+            className="mt-3 text-sm leading-6 text-text-muted"
+            id="agent-canvas-description"
+          >
+            Watch the live orchestration unfold, inspect any node, and reopen
+            saved runs without losing per-agent context.
           </p>
         </div>
 
-        <AgentCanvasToolbar
-          onAddNode={(role) => dispatch({ type: "add-node", role })}
-          onApplyState={(state) => dispatch({ type: "apply-state", state })}
-          selectedNode={selectedNode}
-        />
-
-        {document.validationMessage ? (
+        {canvasDocument?.validationMessage ? (
           <div
             className="rounded-[1.25rem] border border-[var(--color-error)] bg-raised/80 p-4 text-sm leading-6 text-text"
             role="alert"
           >
-            {document.validationMessage}
+            {canvasDocument.validationMessage}
+          </div>
+        ) : null}
+
+        {canvasDocument?.haltMessage ? (
+          <div
+            className="rounded-[1.25rem] border border-[var(--color-error)] bg-raised/80 p-4 text-sm leading-6 text-text"
+            role="alert"
+          >
+            <p className="eyebrow">{haltTitle}</p>
+            <p className="mt-2">{canvasDocument.haltMessage}</p>
+            {haltNote ? (
+              <p className="mt-2 text-text-muted">{haltNote}</p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {canvasDocument?.runSummary ? (
+          <div
+            aria-live="polite"
+            className="rounded-[1.25rem] border border-border bg-raised/80 p-4 text-sm leading-6 text-text"
+            role="status"
+          >
+            <FormattedMarkdown content={canvasDocument.runSummary} />
           </div>
         ) : null}
 
         <div className="agent-canvas-shell">
-          <p className="text-sm leading-6 text-text-muted" role="status">
-            Local graph with {document.nodes.length} {document.nodes.length === 1 ? "node" : "nodes"} and {document.edges.length} {document.edges.length === 1 ? "handoff" : "handoffs"}.
+          <p
+            aria-live="polite"
+            className="text-sm leading-6 text-text-muted"
+            id="agent-canvas-status"
+            role="status"
+          >
+            {canvasDocument
+              ? `Live graph with ${canvasDocument.nodes.length} ${canvasDocument.nodes.length === 1 ? "node" : "nodes"} and ${canvasDocument.edges.length} ${canvasDocument.edges.length === 1 ? "handoff" : "handoffs"}.`
+              : "Submit a goal or reopen a saved run to populate the orchestration canvas."}
           </p>
 
-          {document.nodes.length === 0 ? (
+          {!canvasDocument || canvasDocument.nodes.length === 0 ? (
             <CanvasEmptyState
-              description="Use the toolbar above to add the first role. Every node and state mutation stays local to this isolated canvas experience."
-              eyebrow="Empty agent graph"
+              description="Relay will append nodes only when agents spawn, then patch them in place as state, transcript, and handoff events arrive."
+              eyebrow="Live agent graph"
               sessionLabel={sessionLabel}
-              title="Start by placing the first agent on the canvas."
+              title="Submit a goal to start the orchestration graph."
             />
           ) : (
             <div className="agent-canvas-detail-grid">
@@ -170,9 +195,9 @@ function AgentCanvasSurface({ sessionLabel }: AgentCanvasProps) {
                   nodesConnectable={false}
                   nodesDraggable={false}
                   onNodeClick={(_, node) =>
-                    dispatch({ type: "select-node", nodeId: node.id })
+                    selectWorkspaceCanvasNode(runId, node.id)
                   }
-                  onPaneClick={() => dispatch({ type: "clear-selection" })}
+                  onPaneClick={() => clearWorkspaceCanvasSelection(runId)}
                   panOnDrag
                   proOptions={{ hideAttribution: true }}
                   zoomOnPinch
@@ -180,11 +205,18 @@ function AgentCanvasSurface({ sessionLabel }: AgentCanvasProps) {
                 >
                   <Background />
                   <Controls showInteractive={false} />
-                  <ViewportSync layoutRevision={document.layoutRevision} />
+                  <ViewportSync
+                    layoutRevision={canvasDocument.layoutRevision}
+                  />
                 </ReactFlow>
               </div>
-
-              <AgentNodeDetailPanel selectedNode={selectedNode} />
+              <AgentNodeDetailPanel
+                haltAgentId={canvasDocument.haltAgentId}
+                haltCode={canvasDocument.haltCode}
+                haltMessage={canvasDocument.haltMessage}
+                haltRole={canvasDocument.haltRole}
+                selectedNode={selectedNode}
+              />
             </div>
           )}
         </div>

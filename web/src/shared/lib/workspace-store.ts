@@ -1,16 +1,35 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
+import {
+  addSpawnedNode,
+  clearCanvasSelection,
+  createEmptyCanvasDocument,
+  patchAgentError,
+  patchAgentState,
+  patchAgentToken,
+  patchHandoff,
+  patchRunComplete,
+  patchRunError,
+  patchTaskAssigned,
+  selectCanvasNode,
+  type AgentCanvasDocument,
+} from "@/features/canvas/canvasModel";
 import type {
   ApprovalRequestPayload,
+  AgentSpawnedPayload,
+  AgentStateChangedPayload,
   AgentRunSummary,
   ConnectionMessageType,
   Envelope,
   ErrorPayload,
+  HandoffPayload,
   PreferencesView,
   RunEventPayload,
+  RunCompletePayload,
   SessionSummary,
   StateChangePayload,
+  TaskAssignedPayload,
   TokenPayload,
   WorkspaceSnapshotPayload,
   WorkspaceStatusPayload,
@@ -28,6 +47,7 @@ export interface WorkspaceState {
   runSummaries: AgentRunSummary[];
   runEvents: Record<string, StoredRunEvent[]>;
   runTranscripts: Record<string, string>;
+  orchestrationDocuments: Record<string, AgentCanvasDocument>;
   pendingApprovals: Record<string, PendingApproval>;
   preferences: PreferencesView;
   uiState: WorkspaceUIState;
@@ -54,6 +74,14 @@ export interface StoredRunEvent {
     | "tool_call"
     | "tool_result"
     | "complete"
+    | "agent_spawned"
+    | "agent_state_changed"
+    | "task_assigned"
+    | "handoff_start"
+    | "handoff_complete"
+    | "agent_error"
+    | "run_complete"
+    | "run_error"
     | "error"
   >;
   payload: RunEventPayload;
@@ -78,7 +106,7 @@ const defaultPreferences: PreferencesView = {
     coder: "anthropic/claude-sonnet-4-5",
     reviewer: "anthropic/claude-sonnet-4-5",
     tester: "deepseek/deepseek-chat",
-    explainer: "google/gemini-flash-1.5",
+    explainer: "google/gemini-2.0-flash-001",
   },
   open_browser_on_start: true,
 };
@@ -98,6 +126,7 @@ const defaultState: WorkspaceState = {
   runSummaries: [],
   runEvents: {},
   runTranscripts: {},
+  orchestrationDocuments: {},
   pendingApprovals: {},
   preferences: defaultPreferences,
   uiState: defaultUIState,
@@ -186,6 +215,7 @@ class WorkspaceStore {
       sessions: payload.sessions,
       runSummaries: nextRunSummaries,
       runTranscripts: this.state.runTranscripts,
+      orchestrationDocuments: this.state.orchestrationDocuments,
       pendingApprovals: {},
       preferences: payload.preferences,
       uiState: payload.ui_state,
@@ -272,9 +302,17 @@ class WorkspaceStore {
     }
 
     const nextRunSummaries = syncRunSummaries(this.state.runSummaries, message);
+    const nextOrchestrationDocuments = syncOrchestrationDocuments(
+      this.state.orchestrationDocuments,
+      runId,
+      message,
+    );
     const clearsActiveRun =
       !payload.replay &&
-      (message.type === "complete" || message.type === "error");
+      (message.type === "complete" ||
+        message.type === "run_complete" ||
+        message.type === "run_error" ||
+        message.type === "error");
     this.state = {
       ...this.state,
       activeRunId: clearsActiveRun
@@ -285,10 +323,13 @@ class WorkspaceStore {
       selectedRunId: runId,
       runEvents: nextRunEvents,
       runTranscripts: nextRunTranscripts,
+      orchestrationDocuments: nextOrchestrationDocuments,
       pendingApprovals: nextPendingApprovals,
       runSummaries: nextRunSummaries,
       error:
-        message.type === "error" ? (payload as ErrorPayload) : this.state.error,
+        message.type === "error" || message.type === "run_error"
+          ? (payload as ErrorPayload)
+          : this.state.error,
       status:
         message.type === "token"
           ? { phase: "streaming", message: "Relay is streaming agent output." }
@@ -322,6 +363,14 @@ class WorkspaceStore {
       case "tool_call":
       case "tool_result":
       case "complete":
+      case "agent_spawned":
+      case "agent_state_changed":
+      case "task_assigned":
+      case "handoff_start":
+      case "handoff_complete":
+      case "agent_error":
+      case "run_complete":
+      case "run_error":
         this.appendRunEvent(message as Envelope<RunEventPayload>);
         return;
       case "error":
@@ -372,6 +421,39 @@ class WorkspaceStore {
       listener();
     }
   }
+
+  selectCanvasNode = (runId: string, agentId: string) => {
+    const document = this.state.orchestrationDocuments[runId];
+    if (!document) {
+      return;
+    }
+
+    this.state = {
+      ...this.state,
+      selectedRunId: runId,
+      orchestrationDocuments: {
+        ...this.state.orchestrationDocuments,
+        [runId]: selectCanvasNode(document, agentId),
+      },
+    };
+    this.emit();
+  };
+
+  clearCanvasSelection = (runId: string) => {
+    const document = this.state.orchestrationDocuments[runId];
+    if (!document) {
+      return;
+    }
+
+    this.state = {
+      ...this.state,
+      orchestrationDocuments: {
+        ...this.state.orchestrationDocuments,
+        [runId]: clearCanvasSelection(document),
+      },
+    };
+    this.emit();
+  };
 }
 
 function syncRunEvents(runEvents: StoredRunEvent[], nextEvent: StoredRunEvent) {
@@ -446,6 +528,14 @@ export function resetWorkspaceStore() {
   workspaceStore.reset();
 }
 
+export function selectWorkspaceCanvasNode(runId: string, agentId: string) {
+  workspaceStore.selectCanvasNode(runId, agentId);
+}
+
+export function clearWorkspaceCanvasSelection(runId: string) {
+  workspaceStore.clearCanvasSelection(runId);
+}
+
 function syncRunSummaries(
   runSummaries: AgentRunSummary[],
   message: Envelope<RunEventPayload> | Envelope<ApprovalRequestPayload>,
@@ -491,9 +581,25 @@ function syncRunSummaries(
     nextSummary.state = "completed";
     nextSummary.completed_at = payload.occurred_at;
   }
+  if (message.type === "run_complete") {
+    nextSummary.state = "completed";
+    nextSummary.completed_at = payload.occurred_at;
+  }
+  if (message.type === "run_error") {
+    nextSummary.state = "halted";
+    nextSummary.error_code = payload.code;
+    nextSummary.completed_at = payload.occurred_at;
+  }
   if (message.type === "error") {
     nextSummary.state = "errored";
+    nextSummary.error_code = payload.code;
     nextSummary.completed_at = payload.occurred_at;
+  }
+  if (
+    message.type === "agent_spawned" ||
+    message.type === "agent_state_changed"
+  ) {
+    nextSummary.state = "active";
   }
   if (message.type === "token" && nextSummary.state === "accepted") {
     nextSummary.state = "thinking";
@@ -516,4 +622,51 @@ function dedupeRunSummaries(runSummaries: AgentRunSummary[]) {
     unique.push(runSummary);
   }
   return unique;
+}
+
+function syncOrchestrationDocuments(
+  documents: Record<string, AgentCanvasDocument>,
+  runId: string,
+  message: Envelope<RunEventPayload>,
+) {
+  const current = documents[runId] ?? createEmptyCanvasDocument();
+  let next = current;
+
+  switch (message.type) {
+    case "agent_spawned":
+      next = addSpawnedNode(current, message.payload as AgentSpawnedPayload);
+      break;
+    case "agent_state_changed":
+      next = patchAgentState(
+        current,
+        message.payload as AgentStateChangedPayload,
+      );
+      break;
+    case "task_assigned":
+      next = patchTaskAssigned(current, message.payload as TaskAssignedPayload);
+      break;
+    case "token":
+      next = patchAgentToken(current, message.payload as TokenPayload);
+      break;
+    case "handoff_start":
+    case "handoff_complete":
+      next = patchHandoff(current, message.payload as HandoffPayload);
+      break;
+    case "agent_error":
+      next = patchAgentError(current, message.payload as ErrorPayload);
+      break;
+    case "run_complete":
+      next = patchRunComplete(current, message.payload as RunCompletePayload);
+      break;
+    case "run_error":
+      next = patchRunError(current, message.payload as ErrorPayload);
+      break;
+    default:
+      return documents;
+  }
+
+  return {
+    ...documents,
+    [runId]: next,
+  };
 }
