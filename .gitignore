@@ -5,6 +5,7 @@ node_modules/
 web/node_modules/
 web/.next/
 web/out/
+internal/frontend/embed/_next/static/
 *.log
 .env*
 .DS_Store
