@@ -190,27 +190,42 @@ func (s *Service) executeStage(ctx context.Context, run sqlite.AgentRun, cfg con
 	}
 
 	agent := s.agentFactory(cfg, role)
+	stageCtx := withRunExecutionContext(ctx, runExecutionContext{
+		SessionID: run.SessionID,
+		RunID:     run.ID,
+		Emit: func(envelope StreamEnvelope) error {
+			return s.dispatchRunEnvelope(run.ID, envelope)
+		},
+		Role:  role,
+		Model: model,
+	})
 	result := stageResult{execution: storedExecution}
 	firstToken := true
 	completed := false
-	err = agent.Run(ctx, task, agents.StreamEventHandlers{
+	err = agent.Run(stageCtx, task, agents.StreamEventHandlers{
 		OnStateChange: func(message string) {
 			if strings.TrimSpace(message) == "" {
 				message = sqlite.AgentExecutionStateThinking
 			}
 			storedExecution.State = sqlite.AgentExecutionStateThinking
-			_ = s.store.UpdateAgentExecution(ctx, storedExecution)
-			_ = s.emitAgentStateChanged(ctx, run, storedExecution, sqlite.AgentExecutionStateThinking, roleProgressMessage(role, message))
+			_ = s.store.UpdateAgentExecution(stageCtx, storedExecution)
+			_ = s.emitAgentStateChanged(stageCtx, run, storedExecution, sqlite.AgentExecutionStateThinking, roleProgressMessage(role, message))
 		},
 		OnToken: func(text string) {
 			result.transcript += text
 			if firstToken {
 				firstToken = false
 				storedExecution.State = sqlite.AgentExecutionStateStreaming
-				_ = s.store.UpdateAgentExecution(ctx, storedExecution)
-				_ = s.emitAgentStateChanged(ctx, run, storedExecution, sqlite.AgentExecutionStateStreaming, roleStreamingMessage(role))
+				_ = s.store.UpdateAgentExecution(stageCtx, storedExecution)
+				_ = s.emitAgentStateChanged(stageCtx, run, storedExecution, sqlite.AgentExecutionStateStreaming, roleStreamingMessage(role))
 			}
-			_ = s.emitAgentToken(ctx, run, storedExecution, text)
+			_ = s.emitAgentToken(stageCtx, run, storedExecution, text)
+		},
+		OnToolCall: func(event agents.ToolCallEvent) {
+			_ = s.emitToolCall(stageCtx, run.ID, event, nil)
+		},
+		OnToolResult: func(event agents.ToolResultEvent) {
+			_ = s.emitToolResult(stageCtx, run.ID, event, nil)
 		},
 		OnComplete: func(_ string) {
 			completed = true
@@ -224,8 +239,8 @@ func (s *Service) executeStage(ctx context.Context, run sqlite.AgentRun, cfg con
 			result.failed = true
 			result.errCode = code
 			result.errMessage = message
-			_ = s.store.UpdateAgentExecution(ctx, storedExecution)
-			_ = s.emitAgentError(ctx, run, storedExecution, code, message)
+			_ = s.store.UpdateAgentExecution(stageCtx, storedExecution)
+			_ = s.emitAgentError(stageCtx, run, storedExecution, code, message)
 		},
 	})
 	if err != nil && result.failed {

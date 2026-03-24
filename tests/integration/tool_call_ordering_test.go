@@ -147,11 +147,109 @@ func TestToolCallOrdering_ApprovalRejectionReplayAndRedaction(t *testing.T) {
 	}
 }
 
+func TestToolCallOrdering_TesterApprovalAllowsRunToContinue(t *testing.T) {
+	service, store, paths := newStreamingTestService(t)
+	defer store.Close()
+
+	cfg, _, err := config.Load(paths)
+	if err != nil {
+		t.Fatalf("config.Load() error = %v", err)
+	}
+	cfg.OpenRouter.APIKey = "or-test-key"
+	if err := config.Save(paths, cfg); err != nil {
+		t.Fatalf("config.Save() error = %v", err)
+	}
+
+	session, err := store.CreateSession(context.Background(), "Tester approval session")
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+
+	runner := &approvalFlowRunner{
+		service:    service,
+		sessionID:  session.ID,
+		runIDReady: make(chan string, 1),
+		profile: agents.Profile{
+			Role:  sqlite.RoleTester,
+			Model: config.DefaultTesterModel,
+		},
+		writePath:    "tests/generated/smoke_test.sh",
+		writeContent: "#!/bin/sh\necho ok\n",
+	}
+	service.SetRunnerFactory(func(config.Config, string) agents.Runner {
+		return runner
+	})
+
+	server := newStreamingTestServer(t, service)
+	connection := dialStreamingSocket(t, server.URL)
+
+	writeStreamingMessage(t, connection, map[string]any{
+		"type": "agent.run.submit",
+		"payload": map[string]any{
+			"session_id": session.ID,
+			"task":       "Create a smoke test script and continue after approval",
+		},
+	})
+
+	_ = readUntilStreamingType(t, connection, "workspace.bootstrap")
+	stateChange := readUntilStreamingType(t, connection, "state_change")
+	runID := stateChange["payload"].(map[string]any)["run_id"].(string)
+	runner.runIDReady <- runID
+	_ = readUntilStreamingType(t, connection, "tool_call")
+	approvalRequest := readUntilStreamingType(t, connection, "approval_request")
+	approvalPayload := approvalRequest["payload"].(map[string]any)
+
+	if approvalPayload["role"] != string(sqlite.RoleTester) {
+		t.Fatalf("approval role = %v, want tester", approvalPayload["role"])
+	}
+	if approvalPayload["tool_name"] != string(agents.ToolWriteFile) {
+		t.Fatalf("approval tool_name = %v, want write_file", approvalPayload["tool_name"])
+	}
+	if approvalPayload["input_preview"].(map[string]any)["path"] != "tests/generated/smoke_test.sh" {
+		t.Fatalf("approval input preview = %#v, want test path", approvalPayload["input_preview"])
+	}
+
+	writeStreamingMessage(t, connection, map[string]any{
+		"type": "agent.run.approval.respond",
+		"payload": map[string]any{
+			"session_id":   session.ID,
+			"run_id":       runID,
+			"tool_call_id": "call_write",
+			"decision":     "approved",
+		},
+	})
+
+	toolResult := readUntilStreamingType(t, connection, "tool_result")
+
+	toolResultPayload := toolResult["payload"].(map[string]any)
+	if toolResultPayload["status"] != "completed" {
+		t.Fatalf("tool result status = %v, want completed", toolResultPayload["status"])
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		run, err := store.GetAgentRun(context.Background(), runID)
+		if err != nil {
+			t.Fatalf("GetAgentRun() error = %v", err)
+		}
+		if run.State == sqlite.RunStateCompleted {
+			if run.ErrorCode != "" {
+				t.Fatalf("run.ErrorCode = %q, want empty", run.ErrorCode)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for tester run completion after approval")
+}
+
 type approvalFlowRunner struct {
-	service   *workspaceorchestrator.Service
-	sessionID string
-	runIDReady chan string
-	profile   agents.Profile
+	service      *workspaceorchestrator.Service
+	sessionID    string
+	runIDReady   chan string
+	profile      agents.Profile
+	writePath    string
+	writeContent string
 }
 
 func (r *approvalFlowRunner) Profile() agents.Profile {
@@ -180,7 +278,15 @@ func (r *approvalFlowRunner) Run(ctx context.Context, _ string, handlers agents.
 		})
 	}
 
-	writePreview := toolspkg.SafePreview("Tool call received.", map[string]any{"path": "README.md", "content": "api_key=super-secret"})
+	writePath := r.writePath
+	if writePath == "" {
+		writePath = "README.md"
+	}
+	writeContent := r.writeContent
+	if writeContent == "" {
+		writeContent = "api_key=super-secret"
+	}
+	writePreview := toolspkg.SafePreview("Tool call received.", map[string]any{"path": writePath, "content": writeContent})
 	if handlers.OnToolCall != nil {
 		handlers.OnToolCall(agents.ToolCallEvent{
 			ToolCallID:   "call_write",
@@ -217,6 +323,15 @@ func (r *approvalFlowRunner) Run(ctx context.Context, _ string, handlers agents.
 			handlers.OnError("run_failed", workspaceorchestrator.ErrApprovalRejected.Error())
 		}
 		return nil
+	}
+
+	if handlers.OnToolResult != nil {
+		handlers.OnToolResult(agents.ToolResultEvent{
+			ToolCallID:    "call_write",
+			ToolName:      agents.ToolWriteFile,
+			Status:        "completed",
+			ResultPreview: toolspkg.SafePreview("Wrote file content.", map[string]any{"path": writePath}),
+		})
 	}
 
 	if handlers.OnComplete != nil {

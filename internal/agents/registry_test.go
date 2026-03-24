@@ -42,6 +42,7 @@ func TestRegistrySelectProfileUsesRoleSpecificPromptsModelsAndToolAllowlists(t *
 			wantModel:    config.DefaultCoderModel,
 			promptNeedle: "Produce focused implementation guidance",
 			policyNeedle: "Do not ask the user for confirmation before taking allowed actions.",
+			extraNeedle:  "Never ask questions such as 'Would you like me to proceed with writing these changes?'",
 			wantTools:    []ToolName{ToolReadFile, ToolSearchCodebase, ToolWriteFile, ToolRunCommand},
 		},
 		{
@@ -51,6 +52,7 @@ func TestRegistrySelectProfileUsesRoleSpecificPromptsModelsAndToolAllowlists(t *
 			wantModel:    config.DefaultReviewerModel,
 			promptNeedle: "Prioritize correctness, regressions, missing tests, and security issues",
 			policyNeedle: "Do not ask the user for confirmation before taking allowed actions.",
+			extraNeedle:  "Never ask questions such as 'Would you like me to review this file?'",
 			wantTools:    []ToolName{ToolReadFile, ToolSearchCodebase},
 		},
 		{
@@ -60,6 +62,7 @@ func TestRegistrySelectProfileUsesRoleSpecificPromptsModelsAndToolAllowlists(t *
 			wantModel:    config.DefaultTesterModel,
 			promptNeedle: "Focus on validation strategy, failure modes",
 			policyNeedle: "Do not ask the user for confirmation before taking allowed actions.",
+			extraNeedle:  "The write_file tool is only for creating or updating recognized test files under tests/, __tests__/, or testdata/",
 			wantTools:    []ToolName{ToolReadFile, ToolSearchCodebase, ToolWriteFile, ToolRunCommand},
 		},
 		{

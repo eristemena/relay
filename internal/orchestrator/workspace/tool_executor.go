@@ -3,9 +3,12 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/erisristemena/relay/internal/agents"
+	"github.com/erisristemena/relay/internal/storage/sqlite"
 	toolspkg "github.com/erisristemena/relay/internal/tools"
 	"github.com/sashabaranov/go-openai/jsonschema"
 )
@@ -97,11 +100,23 @@ func (e *catalogToolExecutor) ExecuteTool(ctx context.Context, toolCallID string
 			}, nil
 		}
 
+		if message, ok := validateApprovalGatedToolCall(runContext, name, arguments); !ok {
+			return agents.ToolExecutionResult{
+				ToolCallID:    toolCallID,
+				ToolName:      name,
+				Status:        "rejected",
+				Content:       message,
+				ResultPreview: toolspkg.SafePreview("Tool blocked.", map[string]any{"message": message}),
+			}, nil
+		}
+
 		decision, err := e.approvals.RequestApproval(ctx, ApprovalRequest{
 			SessionID:    runContext.SessionID,
 			RunID:        runContext.RunID,
 			ToolCallID:   toolCallID,
 			ToolName:     name,
+			Role:         runContext.Role,
+			Model:        runContext.Model,
 			InputPreview: e.PreviewToolCall(name, arguments),
 			Message:      approvalMessage(name),
 			OccurredAt:   time.Now().UTC(),
@@ -147,6 +162,86 @@ func (e *catalogToolExecutor) ExecuteTool(ctx context.Context, toolCallID string
 		Content:       result.Output,
 		ResultPreview: result.Preview,
 	}, nil
+}
+
+func validateApprovalGatedToolCall(runContext runExecutionContext, name agents.ToolName, arguments json.RawMessage) (string, bool) {
+	if runContext.Role != sqlite.RoleTester || name != agents.ToolWriteFile {
+		return "", true
+	}
+
+	var input toolspkg.WriteFileInput
+	if err := json.Unmarshal(arguments, &input); err != nil {
+		return "Relay blocked the tester write request because the target path could not be decoded.", false
+	}
+	if testerWritablePathAllowed(input.Path) {
+		return "", true
+	}
+
+	return "Relay blocked the tester write request because tester may only create or update test files and test scripts.", false
+}
+
+func testerWritablePathAllowed(path string) bool {
+	normalized := strings.TrimSpace(path)
+	if normalized == "" {
+		return false
+	}
+
+	cleaned := filepath.ToSlash(filepath.Clean(normalized))
+	if cleaned == "." || strings.HasPrefix(cleaned, "../") {
+		return false
+	}
+	if strings.Contains(cleaned, "/__tests__/") || strings.Contains(cleaned, "/testdata/") {
+		return true
+	}
+
+	base := filepath.Base(cleaned)
+	allowedSuffixes := []string{
+		"_test.go",
+		".test.ts",
+		".test.tsx",
+		".test.js",
+		".test.jsx",
+		".spec.ts",
+		".spec.tsx",
+		".spec.js",
+		".spec.jsx",
+		".feature",
+		".snap",
+	}
+	for _, suffix := range allowedSuffixes {
+		if strings.HasSuffix(base, suffix) {
+			return true
+		}
+	}
+
+	if strings.HasPrefix(cleaned, "tests/") && namedTestScriptAllowed(base) {
+		return true
+	}
+
+	if strings.HasPrefix(cleaned, "scripts/") && namedTestScriptAllowed(base) {
+		return true
+	}
+
+	return false
+}
+
+func namedTestScriptAllowed(base string) bool {
+	lowerBase := strings.ToLower(strings.TrimSpace(base))
+	if lowerBase == "" {
+		return false
+	}
+
+	hasTestLikeName := strings.Contains(lowerBase, "test") || strings.Contains(lowerBase, "smoke")
+	if !hasTestLikeName {
+		return false
+	}
+
+	switch filepath.Ext(lowerBase) {
+	case ".sh", ".bash", ".zsh", ".ps1", ".py", ".js", ".ts":
+		return true
+	default:
+		return false
+	}
 }
 
 func sanitizePreviewValue(value any) any {
@@ -207,8 +302,8 @@ func toolSchema(name agents.ToolName) jsonschema.Definition {
 			Properties: map[string]jsonschema.Definition{
 				"command": {Type: jsonschema.String, Description: "Command to execute from the configured project root."},
 				"args": {
-					Type: jsonschema.Array,
-					Items: &jsonschema.Definition{Type: jsonschema.String},
+					Type:        jsonschema.Array,
+					Items:       &jsonschema.Definition{Type: jsonschema.String},
 					Description: "Optional command arguments.",
 				},
 			},

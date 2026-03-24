@@ -247,7 +247,13 @@ textarea {
   box-shadow: 0 0 0 1px var(--color-border);
 }
 
-.agent-canvas-node[data-state="thinking"] {
+.agent-canvas-node[data-state="approval_required"] {
+  border-style: dashed;
+  box-shadow: 0 0 0 1px var(--color-brand-mid), 0 0 18px rgba(124, 58, 237, 0.18);
+}
+
+.agent-canvas-node[data-state="thinking"],
+.agent-canvas-node[data-state="tool_running"] {
   box-shadow: 0 0 0 1px var(--color-brand-mid), 0 0 20px rgba(124, 58, 237, 0.22);
 }
 
@@ -890,7 +896,9 @@ textarea {
   .agent-canvas-node[data-state="queued"],
   .agent-canvas-node[data-state="assigned"],
   .agent-canvas-node[data-state="blocked"],
+  .agent-canvas-node[data-state="approval_required"],
   .agent-canvas-node[data-state="thinking"],
+  .agent-canvas-node[data-state="tool_running"],
   .agent-canvas-node[data-state="streaming"],
   .agent-canvas-node[data-state="completed"],
   .agent-canvas-node[data-state="clarification_required"],

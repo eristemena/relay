@@ -5,6 +5,7 @@ import {
   addSpawnedNode,
   clearCanvasSelection,
   createEmptyCanvasDocument,
+  patchApprovalRequest,
   patchAgentError,
   patchAgentState,
   patchAgentToken,
@@ -12,6 +13,8 @@ import {
   patchRunComplete,
   patchRunError,
   patchTaskAssigned,
+  patchToolCall,
+  patchToolResult,
   selectCanvasNode,
   type AgentCanvasDocument,
 } from "@/features/canvas/canvasModel";
@@ -30,6 +33,8 @@ import type {
   SessionSummary,
   StateChangePayload,
   TaskAssignedPayload,
+  ToolCallPayload,
+  ToolResultPayload,
   TokenPayload,
   WorkspaceSnapshotPayload,
   WorkspaceStatusPayload,
@@ -404,6 +409,14 @@ class WorkspaceStore {
       activeRunId: payload.run_id,
       selectedRunId: payload.run_id,
       pendingApprovals: nextPendingApprovals,
+      orchestrationDocuments: syncOrchestrationDocuments(
+        this.state.orchestrationDocuments,
+        payload.run_id,
+        {
+          type: "approval_request",
+          payload,
+        } as Envelope<ApprovalRequestPayload>,
+      ),
       runSummaries: syncRunSummaries(this.state.runSummaries, {
         type: "approval_request",
         payload,
@@ -644,6 +657,18 @@ function syncOrchestrationDocuments(
       break;
     case "task_assigned":
       next = patchTaskAssigned(current, message.payload as TaskAssignedPayload);
+      break;
+    case "approval_request":
+      next = patchApprovalRequest(
+        current,
+        message.payload as ApprovalRequestPayload,
+      );
+      break;
+    case "tool_call":
+      next = patchToolCall(current, message.payload as ToolCallPayload);
+      break;
+    case "tool_result":
+      next = patchToolResult(current, message.payload as ToolResultPayload);
       break;
     case "token":
       next = patchAgentToken(current, message.payload as TokenPayload);

@@ -68,6 +68,78 @@ describe("workspaceStore", () => {
     resetWorkspaceStore();
   });
 
+  it("updates orchestration node state for approval and tool result events", () => {
+    resetWorkspaceStore();
+    primeWorkspaceStore(buildWorkspaceSnapshot({ active_run_id: "run_9" }));
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_9",
+          sequence: 1,
+          replay: false,
+          role: "tester",
+          model: "anthropic/claude-sonnet-4-5",
+          agent_id: "agent_tester_3",
+          label: "Tester",
+          spawn_order: 3,
+          occurred_at: "2026-03-24T12:00:00Z",
+        },
+      } as never);
+    });
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "approval_request",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_9",
+          role: "tester",
+          model: "anthropic/claude-sonnet-4-5",
+          tool_call_id: "call_1",
+          tool_name: "write_file",
+          input_preview: { path: "tests/generated/smoke_test.sh" },
+          message:
+            "Relay needs approval before it can write files inside the configured project root.",
+          occurred_at: "2026-03-24T12:00:01Z",
+        },
+      } as never);
+    });
+
+    let state = workspaceStore.getSnapshot();
+    expect(state.orchestrationDocuments.run_9?.nodes[0]?.state).toBe(
+      "approval_required",
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "tool_result",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_9",
+          sequence: 3,
+          replay: false,
+          role: "tester",
+          model: "anthropic/claude-sonnet-4-5",
+          tool_call_id: "call_1",
+          tool_name: "write_file",
+          status: "completed",
+          result_preview: { summary: "Wrote file content." },
+          occurred_at: "2026-03-24T12:00:03Z",
+        },
+      } as never);
+    });
+
+    state = workspaceStore.getSnapshot();
+    expect(state.orchestrationDocuments.run_9?.nodes[0]?.state).toBe(
+      "thinking",
+    );
+
+    resetWorkspaceStore();
+  });
+
   it("deduplicates repeated run summaries from snapshot updates", () => {
     resetWorkspaceStore();
 

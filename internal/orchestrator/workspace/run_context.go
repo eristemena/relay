@@ -1,11 +1,17 @@
 package workspace
 
-import "context"
+import (
+	"context"
+
+	"github.com/erisristemena/relay/internal/storage/sqlite"
+)
 
 type runExecutionContext struct {
 	SessionID string
 	RunID     string
 	Emit      func(StreamEnvelope) error
+	Role      sqlite.AgentRole
+	Model     string
 }
 
 type runExecutionContextKey struct{}

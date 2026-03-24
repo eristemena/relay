@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   addSpawnedNode,
   createEmptyCanvasDocument,
+  patchApprovalRequest,
   patchAgentState,
   patchHandoff,
   patchRunComplete,
+  patchToolResult,
 } from "@/features/canvas/canvasModel";
 
 describe("canvasModel", () => {
@@ -142,5 +144,57 @@ describe("canvasModel", () => {
 
     expect(completed.nodes[0]?.stateRevision).toBe(1);
     expect(completed.edges[0]?.pulseState).toBe("idle");
+  });
+
+  it("marks a role as approval required and returns it to thinking after a completed tool result", () => {
+    let document = createEmptyCanvasDocument();
+
+    document = addSpawnedNode(document, {
+      agent_id: "agent_tester_3",
+      label: "Tester",
+      model: "anthropic/claude-sonnet-4-5",
+      occurred_at: "2026-03-24T12:00:00Z",
+      replay: false,
+      role: "tester",
+      run_id: "run_1",
+      sequence: 1,
+      session_id: "session_alpha",
+      spawn_order: 3,
+    });
+
+    const awaitingApproval = patchApprovalRequest(document, {
+      session_id: "session_alpha",
+      run_id: "run_1",
+      role: "tester",
+      model: "anthropic/claude-sonnet-4-5",
+      tool_call_id: "call_1",
+      tool_name: "write_file",
+      input_preview: { path: "tests/generated/smoke_test.sh" },
+      message:
+        "Relay needs approval before it can write files inside the configured project root.",
+      occurred_at: "2026-03-24T12:00:01Z",
+    });
+
+    expect(awaitingApproval.nodes[0]?.state).toBe("approval_required");
+    expect(awaitingApproval.nodes[0]?.details.currentStateLabel).toBe(
+      "Approval required",
+    );
+
+    const resumed = patchToolResult(awaitingApproval, {
+      session_id: "session_alpha",
+      run_id: "run_1",
+      sequence: 3,
+      replay: false,
+      role: "tester",
+      model: "anthropic/claude-sonnet-4-5",
+      tool_call_id: "call_1",
+      tool_name: "write_file",
+      status: "completed",
+      result_preview: { summary: "Wrote file content." },
+      occurred_at: "2026-03-24T12:00:03Z",
+    });
+
+    expect(resumed.nodes[0]?.state).toBe("thinking");
+    expect(resumed.nodes[0]?.details.summary).toBe("Wrote file content.");
   });
 });

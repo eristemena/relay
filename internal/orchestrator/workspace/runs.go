@@ -85,6 +85,8 @@ func (s *Service) executeRun(runCtx context.Context, run sqlite.AgentRun, task s
 		Emit: func(envelope StreamEnvelope) error {
 			return s.dispatchRunEnvelope(run.ID, envelope)
 		},
+		Role:  run.Role,
+		Model: run.Model,
 	})
 	if s.forceLegacyRunnerPath {
 		s.executeLegacyRun(runCtx, run, task, s.runnerFactory(cfg, task))
@@ -101,6 +103,17 @@ func (s *Service) executeRun(runCtx context.Context, run sqlite.AgentRun, task s
 }
 
 func (s *Service) executeLegacyRun(runCtx context.Context, run sqlite.AgentRun, task string, runner agents.Runner) {
+	profile := runner.Profile()
+	runCtx = withRunExecutionContext(runCtx, runExecutionContext{
+		SessionID: run.SessionID,
+		RunID:     run.ID,
+		Emit: func(envelope StreamEnvelope) error {
+			return s.dispatchRunEnvelope(run.ID, envelope)
+		},
+		Role:  profile.Role,
+		Model: profile.Model,
+	})
+
 	terminalEventWritten := false
 	markTerminal := func() {
 		terminalEventWritten = true
@@ -229,27 +242,37 @@ func (s *Service) emitToolCall(ctx context.Context, runID string, event agents.T
 	if err != nil {
 		return err
 	}
+	role := run.Role
+	model := run.Model
+	if runContext, ok := runExecutionContextFromContext(ctx); ok {
+		if runContext.Role != "" {
+			role = runContext.Role
+		}
+		if strings.TrimSpace(runContext.Model) != "" {
+			model = runContext.Model
+		}
+	}
 	run.State = sqlite.RunStateToolRunning
 	if err := s.store.UpdateAgentRun(ctx, run); err != nil {
 		return err
 	}
 
 	payload := map[string]any{
-		"session_id":   run.SessionID,
-		"run_id":       run.ID,
-		"replay":       false,
-		"role":         run.Role,
-		"model":        run.Model,
-		"tool_call_id": event.ToolCallID,
-		"tool_name":    string(event.ToolName),
+		"session_id":    run.SessionID,
+		"run_id":        run.ID,
+		"replay":        false,
+		"role":          role,
+		"model":         model,
+		"tool_call_id":  event.ToolCallID,
+		"tool_name":     string(event.ToolName),
 		"input_preview": event.InputPreview,
-		"occurred_at":  time.Now().UTC().Format(time.RFC3339),
+		"occurred_at":   time.Now().UTC().Format(time.RFC3339),
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal tool call payload: %w", err)
 	}
-	storedEvent, err := s.store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeToolCall, run.Role, run.Model, string(encoded))
+	storedEvent, err := s.store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeToolCall, role, model, string(encoded))
 	if err != nil {
 		return err
 	}
@@ -265,24 +288,34 @@ func (s *Service) emitToolResult(ctx context.Context, runID string, event agents
 	if err != nil {
 		return err
 	}
+	role := run.Role
+	model := run.Model
+	if runContext, ok := runExecutionContextFromContext(ctx); ok {
+		if runContext.Role != "" {
+			role = runContext.Role
+		}
+		if strings.TrimSpace(runContext.Model) != "" {
+			model = runContext.Model
+		}
+	}
 
 	payload := map[string]any{
-		"session_id":    run.SessionID,
-		"run_id":        run.ID,
-		"replay":        false,
-		"role":          run.Role,
-		"model":         run.Model,
-		"tool_call_id":  event.ToolCallID,
-		"tool_name":     string(event.ToolName),
-		"status":        event.Status,
+		"session_id":     run.SessionID,
+		"run_id":         run.ID,
+		"replay":         false,
+		"role":           role,
+		"model":          model,
+		"tool_call_id":   event.ToolCallID,
+		"tool_name":      string(event.ToolName),
+		"status":         event.Status,
 		"result_preview": event.ResultPreview,
-		"occurred_at":   time.Now().UTC().Format(time.RFC3339),
+		"occurred_at":    time.Now().UTC().Format(time.RFC3339),
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal tool result payload: %w", err)
 	}
-	storedEvent, err := s.store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeToolResult, run.Role, run.Model, string(encoded))
+	storedEvent, err := s.store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeToolResult, role, model, string(encoded))
 	if err != nil {
 		return err
 	}

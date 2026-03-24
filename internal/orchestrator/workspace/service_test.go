@@ -1862,6 +1862,126 @@ func TestService_EmitToolEventsPersistAndDispatch(t *testing.T) {
 	}
 }
 
+func TestServiceEmitToolEventsUseStageRoleAndModelFromRunContext(t *testing.T) {
+	paths, store := newTestServiceStore(t)
+	defer store.Close()
+
+	service := NewService(store, paths)
+	ctx := context.Background()
+	session, err := store.CreateSession(ctx, "Stage tool events")
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	run, err := store.CreateAgentRun(ctx, session.ID, "Record tester tool events", sqlite.RolePlanner, config.DefaultPlannerModel)
+	if err != nil {
+		t.Fatalf("CreateAgentRun() error = %v", err)
+	}
+
+	stageCtx := withRunExecutionContext(ctx, runExecutionContext{
+		SessionID: run.SessionID,
+		RunID:     run.ID,
+		Role:      sqlite.RoleTester,
+		Model:     config.DefaultTesterModel,
+		Emit:      func(StreamEnvelope) error { return nil },
+	})
+
+	if err := service.emitToolCall(stageCtx, run.ID, agents.ToolCallEvent{
+		ToolCallID:   "call_stage",
+		ToolName:     agents.ToolWriteFile,
+		InputPreview: map[string]any{"path": "tests/generated/smoke_test.sh"},
+	}, nil); err != nil {
+		t.Fatalf("emitToolCall() error = %v", err)
+	}
+	if err := service.emitToolResult(stageCtx, run.ID, agents.ToolResultEvent{
+		ToolCallID:    "call_stage",
+		ToolName:      agents.ToolWriteFile,
+		Status:        "completed",
+		ResultPreview: map[string]any{"path": "tests/generated/smoke_test.sh"},
+	}, nil); err != nil {
+		t.Fatalf("emitToolResult() error = %v", err)
+	}
+
+	events, err := store.ListRunEvents(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("ListRunEvents() error = %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("len(events) = %d, want 2", len(events))
+	}
+	if events[0].Role != sqlite.RoleTester || events[0].Model != config.DefaultTesterModel {
+		t.Fatalf("tool call event = %#v, want tester role/model", events[0])
+	}
+	if events[1].Role != sqlite.RoleTester || events[1].Model != config.DefaultTesterModel {
+		t.Fatalf("tool result event = %#v, want tester role/model", events[1])
+	}
+}
+
+func TestExecuteStageEmitsToolEventsForOrchestrationAgents(t *testing.T) {
+	paths, store := newTestServiceStore(t)
+	defer store.Close()
+
+	service := NewService(store, paths)
+	ctx := context.Background()
+	session, err := store.CreateSession(ctx, "Execute stage tool events")
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	run, err := store.CreateAgentRun(ctx, session.ID, "Tester uses a tool", sqlite.RolePlanner, config.DefaultPlannerModel)
+	if err != nil {
+		t.Fatalf("CreateAgentRun() error = %v", err)
+	}
+
+	cfg, _, err := config.Load(paths)
+	if err != nil {
+		t.Fatalf("config.Load() error = %v", err)
+	}
+	service.SetAgentFactory(func(cfg config.Config, role sqlite.AgentRole) agents.Agent {
+		return scriptedPromptOnlyAgent{profile: orchestrationProfile(role), run: func(_ context.Context, _ string, handlers agents.StreamEventHandlers) error {
+			if handlers.OnToolCall != nil {
+				handlers.OnToolCall(agents.ToolCallEvent{
+					ToolCallID:   "call_exec_stage",
+					ToolName:     agents.ToolWriteFile,
+					InputPreview: map[string]any{"path": "tests/generated/smoke_test.sh"},
+				})
+			}
+			if handlers.OnToolResult != nil {
+				handlers.OnToolResult(agents.ToolResultEvent{
+					ToolCallID:    "call_exec_stage",
+					ToolName:      agents.ToolWriteFile,
+					Status:        "completed",
+					ResultPreview: map[string]any{"path": "tests/generated/smoke_test.sh"},
+				})
+			}
+			if handlers.OnComplete != nil {
+				handlers.OnComplete("stop")
+			}
+			return nil
+		}}
+	})
+
+	if _, err := service.executeStage(ctx, run, cfg, 2, sqlite.RoleTester, "Emit tool events"); err != nil {
+		t.Fatalf("executeStage() error = %v", err)
+	}
+
+	events, err := store.ListRunEvents(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("ListRunEvents() error = %v", err)
+	}
+	toolCallSeen := false
+	toolResultSeen := false
+	for _, event := range events {
+		if event.EventType == sqlite.EventTypeToolCall && event.Role == sqlite.RoleTester {
+			toolCallSeen = true
+		}
+		if event.EventType == sqlite.EventTypeToolResult && event.Role == sqlite.RoleTester {
+			toolResultSeen = true
+		}
+	}
+	if !toolCallSeen || !toolResultSeen {
+		t.Fatalf("events = %#v, want tester tool_call and tool_result", events)
+	}
+}
+
 type blockingRunner struct{}
 
 func (blockingRunner) Run(ctx context.Context, _ string, handlers agents.StreamEventHandlers) error {

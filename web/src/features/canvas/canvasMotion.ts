@@ -57,7 +57,12 @@ export function getNodeMotionTarget(options: {
 
   let scale = selected ? 1.01 : 1;
 
-  if (state === "thinking" || state === "assigned") {
+  if (
+    state === "thinking" ||
+    state === "assigned" ||
+    state === "tool_running" ||
+    state === "approval_required"
+  ) {
     scale = selected ? 1.015 : 1.01;
   }
 

@@ -1,10 +1,13 @@
 import type {
+  ApprovalRequestPayload,
   AgentStateChangedPayload,
   AgentSpawnedPayload,
   ErrorPayload,
   HandoffPayload,
   RunCompletePayload,
   TaskAssignedPayload,
+  ToolCallPayload,
+  ToolResultPayload,
   TokenPayload,
 } from "@/shared/lib/workspace-protocol";
 import { layoutAgentGraph } from "@/features/canvas/layoutGraph";
@@ -20,6 +23,8 @@ export const agentCanvasStates = [
   "queued",
   "assigned",
   "thinking",
+  "tool_running",
+  "approval_required",
   "streaming",
   "completed",
   "clarification_required",
@@ -128,6 +133,8 @@ const stateLabels: Record<AgentCanvasState, string> = {
   queued: "Queued",
   assigned: "Assigned",
   thinking: "Thinking",
+  tool_running: "Tool running",
+  approval_required: "Approval required",
   streaming: "Streaming",
   completed: "Completed",
   clarification_required: "Clarification required",
@@ -275,6 +282,77 @@ export function patchAgentToken(
     ),
     runState: "active",
   };
+}
+
+export function patchApprovalRequest(
+  document: AgentCanvasDocument,
+  payload: ApprovalRequestPayload,
+): AgentCanvasDocument {
+  const role = payload.role as AgentCanvasRole | undefined;
+  if (!role) {
+    return document;
+  }
+
+  return patchRoleState(document, role, payload.occurred_at, {
+    state: "approval_required",
+    details: {
+      currentStateLabel: stateLabels.approval_required,
+      summary: payload.message,
+    },
+  });
+}
+
+export function patchToolCall(
+  document: AgentCanvasDocument,
+  payload: ToolCallPayload,
+): AgentCanvasDocument {
+  return patchRoleState(
+    document,
+    payload.role as AgentCanvasRole,
+    payload.occurred_at,
+    {
+      state: "tool_running",
+      details: {
+        currentStateLabel: stateLabels.tool_running,
+        summary: `Running ${formatToolName(payload.tool_name)}.`,
+      },
+    },
+  );
+}
+
+export function patchToolResult(
+  document: AgentCanvasDocument,
+  payload: ToolResultPayload,
+): AgentCanvasDocument {
+  const nextState =
+    payload.status === "completed"
+      ? "thinking"
+      : payload.status === "rejected"
+        ? "blocked"
+        : "errored";
+  const previewSummary =
+    typeof payload.result_preview.summary === "string"
+      ? payload.result_preview.summary
+      : typeof payload.result_preview.message === "string"
+        ? payload.result_preview.message
+        : undefined;
+
+  return patchRoleState(
+    document,
+    payload.role as AgentCanvasRole,
+    payload.occurred_at,
+    {
+      state: nextState,
+      details: {
+        currentStateLabel: stateLabels[nextState],
+        summary: previewSummary,
+        errorMessage:
+          nextState === "blocked" || nextState === "errored"
+            ? previewSummary
+            : undefined,
+      },
+    },
+  );
 }
 
 export function patchHandoff(
@@ -454,6 +532,39 @@ function updateNodePresentation(
     stateRevision: node.stateRevision + 1,
     lastUpdatedAt: occurredAt,
   };
+}
+
+function patchRoleState(
+  document: AgentCanvasDocument,
+  role: AgentCanvasRole,
+  occurredAt: string | null,
+  patch: {
+    state: AgentCanvasState;
+    details?: Partial<AgentNodeDetails>;
+  },
+): AgentCanvasDocument {
+  return {
+    ...document,
+    nodes: syncNodeDetails(
+      document.nodes.map((node) =>
+        node.role === role
+          ? updateNodePresentation(node, occurredAt, {
+              state: patch.state,
+              details: {
+                ...node.details,
+                ...patch.details,
+              },
+            })
+          : node,
+      ),
+      document.edges,
+    ),
+    runState: "active",
+  };
+}
+
+function formatToolName(toolName: string) {
+  return toolName.replaceAll("_", " ");
 }
 
 function settleCanvasEdges(edges: AgentCanvasEdgeModel[]) {

@@ -72,6 +72,8 @@ func TestCatalogToolExecutorRequestsApprovalBeforeWriteFile(t *testing.T) {
 	ctx := withRunExecutionContext(context.Background(), runExecutionContext{
 		SessionID: "session_alpha",
 		RunID:     "run_1",
+		Role:      agents.NewCoder("model").Role,
+		Model:     "model",
 		Emit:      func(StreamEnvelope) error { return nil },
 	})
 
@@ -87,6 +89,12 @@ func TestCatalogToolExecutorRequestsApprovalBeforeWriteFile(t *testing.T) {
 	}
 	if approvals.request.ToolName != agents.ToolWriteFile {
 		t.Fatalf("approvals.request.ToolName = %q, want %q", approvals.request.ToolName, agents.ToolWriteFile)
+	}
+	if approvals.request.Role != agents.NewCoder("model").Role {
+		t.Fatalf("approvals.request.Role = %q, want coder", approvals.request.Role)
+	}
+	if approvals.request.Model != "model" {
+		t.Fatalf("approvals.request.Model = %q, want model", approvals.request.Model)
 	}
 	if approvals.request.InputPreview["path"] != "README.md" {
 		t.Fatalf("approvals.request.InputPreview[path] = %v, want README.md", approvals.request.InputPreview["path"])
@@ -105,6 +113,8 @@ func TestCatalogToolExecutorReturnsRejectedResultWhenApprovalDenied(t *testing.T
 	ctx := withRunExecutionContext(context.Background(), runExecutionContext{
 		SessionID: "session_alpha",
 		RunID:     "run_1",
+		Role:      agents.NewCoder("model").Role,
+		Model:     "model",
 		Emit:      func(StreamEnvelope) error { return nil },
 	})
 
@@ -120,6 +130,81 @@ func TestCatalogToolExecutorReturnsRejectedResultWhenApprovalDenied(t *testing.T
 	}
 	if result.ResultPreview["message"] != ErrApprovalRejected.Error() {
 		t.Fatalf("result.ResultPreview[message] = %v, want rejection message", result.ResultPreview["message"])
+	}
+}
+
+func TestCatalogToolExecutorBlocksTesterWritesOutsideTestArtifacts(t *testing.T) {
+	executor := newCatalogToolExecutor(t.TempDir(), &stubApprovalManager{decision: ApprovalDecision{Approved: true}})
+	ctx := withRunExecutionContext(context.Background(), runExecutionContext{
+		SessionID: "session_alpha",
+		RunID:     "run_1",
+		Role:      agents.NewTester("tester-model").Role,
+		Model:     "tester-model",
+		Emit:      func(StreamEnvelope) error { return nil },
+	})
+
+	result, err := executor.ExecuteTool(ctx, "call_block_tester", agents.ToolWriteFile, json.RawMessage(`{"path":".env.example","content":"X=1\n"}`))
+	if err != nil {
+		t.Fatalf("ExecuteTool() error = %v", err)
+	}
+	if result.Status != "rejected" {
+		t.Fatalf("result.Status = %q, want rejected", result.Status)
+	}
+	if result.Content != "Relay blocked the tester write request because tester may only create or update test files and test scripts." {
+		t.Fatalf("result.Content = %q, want tester write policy message", result.Content)
+	}
+}
+
+func TestCatalogToolExecutorAllowsTesterWritesForTestArtifacts(t *testing.T) {
+	projectRoot := t.TempDir()
+	approvals := &stubApprovalManager{decision: ApprovalDecision{Approved: true}}
+	executor := newCatalogToolExecutor(projectRoot, approvals)
+	ctx := withRunExecutionContext(context.Background(), runExecutionContext{
+		SessionID: "session_alpha",
+		RunID:     "run_1",
+		Role:      agents.NewTester("tester-model").Role,
+		Model:     "tester-model",
+		Emit:      func(StreamEnvelope) error { return nil },
+	})
+
+	result, err := executor.ExecuteTool(ctx, "call_tester_write", agents.ToolWriteFile, json.RawMessage(`{"path":"tests/generated/smoke_test.sh","content":"#!/bin/sh\necho ok\n"}`))
+	if err != nil {
+		t.Fatalf("ExecuteTool() error = %v", err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("result.Status = %q, want completed", result.Status)
+	}
+	if approvals.request.Role != agents.NewTester("tester-model").Role {
+		t.Fatalf("approvals.request.Role = %q, want tester", approvals.request.Role)
+	}
+	content, err := os.ReadFile(filepath.Join(projectRoot, "tests/generated/smoke_test.sh"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(content) != "#!/bin/sh\necho ok\n" {
+		t.Fatalf("written content = %q, want shell script", string(content))
+	}
+}
+
+func TestCatalogToolExecutorBlocksTesterWritesForArbitraryFilesUnderTests(t *testing.T) {
+	executor := newCatalogToolExecutor(t.TempDir(), &stubApprovalManager{decision: ApprovalDecision{Approved: true}})
+	ctx := withRunExecutionContext(context.Background(), runExecutionContext{
+		SessionID: "session_alpha",
+		RunID:     "run_1",
+		Role:      agents.NewTester("tester-model").Role,
+		Model:     "tester-model",
+		Emit:      func(StreamEnvelope) error { return nil },
+	})
+
+	result, err := executor.ExecuteTool(ctx, "call_block_tester_tests", agents.ToolWriteFile, json.RawMessage(`{"path":"tests/generated/notes.md","content":"not a test artifact\n"}`))
+	if err != nil {
+		t.Fatalf("ExecuteTool() error = %v", err)
+	}
+	if result.Status != "rejected" {
+		t.Fatalf("result.Status = %q, want rejected", result.Status)
+	}
+	if result.Content != "Relay blocked the tester write request because tester may only create or update test files and test scripts." {
+		t.Fatalf("result.Content = %q, want tester write policy message", result.Content)
 	}
 }
 
