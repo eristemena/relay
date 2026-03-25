@@ -1,5 +1,6 @@
 {
   "name": "relay-web",
+  "description": "Local developer workspace that launches a browser-based AI coding shell from a single command.",
   "private": true,
   "type": "module",
   "scripts": {
