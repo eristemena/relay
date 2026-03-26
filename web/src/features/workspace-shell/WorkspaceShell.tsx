@@ -1,8 +1,8 @@
 "use client";
 
 import { startTransition, useEffect, useState } from "react";
-import { AgentPanel } from "@/features/agent-panel/AgentPanel";
 import { AgentCommandBar } from "@/features/agent-panel/AgentCommandBar";
+import { ApprovalReviewPanel } from "@/features/approvals/ApprovalReviewPanel";
 import { WorkspaceCanvas } from "@/features/canvas/WorkspaceCanvas";
 import { RunHistoryPanel } from "@/features/history/RunHistoryPanel";
 import { SessionSidebar } from "@/features/history/SessionSidebar";
@@ -18,6 +18,7 @@ import { useWorkspaceStore } from "@/shared/lib/workspace-store";
 export function WorkspaceShell() {
   const [menuOpen, setMenuOpen] = useState(false);
   const {
+    browseRepository,
     createSession,
     openRun,
     openSession,
@@ -32,24 +33,18 @@ export function WorkspaceShell() {
   const selectedRunId = useWorkspaceStore((state) => state.selectedRunId);
   const sessions = useWorkspaceStore((state) => state.sessions);
   const runSummaries = useWorkspaceStore((state) => state.runSummaries);
-  const runEvents = useWorkspaceStore((state) => state.runEvents);
-  const runTranscripts = useWorkspaceStore((state) => state.runTranscripts);
   const pendingApprovals = useWorkspaceStore((state) => state.pendingApprovals);
+  const repositoryBrowser = useWorkspaceStore(
+    (state) => state.repositoryBrowser,
+  );
   const preferences = useWorkspaceStore((state) => state.preferences);
   const uiState = useWorkspaceStore((state) => state.uiState);
   const status = useWorkspaceStore((state) => state.status);
   const error = useWorkspaceStore((state) => state.error);
   const warnings = useWorkspaceStore((state) => state.warnings);
 
-  const activeSession = sessions.find((session) => session.id === activeSessionId) ?? null;
-  const selectedRunSummary =
-    runSummaries.find((run) => run.id === selectedRunId) ?? null;
-  const selectedRunEvents = selectedRunId
-    ? (runEvents[selectedRunId] ?? [])
-    : [];
-  const selectedRunTranscript = selectedRunId
-    ? (runTranscripts[selectedRunId] ?? "")
-    : "";
+  const activeSession =
+    sessions.find((session) => session.id === activeSessionId) ?? null;
   const selectedPendingApproval =
     Object.values(pendingApprovals).find(
       (approval) => approval.runId === selectedRunId,
@@ -58,10 +53,20 @@ export function WorkspaceShell() {
     connectionState,
     status,
     error,
+    projectRootConfigured: preferences.project_root_configured,
     projectRootMessage: preferences.project_root_message,
     projectRootValid: preferences.project_root_valid,
     warnings,
   });
+  const repositorySummaryTitle = preferences.project_root_valid
+    ? "Repository connected"
+    : preferences.project_root_configured
+      ? "Repository needs attention"
+      : "Repository not connected";
+  const repositorySummaryMessage = preferences.project_root_valid
+    ? preferences.project_root
+    : preferences.project_root_message ||
+      "Choose a local Git repository in Local settings to enable repository-aware tools.";
 
   useEffect(() => {
     if (!menuOpen) {
@@ -101,6 +106,7 @@ export function WorkspaceShell() {
                   embedded
                   connectionState={connectionState}
                   error={error}
+                  projectRootConfigured={preferences.project_root_configured}
                   projectRootMessage={preferences.project_root_message}
                   projectRootValid={preferences.project_root_valid}
                   status={status}
@@ -163,15 +169,10 @@ export function WorkspaceShell() {
         open={menuOpen}
       >
         <div className="grid gap-4 p-5">
-          <AgentPanel
-            activeRunId={activeRunId}
-            activeSessionId={activeSessionId}
-            preferences={preferences}
-            pendingApproval={selectedPendingApproval}
-            runEvents={selectedRunEvents}
-            runTranscript={selectedRunTranscript}
-            selectedRunId={selectedRunId}
-            selectedRunSummary={selectedRunSummary}
+          <ApprovalReviewPanel
+            approval={selectedPendingApproval}
+            pendingCount={Object.keys(pendingApprovals).length}
+            selectedApprovalId={selectedPendingApproval?.toolCallId}
             onApprovalDecision={(toolCallId, decision) =>
               startTransition(() => {
                 respondToApproval(
@@ -233,16 +234,26 @@ export function WorkspaceShell() {
                 <p className="text-text-muted">
                   Theme {preferences.appearance_variant}
                 </p>
+                <p className="text-text-muted">{repositorySummaryTitle}</p>
               </div>
             </div>
+            <p className="mt-4 break-all text-sm leading-6 text-text-muted">
+              {repositorySummaryMessage}
+            </p>
           </section>
           <PreferencesPanel
+            onBrowseRepository={(path, showHidden) =>
+              startTransition(() => {
+                browseRepository(path, showHidden);
+              })
+            }
             onSave={(payload) =>
               startTransition(() => {
                 savePreferences(payload);
               })
             }
             preferences={preferences}
+            repositoryBrowser={repositoryBrowser}
             saveState={uiState.save_state}
           />
         </div>

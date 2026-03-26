@@ -8,6 +8,7 @@ import {
 } from "@/features/canvas/canvasMotion";
 import { getRunFailureTitle } from "@/features/agent-panel/runStatus";
 import type {
+  AgentNodeProposedChange,
   AgentCanvasRole,
   SelectedCanvasNodeView,
 } from "@/features/canvas/canvasModel";
@@ -191,6 +192,41 @@ export function AgentNodeDetailPanel({
                   : "No downstream handoff has been recorded for this node yet."}
               </p>
             </div>
+            <div>
+              <p className="eyebrow">Files read</p>
+              {selectedNode.details.readPaths.length ? (
+                <ul className="mt-2 space-y-2 text-sm leading-6 text-text">
+                  {selectedNode.details.readPaths.map((path) => (
+                    <li key={path} className="break-all">
+                      {path}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-text">
+                  This agent has not read a repository file yet.
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="eyebrow">Proposed changes</p>
+              {selectedNode.details.proposedChanges.length ? (
+                <ul className="mt-2 space-y-3 text-sm leading-6 text-text">
+                  {selectedNode.details.proposedChanges.map((change) => (
+                    <li key={change.toolCallId}>
+                      <p className="break-all">{change.path}</p>
+                      <p className="text-text-muted">
+                        {formatProposalStatus(change)}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-text">
+                  This agent has not proposed a file change yet.
+                </p>
+              )}
+            </div>
             {selectedNode.details.errorMessage ? (
               <div className="rounded-2xl border border-[var(--color-error)] bg-raised/80 p-4 text-text">
                 <p className="eyebrow">{nodeFailureTitle}</p>
@@ -227,4 +263,21 @@ export function AgentNodeDetailPanel({
       </AnimatePresence>
     </aside>
   );
+}
+
+function formatProposalStatus(change: AgentNodeProposedChange) {
+  switch (change.approvalState) {
+    case "proposed":
+      return "Awaiting approval.";
+    case "approved":
+      return "Approved and waiting to apply.";
+    case "applied":
+      return "Applied to the repository.";
+    case "rejected":
+      return "Rejected before Relay wrote the change.";
+    case "blocked":
+      return "Blocked before Relay could apply the change.";
+    case "expired":
+      return "Expired before Relay could apply the change.";
+  }
 }

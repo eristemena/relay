@@ -6,6 +6,9 @@ const (
 	TypeWorkspaceBootstrapRequest = "workspace.bootstrap.request"
 	TypeWorkspaceBootstrap        = "workspace.bootstrap"
 	TypeWorkspaceStatus           = "workspace.status"
+	TypeRepositoryBrowseRequest   = "repository.browse.request"
+	TypeRepositoryBrowseResult    = "repository.browse.result"
+	TypeRepositoryGraphStatus     = "repository_graph_status"
 	TypeSessionCreate             = "session.create"
 	TypeSessionCreated            = "session.created"
 	TypeSessionOpen               = "session.open"
@@ -17,6 +20,7 @@ const (
 	TypeAgentRunCancel            = "agent.run.cancel"
 	TypeAgentRunApprovalRespond   = "agent.run.approval.respond"
 	TypeApprovalRequest           = "approval_request"
+	TypeApprovalStateChanged      = "approval_state_changed"
 	TypeStateChange               = "state_change"
 	TypeToken                     = "token"
 	TypeToolCall                  = "tool_call"
@@ -47,6 +51,49 @@ type OutboundEnvelope[T any] struct {
 
 type BootstrapRequestPayload struct {
 	LastSessionID string `json:"last_session_id,omitempty"`
+}
+
+type RepositoryBrowseRequestPayload struct {
+	Path       string `json:"path,omitempty"`
+	ShowHidden bool   `json:"show_hidden,omitempty"`
+}
+
+type RepositoryDirectoryPayload struct {
+	Name            string `json:"name"`
+	Path            string `json:"path"`
+	IsGitRepository bool   `json:"is_git_repository"`
+}
+
+type RepositoryBrowseResultPayload struct {
+	Path        string                       `json:"path"`
+	Directories []RepositoryDirectoryPayload `json:"directories"`
+}
+
+type RepositoryGraphStatusPayload struct {
+	RepositoryRoot string                       `json:"repository_root,omitempty"`
+	Status         string                       `json:"status"`
+	Message        string                       `json:"message,omitempty"`
+	Nodes          []RepositoryGraphNodePayload `json:"nodes,omitempty"`
+	Edges          []RepositoryGraphEdgePayload `json:"edges,omitempty"`
+}
+
+type RepositoryGraphNodePayload struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Kind  string `json:"kind"`
+}
+
+type RepositoryGraphEdgePayload struct {
+	ID     string `json:"id"`
+	Source string `json:"source"`
+	Target string `json:"target"`
+	Kind   string `json:"kind,omitempty"`
+}
+
+type ConnectedRepositoryView struct {
+	Path    string `json:"path,omitempty"`
+	Status  string `json:"status"`
+	Message string `json:"message,omitempty"`
 }
 
 type SessionCreatePayload struct {
@@ -104,16 +151,16 @@ type SessionSummary struct {
 }
 
 type PreferencesView struct {
-	PreferredPort        int    `json:"preferred_port"`
-	AppearanceVariant    string `json:"appearance_variant"`
-	HasCredentials       bool   `json:"has_credentials"`
-	OpenRouterConfigured bool   `json:"openrouter_configured"`
-	ProjectRoot          string `json:"project_root"`
-	ProjectRootConfigured bool  `json:"project_root_configured"`
-	ProjectRootValid      bool  `json:"project_root_valid"`
-	ProjectRootMessage    string `json:"project_root_message,omitempty"`
+	PreferredPort         int             `json:"preferred_port"`
+	AppearanceVariant     string          `json:"appearance_variant"`
+	HasCredentials        bool            `json:"has_credentials"`
+	OpenRouterConfigured  bool            `json:"openrouter_configured"`
+	ProjectRoot           string          `json:"project_root"`
+	ProjectRootConfigured bool            `json:"project_root_configured"`
+	ProjectRootValid      bool            `json:"project_root_valid"`
+	ProjectRootMessage    string          `json:"project_root_message,omitempty"`
 	AgentModels           AgentModelsView `json:"agent_models"`
-	OpenBrowserOnStart    bool   `json:"open_browser_on_start"`
+	OpenBrowserOnStart    bool            `json:"open_browser_on_start"`
 }
 
 type AgentModelsView struct {
@@ -131,14 +178,16 @@ type UIState struct {
 }
 
 type WorkspaceSnapshotPayload struct {
-	ActiveSessionID  string              `json:"active_session_id"`
-	Sessions         []SessionSummary    `json:"sessions"`
-	Preferences      PreferencesView     `json:"preferences"`
-	UIState          UIState             `json:"ui_state"`
-	ActiveRunID      string              `json:"active_run_id,omitempty"`
-	RunSummaries     []AgentRunSummary   `json:"run_summaries,omitempty"`
-	CredentialStatus CredentialStatusView `json:"credential_status"`
-	Warnings         []string            `json:"warnings,omitempty"`
+	ActiveSessionID     string                   `json:"active_session_id"`
+	Sessions            []SessionSummary         `json:"sessions"`
+	Preferences         PreferencesView          `json:"preferences"`
+	ConnectedRepository ConnectedRepositoryView  `json:"connected_repository"`
+	UIState             UIState                  `json:"ui_state"`
+	ActiveRunID         string                   `json:"active_run_id,omitempty"`
+	RunSummaries        []AgentRunSummary        `json:"run_summaries,omitempty"`
+	PendingApprovals    []ApprovalRequestPayload `json:"pending_approvals,omitempty"`
+	CredentialStatus    CredentialStatusView     `json:"credential_status"`
+	Warnings            []string                 `json:"warnings,omitempty"`
 }
 
 type AgentRunSummary struct {
@@ -177,15 +226,34 @@ type ErrorPayload struct {
 }
 
 type ApprovalRequestPayload struct {
-	SessionID    string         `json:"session_id"`
-	RunID        string         `json:"run_id"`
-	Role         string         `json:"role,omitempty"`
-	Model        string         `json:"model,omitempty"`
-	ToolCallID   string         `json:"tool_call_id"`
-	ToolName     string         `json:"tool_name"`
-	InputPreview map[string]any `json:"input_preview"`
-	Message      string         `json:"message"`
-	OccurredAt   string         `json:"occurred_at,omitempty"`
+	SessionID      string         `json:"session_id"`
+	RunID          string         `json:"run_id"`
+	Role           string         `json:"role,omitempty"`
+	Model          string         `json:"model,omitempty"`
+	ToolCallID     string         `json:"tool_call_id"`
+	ToolName       string         `json:"tool_name"`
+	RequestKind    string         `json:"request_kind,omitempty"`
+	Status         string         `json:"status,omitempty"`
+	RepositoryRoot string         `json:"repository_root,omitempty"`
+	InputPreview   map[string]any `json:"input_preview"`
+	DiffPreview    map[string]any `json:"diff_preview,omitempty"`
+	CommandPreview map[string]any `json:"command_preview,omitempty"`
+	Message        string         `json:"message"`
+	OccurredAt     string         `json:"occurred_at,omitempty"`
+}
+
+type ApprovalStateChangedPayload struct {
+	SessionID  string `json:"session_id"`
+	RunID      string `json:"run_id"`
+	Role       string `json:"role,omitempty"`
+	Model      string `json:"model,omitempty"`
+	ToolCallID string `json:"tool_call_id"`
+	ToolName   string `json:"tool_name"`
+	Status     string `json:"status"`
+	Message    string `json:"message"`
+	OccurredAt string `json:"occurred_at,omitempty"`
+	Sequence   int64  `json:"sequence,omitempty"`
+	Replay     bool   `json:"replay,omitempty"`
 }
 
 type OrchestrationEventBase struct {

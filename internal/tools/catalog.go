@@ -12,7 +12,10 @@ type Name string
 
 const (
 	ReadFileName       Name = "read_file"
+	ListFilesName      Name = "list_files"
 	SearchCodebaseName Name = "search_codebase"
+	GitLogName         Name = "git_log"
+	GitDiffName        Name = "git_diff"
 	WriteFileName      Name = "write_file"
 	RunCommandName     Name = "run_command"
 )
@@ -41,7 +44,10 @@ type Catalog struct {
 func NewCatalog(projectRoot string) *Catalog {
 	return &Catalog{definitions: map[string]Tool{
 		string(ReadFileName):       NewReadFileTool(projectRoot),
+		string(ListFilesName):      NewListFilesTool(projectRoot),
 		string(SearchCodebaseName): NewSearchCodebaseTool(projectRoot),
+		string(GitLogName):         NewGitLogTool(projectRoot),
+		string(GitDiffName):        NewGitDiffTool(projectRoot),
 		string(WriteFileName):      NewWriteFileTool(projectRoot),
 		string(RunCommandName):     NewRunCommandTool(projectRoot),
 	}}

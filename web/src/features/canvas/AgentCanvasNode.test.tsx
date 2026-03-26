@@ -101,4 +101,24 @@ describe("AgentCanvasNode", () => {
       vi.advanceTimersByTime(400);
     });
   });
+
+  it("renders compact repository activity counts on the node", () => {
+    const props = {
+      data: {
+        label: "Coder",
+        role: "coder",
+        roleLabel: "Coder",
+        state: "thinking",
+        stateRevision: 3,
+        readCount: 2,
+        proposalCount: 1,
+        summary: "Coder is validating the patch.",
+      },
+      selected: false,
+    } as unknown as ComponentProps<typeof AgentCanvasNode>;
+
+    const { getByText } = render(<AgentCanvasNode {...props} />);
+
+    expect(getByText("2 files read · 1 change proposed")).toBeInTheDocument();
+  });
 });

@@ -24,6 +24,7 @@ var migrationFiles embed.FS
 var ErrSessionNotFound = errors.New("session not found")
 var ErrRunNotFound = errors.New("agent run not found")
 var ErrActiveRunExists = errors.New("agent run already active")
+var ErrApprovalRequestNotFound = errors.New("approval request not found")
 
 type Store struct {
 	db      *sql.DB
@@ -448,6 +449,157 @@ func (s *Store) ListRunEvents(ctx context.Context, runID string) ([]AgentRunEven
 	return events, nil
 }
 
+func (s *Store) CreateApprovalRequest(ctx context.Context, approval ApprovalRequest) (ApprovalRequest, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	if strings.TrimSpace(approval.ID) == "" {
+		id, err := generateID("approval")
+		if err != nil {
+			return ApprovalRequest{}, err
+		}
+		approval.ID = id
+	}
+	if strings.TrimSpace(approval.SessionID) == "" {
+		return ApprovalRequest{}, fmt.Errorf("create approval request: session id is required")
+	}
+	if strings.TrimSpace(approval.RunID) == "" {
+		return ApprovalRequest{}, fmt.Errorf("create approval request: run id is required")
+	}
+	if strings.TrimSpace(approval.ToolCallID) == "" {
+		return ApprovalRequest{}, fmt.Errorf("create approval request: tool call id is required")
+	}
+	if strings.TrimSpace(approval.ToolName) == "" {
+		return ApprovalRequest{}, fmt.Errorf("create approval request: tool name is required")
+	}
+	if strings.TrimSpace(approval.InputPreviewJSON) == "" {
+		approval.InputPreviewJSON = "{}"
+	}
+	if strings.TrimSpace(approval.Message) == "" {
+		return ApprovalRequest{}, fmt.Errorf("create approval request: message is required")
+	}
+	if strings.TrimSpace(approval.State) == "" {
+		approval.State = ApprovalStateProposed
+	}
+	if approval.OccurredAt.IsZero() {
+		approval.OccurredAt = time.Now().UTC()
+	}
+
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO approval_requests (id, session_id, run_id, tool_call_id, tool_name, role, model, input_preview_json, message, state, occurred_at, reviewed_at, applied_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, approval.ID, approval.SessionID, approval.RunID, approval.ToolCallID, approval.ToolName, string(approval.Role), strings.TrimSpace(approval.Model), approval.InputPreviewJSON, approval.Message, approval.State, approval.OccurredAt.Format(time.RFC3339), nullableRFC3339(approval.ReviewedAt), nullableRFC3339(approval.AppliedAt))
+	if err != nil {
+		return ApprovalRequest{}, fmt.Errorf("insert approval request: %w", err)
+	}
+
+	return approval, nil
+}
+
+func (s *Store) GetApprovalRequest(ctx context.Context, runID string, toolCallID string) (ApprovalRequest, error) {
+	approval, err := scanApprovalRequest(s.db.QueryRowContext(ctx, `
+		SELECT id, session_id, run_id, tool_call_id, tool_name, role, model, input_preview_json, message, state, occurred_at, reviewed_at, applied_at
+		FROM approval_requests
+		WHERE run_id = ? AND tool_call_id = ?
+	`, runID, toolCallID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return ApprovalRequest{}, ErrApprovalRequestNotFound
+	}
+	if err != nil {
+		return ApprovalRequest{}, fmt.Errorf("get approval request: %w", err)
+	}
+	return approval, nil
+}
+
+func (s *Store) ListPendingApprovalRequests(ctx context.Context, sessionID string) ([]ApprovalRequest, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, session_id, run_id, tool_call_id, tool_name, role, model, input_preview_json, message, state, occurred_at, reviewed_at, applied_at
+		FROM approval_requests
+		WHERE session_id = ? AND state = ?
+		ORDER BY datetime(occurred_at) ASC
+	`, sessionID, ApprovalStateProposed)
+	if err != nil {
+		return nil, fmt.Errorf("list pending approval requests: %w", err)
+	}
+	defer rows.Close()
+
+	approvals := make([]ApprovalRequest, 0)
+	for rows.Next() {
+		approval, err := scanApprovalRequest(rows)
+		if err != nil {
+			return nil, err
+		}
+		approvals = append(approvals, approval)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate approval requests: %w", err)
+	}
+	return approvals, nil
+}
+
+func (s *Store) ListPendingApprovalRequestsForRun(ctx context.Context, runID string) ([]ApprovalRequest, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, session_id, run_id, tool_call_id, tool_name, role, model, input_preview_json, message, state, occurred_at, reviewed_at, applied_at
+		FROM approval_requests
+		WHERE run_id = ? AND state = ?
+		ORDER BY datetime(occurred_at) ASC
+	`, runID, ApprovalStateProposed)
+	if err != nil {
+		return nil, fmt.Errorf("list pending approval requests for run: %w", err)
+	}
+	defer rows.Close()
+
+	approvals := make([]ApprovalRequest, 0)
+	for rows.Next() {
+		approval, err := scanApprovalRequest(rows)
+		if err != nil {
+			return nil, err
+		}
+		approvals = append(approvals, approval)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate run approval requests: %w", err)
+	}
+	return approvals, nil
+}
+
+func (s *Store) UpdateApprovalRequestState(ctx context.Context, runID string, toolCallID string, state string, reviewedAt *time.Time, appliedAt *time.Time) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE approval_requests
+		SET state = ?, reviewed_at = ?, applied_at = ?
+		WHERE run_id = ? AND tool_call_id = ?
+	`, strings.TrimSpace(state), nullableRFC3339(reviewedAt), nullableRFC3339(appliedAt), runID, toolCallID)
+	if err != nil {
+		return fmt.Errorf("update approval request state: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read updated approval request rows: %w", err)
+	}
+	if rowsAffected == 0 {
+		return ErrApprovalRequestNotFound
+	}
+	return nil
+}
+
+func (s *Store) ResolvePendingApprovalRequestsForRun(ctx context.Context, runID string, state string, reviewedAt *time.Time) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE approval_requests
+		SET state = ?, reviewed_at = COALESCE(reviewed_at, ?)
+		WHERE run_id = ? AND state = ?
+	`, strings.TrimSpace(state), nullableRFC3339(reviewedAt), runID, ApprovalStateProposed)
+	if err != nil {
+		return fmt.Errorf("resolve pending approval requests for run: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) UpdateAgentRun(ctx context.Context, run AgentRun) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -683,6 +835,43 @@ func scanAgentExecution(scanner rowScanner) (AgentExecution, error) {
 	return execution, nil
 }
 
+func scanApprovalRequest(scanner rowScanner) (ApprovalRequest, error) {
+	var (
+		approval      ApprovalRequest
+		role          string
+		occurredAt    string
+		reviewedAt    sql.NullString
+		appliedAt     sql.NullString
+	)
+
+	if err := scanner.Scan(&approval.ID, &approval.SessionID, &approval.RunID, &approval.ToolCallID, &approval.ToolName, &role, &approval.Model, &approval.InputPreviewJSON, &approval.Message, &approval.State, &occurredAt, &reviewedAt, &appliedAt); err != nil {
+		return ApprovalRequest{}, err
+	}
+
+	parsedOccurredAt, err := time.Parse(time.RFC3339, occurredAt)
+	if err != nil {
+		return ApprovalRequest{}, fmt.Errorf("parse approval occurred_at: %w", err)
+	}
+	approval.OccurredAt = parsedOccurredAt
+	approval.Role = AgentRole(role)
+	if reviewedAt.Valid {
+		parsedReviewedAt, err := time.Parse(time.RFC3339, reviewedAt.String)
+		if err != nil {
+			return ApprovalRequest{}, fmt.Errorf("parse approval reviewed_at: %w", err)
+		}
+		approval.ReviewedAt = &parsedReviewedAt
+	}
+	if appliedAt.Valid {
+		parsedAppliedAt, err := time.Parse(time.RFC3339, appliedAt.String)
+		if err != nil {
+			return ApprovalRequest{}, fmt.Errorf("parse approval applied_at: %w", err)
+		}
+		approval.AppliedAt = &parsedAppliedAt
+	}
+
+	return approval, nil
+}
+
 func scanAgentRun(scanner rowScanner) (AgentRun, error) {
 	var (
 		run          AgentRun
@@ -731,6 +920,13 @@ func generateID(prefix string) (string, error) {
 	}
 
 	return prefix + "_" + hex.EncodeToString(buffer), nil
+}
+
+func nullableRFC3339(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return value.UTC().Format(time.RFC3339)
 }
 
 func (s *Store) updateSessionActivity(ctx context.Context, tx *sql.Tx, sessionID string, hasActivity bool) error {

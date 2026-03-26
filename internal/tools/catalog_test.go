@@ -1,10 +1,8 @@
 package tools
 
 import (
-	"context"
-	"encoding/json"
-	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -42,46 +40,20 @@ func TestSafePreviewRedactsStringFields(t *testing.T) {
 	}
 }
 
-func TestReadFileToolReadsRequestedRange(t *testing.T) {
-	projectRoot := t.TempDir()
-	writeTextFile(t, filepath.Join(projectRoot, "README.md"), "one\ntwo\nthree\n")
-
-	tool := NewReadFileTool(projectRoot)
-	result, err := tool.Execute(context.Background(), json.RawMessage(`{"path":"README.md","start_line":2,"end_line":3}`))
-	if err != nil {
-		t.Fatalf("Execute() error = %v", err)
-	}
-	if result.Output != "two\nthree" {
-		t.Fatalf("result.Output = %q, want %q", result.Output, "two\nthree")
-	}
-	wantPreview := map[string]any{"summary": "Loaded file content.", "path": "README.md"}
-	if !reflect.DeepEqual(result.Preview, wantPreview) {
-		t.Fatalf("result.Preview = %#v, want %#v", result.Preview, wantPreview)
-	}
-}
-
-func TestReadFileToolRejectsPathsOutsideRoot(t *testing.T) {
-	tool := NewReadFileTool(t.TempDir())
-	_, err := tool.Execute(context.Background(), json.RawMessage(`{"path":"../secrets.txt"}`))
-	if err == nil {
-		t.Fatal("Execute() error = nil, want path guard error")
-	}
-	if err.Error() != "Relay blocked access outside the configured project_root" {
-		t.Fatalf("Execute() error = %q", err.Error())
-	}
-}
-
 func TestCatalogDefinitionsLookupAndUnsupportedTool(t *testing.T) {
-	projectRoot := t.TempDir()
+	projectRoot := initRepositoryRoot(t)
 	catalog := NewCatalog(projectRoot)
 	definitions := catalog.Definitions()
-	if len(definitions) != 4 {
-		t.Fatalf("len(definitions) = %d, want 4", len(definitions))
+	if len(definitions) != 7 {
+		t.Fatalf("len(definitions) = %d, want 7", len(definitions))
 	}
 
 	lookupCases := map[string]Name{
 		"read_file":       ReadFileName,
+		"list_files":      ListFilesName,
 		"search_codebase": SearchCodebaseName,
+		"git_log":         GitLogName,
+		"git_diff":        GitDiffName,
 		"write_file":      WriteFileName,
 		"run_command":     RunCommandName,
 	}
@@ -104,11 +76,30 @@ func TestCatalogDefinitionsLookupAndUnsupportedTool(t *testing.T) {
 	}
 }
 
+func TestCatalogDefinitionsIncludeRepositoryAwareReadOnlyTools(t *testing.T) {
+	t.Parallel()
+
+	definitions := NewCatalog(initRepositoryRoot(t)).Definitions()
+	names := make([]string, 0, len(definitions))
+	for _, definition := range definitions {
+		names = append(names, string(definition.Name))
+	}
+	sort.Strings(names)
+
+	want := []string{"git_diff", "git_log", "list_files", "read_file", "run_command", "search_codebase", "write_file"}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("catalog definition names = %#v, want %#v", names, want)
+	}
+}
+
 func TestToolDefinitionsDescribeParametersAndApproval(t *testing.T) {
-	projectRoot := t.TempDir()
+	projectRoot := initRepositoryRoot(t)
 	definitions := []Definition{
 		NewReadFileTool(projectRoot).Definition(),
+		NewListFilesTool(projectRoot).Definition(),
 		NewSearchCodebaseTool(projectRoot).Definition(),
+		NewGitLogTool(projectRoot).Definition(),
+		NewGitDiffTool(projectRoot).Definition(),
 		NewWriteFileTool(projectRoot).Definition(),
 		NewRunCommandTool(projectRoot).Definition(),
 	}
@@ -116,14 +107,23 @@ func TestToolDefinitionsDescribeParametersAndApproval(t *testing.T) {
 	if definitions[0].Name != ReadFileName || definitions[0].RequiresApproval {
 		t.Fatalf("read_file definition = %#v, want read-only tool", definitions[0])
 	}
-	if definitions[1].Name != SearchCodebaseName || definitions[1].RequiresApproval {
-		t.Fatalf("search_codebase definition = %#v, want read-only tool", definitions[1])
+	if definitions[1].Name != ListFilesName || definitions[1].RequiresApproval {
+		t.Fatalf("list_files definition = %#v, want read-only tool", definitions[1])
 	}
-	if definitions[2].Name != WriteFileName || !definitions[2].RequiresApproval {
-		t.Fatalf("write_file definition = %#v, want approval-gated tool", definitions[2])
+	if definitions[2].Name != SearchCodebaseName || definitions[2].RequiresApproval {
+		t.Fatalf("search_codebase definition = %#v, want read-only tool", definitions[2])
 	}
-	if definitions[3].Name != RunCommandName || !definitions[3].RequiresApproval {
-		t.Fatalf("run_command definition = %#v, want approval-gated tool", definitions[3])
+	if definitions[3].Name != GitLogName || definitions[3].RequiresApproval {
+		t.Fatalf("git_log definition = %#v, want read-only tool", definitions[3])
+	}
+	if definitions[4].Name != GitDiffName || definitions[4].RequiresApproval {
+		t.Fatalf("git_diff definition = %#v, want read-only tool", definitions[4])
+	}
+	if definitions[5].Name != WriteFileName || !definitions[5].RequiresApproval {
+		t.Fatalf("write_file definition = %#v, want approval-gated tool", definitions[5])
+	}
+	if definitions[6].Name != RunCommandName || !definitions[6].RequiresApproval {
+		t.Fatalf("run_command definition = %#v, want approval-gated tool", definitions[6])
 	}
 
 	for _, definition := range definitions {

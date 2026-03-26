@@ -114,6 +114,47 @@ textarea {
   box-shadow: 0 0 0 1px var(--color-error);
 }
 
+.approval-diff-shell {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 1.25rem;
+  background: linear-gradient(180deg, var(--color-raised), var(--color-surface));
+}
+
+.approval-monaco-diff {
+  min-height: 28rem;
+}
+
+.approval-diff-fallback {
+  position: absolute;
+  inset: 0;
+  padding: 1rem;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-raised) 96%, transparent), color-mix(in srgb, var(--color-surface) 98%, transparent));
+}
+
+.approval-diff-fallback[data-status="loading"] {
+  backdrop-filter: blur(4px);
+}
+
+@media (max-width: 640px) {
+  .approval-monaco-diff {
+    min-height: 22rem;
+  }
+}
+
+@media (forced-colors: active) {
+  .approval-diff-shell {
+    border-color: ButtonBorder;
+    background: Canvas;
+  }
+
+  .approval-diff-fallback {
+    background: Canvas;
+  }
+}
+
 .state-glow-clarification {
   box-shadow: 0 0 0 1px var(--color-brand-mid), 0 0 0 3px color-mix(in srgb, var(--color-error) 24%, transparent);
 }
@@ -429,6 +470,13 @@ textarea {
   background: color-mix(in srgb, var(--color-raised) 84%, transparent);
   padding: 1rem;
   overflow-wrap: anywhere;
+}
+
+.approval-review-actions,
+.repository-browser-actions,
+.repository-browser-entry,
+.repository-browser-meta {
+  min-width: 0;
 }
 
 .agent-canvas-detail-panel,
@@ -793,6 +841,20 @@ textarea {
 
   .agent-canvas-detail-panel {
     padding: 1rem;
+  }
+
+  .approval-review-actions,
+  .repository-browser-actions {
+    width: 100%;
+  }
+
+  .approval-review-actions > button,
+  .repository-browser-actions > button {
+    flex: 1 1 100%;
+  }
+
+  .repository-browser-entry {
+    align-items: stretch;
   }
 
   .workspace-grid > aside,

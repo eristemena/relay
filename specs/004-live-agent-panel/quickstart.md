@@ -1,5 +1,9 @@
 # Quickstart: Live Agent Panel
 
+## Historical Note
+
+This phase introduced the original live execution drawer panel. In the current product, that dedicated panel has been removed; task submission remains in the command bar, while live and replayed inspection happens through canvas node detail, saved runs, and approval review surfaces.
+
 ## Prerequisites
 
 - Go 1.26
@@ -65,7 +69,7 @@ make dev
 Expected behavior:
 
 - The existing local workspace still boots through Relay.
-- The thought viewer loads in the workspace shell and starts in an explicit empty state.
+- Live and replayed execution details are inspected through the canvas, saved runs, and approval review surfaces rather than a dedicated drawer panel.
 - The command bar is available once the WebSocket bootstrap completes.
 
 ## Running Relay Manually

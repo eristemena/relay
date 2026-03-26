@@ -3,9 +3,11 @@ import {
   addSpawnedNode,
   createEmptyCanvasDocument,
   patchApprovalRequest,
+  patchApprovalStateChanged,
   patchAgentState,
   patchHandoff,
   patchRunComplete,
+  patchToolCall,
   patchToolResult,
 } from "@/features/canvas/canvasModel";
 
@@ -196,5 +198,98 @@ describe("canvasModel", () => {
 
     expect(resumed.nodes[0]?.state).toBe("thinking");
     expect(resumed.nodes[0]?.details.summary).toBe("Wrote file content.");
+  });
+
+  it("derives read paths and proposed change approval outcomes from tool activity", () => {
+    let document = createEmptyCanvasDocument();
+
+    document = addSpawnedNode(document, {
+      agent_id: "agent_coder_2",
+      label: "Coder",
+      model: "anthropic/claude-sonnet-4-5",
+      occurred_at: "2026-03-24T12:00:00Z",
+      replay: false,
+      role: "coder",
+      run_id: "run_1",
+      sequence: 1,
+      session_id: "session_alpha",
+      spawn_order: 2,
+    });
+
+    document = patchToolCall(document, {
+      session_id: "session_alpha",
+      run_id: "run_1",
+      sequence: 2,
+      replay: false,
+      role: "coder",
+      model: "anthropic/claude-sonnet-4-5",
+      tool_call_id: "call_read",
+      tool_name: "read_file",
+      input_preview: { path: "internal/agents/coder.go" },
+      occurred_at: "2026-03-24T12:00:01Z",
+    });
+
+    document = patchApprovalRequest(document, {
+      session_id: "session_alpha",
+      run_id: "run_1",
+      role: "coder",
+      model: "anthropic/claude-sonnet-4-5",
+      tool_call_id: "call_write",
+      tool_name: "write_file",
+      request_kind: "file_write",
+      status: "proposed",
+      repository_root: "/tmp/project",
+      input_preview: {
+        path: "web/src/features/canvas/canvasModel.ts",
+        diff_preview: { target_path: "web/src/features/canvas/canvasModel.ts" },
+      },
+      diff_preview: {
+        target_path: "web/src/features/canvas/canvasModel.ts",
+        original_content: "before",
+        proposed_content: "after",
+        base_content_hash: "sha256:abc",
+      },
+      message: "Relay needs approval before it can write files.",
+      occurred_at: "2026-03-24T12:00:02Z",
+    });
+
+    document = patchApprovalStateChanged(document, {
+      session_id: "session_alpha",
+      run_id: "run_1",
+      role: "coder",
+      model: "anthropic/claude-sonnet-4-5",
+      tool_call_id: "call_write",
+      tool_name: "write_file",
+      status: "approved",
+      message: "Tool approved. Relay is resuming the run.",
+      occurred_at: "2026-03-24T12:00:03Z",
+      sequence: 4,
+      replay: false,
+    });
+
+    document = patchToolResult(document, {
+      session_id: "session_alpha",
+      run_id: "run_1",
+      sequence: 5,
+      replay: false,
+      role: "coder",
+      model: "anthropic/claude-sonnet-4-5",
+      tool_call_id: "call_write",
+      tool_name: "write_file",
+      status: "completed",
+      result_preview: { summary: "Wrote file content." },
+      occurred_at: "2026-03-24T12:00:04Z",
+    });
+
+    expect(document.nodes[0]?.details.readPaths).toEqual([
+      "internal/agents/coder.go",
+    ]);
+    expect(document.nodes[0]?.details.proposedChanges).toEqual([
+      {
+        path: "web/src/features/canvas/canvasModel.ts",
+        toolCallId: "call_write",
+        approvalState: "applied",
+      },
+    ]);
   });
 });

@@ -63,7 +63,12 @@ func (s *Service) OpenRun(ctx context.Context, input OpenRunInput, emit func(Str
 		if err := s.finishReplay(run.ID, subscriberID, maxSequence); err != nil {
 			return WorkspaceSnapshot{}, err
 		}
-		if payload := s.pendingApprovalPayload(run.ID); payload != nil {
+		payloads, err := s.pendingApprovalPayloads(ctx, run.ID)
+		if err != nil {
+			s.detachRunSubscriber(run.ID, subscriberID)
+			return WorkspaceSnapshot{}, fmt.Errorf("load pending approvals: %w", err)
+		}
+		for _, payload := range payloads {
 			if err := emit(StreamEnvelope{Type: "approval_request", Payload: payload}); err != nil {
 				s.detachRunSubscriber(run.ID, subscriberID)
 				return WorkspaceSnapshot{}, err

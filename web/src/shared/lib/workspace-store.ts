@@ -2,10 +2,15 @@
 
 import { useSyncExternalStore } from "react";
 import {
+  emptyRepositoryGraph,
+  type RepositoryGraphSnapshot,
+} from "@/features/codebase/graphModel";
+import {
   addSpawnedNode,
   clearCanvasSelection,
   createEmptyCanvasDocument,
   patchApprovalRequest,
+  patchApprovalStateChanged,
   patchAgentError,
   patchAgentState,
   patchAgentToken,
@@ -19,15 +24,21 @@ import {
   type AgentCanvasDocument,
 } from "@/features/canvas/canvasModel";
 import type {
+  ApprovalStateChangedPayload,
   ApprovalRequestPayload,
   AgentSpawnedPayload,
   AgentStateChangedPayload,
   AgentRunSummary,
+  ConnectedRepositoryView,
   ConnectionMessageType,
   Envelope,
   ErrorPayload,
   HandoffPayload,
   PreferencesView,
+  RepositoryBrowseResultPayload,
+  RepositoryDirectoryPayload,
+  RepositoryGraphStatusPayload,
+  RealtimeRunMessage,
   RunEventPayload,
   RunCompletePayload,
   SessionSummary,
@@ -54,6 +65,9 @@ export interface WorkspaceState {
   runTranscripts: Record<string, string>;
   orchestrationDocuments: Record<string, AgentCanvasDocument>;
   pendingApprovals: Record<string, PendingApproval>;
+  connectedRepository: ConnectedRepositoryView;
+  repositoryGraph: RepositoryGraphSnapshot;
+  repositoryBrowser: RepositoryBrowserState;
   preferences: PreferencesView;
   uiState: WorkspaceUIState;
   status: WorkspaceStatusPayload | null;
@@ -61,12 +75,40 @@ export interface WorkspaceState {
   warnings: string[];
 }
 
+export interface RepositoryBrowserDirectory {
+  name: string;
+  path: string;
+  isGitRepository: boolean;
+}
+
+export interface RepositoryBrowserState {
+  path: string;
+  directories: RepositoryBrowserDirectory[];
+  isLoading: boolean;
+  showHidden: boolean;
+  errorMessage: string;
+}
+
 export interface PendingApproval {
   sessionId: string;
   runId: string;
   toolCallId: string;
   toolName: string;
+  requestKind?: "file_write" | "command";
+  status?: "proposed";
+  repositoryRoot?: string;
   inputPreview: Record<string, unknown>;
+  diffPreview?: {
+    targetPath: string;
+    originalContent: string;
+    proposedContent: string;
+    baseContentHash: string;
+  };
+  commandPreview?: {
+    command: string;
+    args: string[];
+    effectiveDir: string;
+  };
   message: string;
   occurredAt: string;
 }
@@ -87,6 +129,7 @@ export interface StoredRunEvent {
     | "agent_error"
     | "run_complete"
     | "run_error"
+    | "approval_state_changed"
     | "error"
   >;
   payload: RunEventPayload;
@@ -133,6 +176,15 @@ const defaultState: WorkspaceState = {
   runTranscripts: {},
   orchestrationDocuments: {},
   pendingApprovals: {},
+  connectedRepository: deriveConnectedRepositoryView(defaultPreferences),
+  repositoryGraph: { ...emptyRepositoryGraph },
+  repositoryBrowser: {
+    path: "",
+    directories: [],
+    isLoading: false,
+    showHidden: false,
+    errorMessage: "",
+  },
   preferences: defaultPreferences,
   uiState: defaultUIState,
   status: { phase: "startup", message: "Connecting to the Relay workspace." },
@@ -202,6 +254,9 @@ class WorkspaceStore {
 
   applySnapshot = (payload: WorkspaceSnapshotPayload) => {
     const nextRunSummaries = dedupeRunSummaries(payload.run_summaries ?? []);
+    const nextPendingApprovals = buildPendingApprovalMap(
+      payload.pending_approvals ?? [],
+    );
     const selectedRunId =
       this.state.selectedRunId &&
       nextRunSummaries.some((run) => run.id === this.state.selectedRunId)
@@ -210,6 +265,13 @@ class WorkspaceStore {
             this.state.runEvents[this.state.selectedRunId]
           ? this.state.selectedRunId
           : (payload.active_run_id ?? nextRunSummaries[0]?.id ?? "");
+
+    const nextConnectedRepository =
+      payload.connected_repository ??
+      deriveConnectedRepositoryView(payload.preferences);
+    const repositoryChanged =
+      nextConnectedRepository.path !== this.state.connectedRepository.path ||
+      nextConnectedRepository.status !== this.state.connectedRepository.status;
 
     this.state = {
       ...this.state,
@@ -221,7 +283,19 @@ class WorkspaceStore {
       runSummaries: nextRunSummaries,
       runTranscripts: this.state.runTranscripts,
       orchestrationDocuments: this.state.orchestrationDocuments,
-      pendingApprovals: {},
+      pendingApprovals: nextPendingApprovals,
+      connectedRepository: nextConnectedRepository,
+      repositoryGraph: repositoryChanged
+        ? graphSnapshotFromRepository(nextConnectedRepository)
+        : this.state.repositoryGraph,
+      repositoryBrowser:
+        payload.preferences.project_root &&
+        payload.preferences.project_root !== this.state.repositoryBrowser.path
+          ? {
+              ...this.state.repositoryBrowser,
+              errorMessage: "",
+            }
+          : this.state.repositoryBrowser,
       preferences: payload.preferences,
       uiState: payload.ui_state,
       status: null,
@@ -252,6 +326,14 @@ class WorkspaceStore {
       error: payload,
       runEvents: nextRunEvents,
       pendingApprovals: nextPendingApprovals,
+      repositoryBrowser:
+        payload.code === "repository_browse_failed"
+          ? {
+              ...this.state.repositoryBrowser,
+              isLoading: false,
+              errorMessage: payload.message,
+            }
+          : this.state.repositoryBrowser,
       selectedRunId: payload.run_id ?? this.state.selectedRunId,
       status: null,
       uiState: {
@@ -296,6 +378,9 @@ class WorkspaceStore {
     if (message.type === "tool_result" && "tool_call_id" in payload) {
       delete nextPendingApprovals[payload.tool_call_id as string];
     }
+    if (message.type === "approval_state_changed" && "tool_call_id" in payload) {
+      delete nextPendingApprovals[payload.tool_call_id as string];
+    }
     if (message.type === "complete" || message.type === "error") {
       for (const [toolCallId, approval] of Object.entries(
         nextPendingApprovals,
@@ -335,10 +420,7 @@ class WorkspaceStore {
         message.type === "error" || message.type === "run_error"
           ? (payload as ErrorPayload)
           : this.state.error,
-      status:
-        message.type === "token"
-          ? { phase: "streaming", message: "Relay is streaming agent output." }
-          : this.state.status,
+      status: nextWorkspaceStatus(this.state.status, message),
     };
     this.emit();
   };
@@ -362,6 +444,19 @@ class WorkspaceStore {
         return;
       case "approval_request":
         this.setPendingApproval(message.payload as ApprovalRequestPayload);
+        return;
+      case "approval_state_changed":
+        this.appendRunEvent(message as Envelope<RunEventPayload>);
+        return;
+      case "repository.browse.result":
+        this.setRepositoryBrowseResult(
+          message.payload as RepositoryBrowseResultPayload,
+        );
+        return;
+      case "repository_graph_status":
+        this.setRepositoryGraphStatus(
+          message.payload as RepositoryGraphStatusPayload,
+        );
         return;
       case "state_change":
       case "token":
@@ -398,7 +493,25 @@ class WorkspaceStore {
         runId: payload.run_id,
         toolCallId: payload.tool_call_id,
         toolName: payload.tool_name,
+        requestKind: payload.request_kind,
+        status: payload.status,
+        repositoryRoot: payload.repository_root,
         inputPreview: payload.input_preview,
+        diffPreview: payload.diff_preview
+          ? {
+              targetPath: payload.diff_preview.target_path,
+              originalContent: payload.diff_preview.original_content,
+              proposedContent: payload.diff_preview.proposed_content,
+              baseContentHash: payload.diff_preview.base_content_hash,
+            }
+          : undefined,
+        commandPreview: payload.command_preview
+          ? {
+              command: payload.command_preview.command,
+              args: payload.command_preview.args,
+              effectiveDir: payload.command_preview.effective_dir,
+            }
+          : undefined,
         message: payload.message,
         occurredAt: payload.occurred_at,
       },
@@ -428,6 +541,75 @@ class WorkspaceStore {
     };
     this.emit();
   };
+
+  startRepositoryBrowse = (path: string, showHidden: boolean) => {
+    this.state = {
+      ...this.state,
+      repositoryBrowser: {
+        ...this.state.repositoryBrowser,
+        path,
+        showHidden,
+        isLoading: true,
+        errorMessage: "",
+      },
+      status: {
+        phase: "repository-browse",
+        message: "Browsing local folders for a repository.",
+      },
+    };
+    this.emit();
+  };
+
+  private setRepositoryBrowseResult(payload: RepositoryBrowseResultPayload) {
+    this.state = {
+      ...this.state,
+      repositoryBrowser: {
+        path: payload.path,
+        directories: payload.directories.map(mapRepositoryDirectory),
+        isLoading: false,
+        showHidden: this.state.repositoryBrowser.showHidden,
+        errorMessage: "",
+      },
+      status: null,
+      error:
+        this.state.error?.code === "repository_browse_failed"
+          ? null
+          : this.state.error,
+    };
+    this.emit();
+  }
+
+  private setRepositoryGraphStatus(payload: RepositoryGraphStatusPayload) {
+    this.state = {
+      ...this.state,
+      repositoryGraph: {
+        ...this.state.repositoryGraph,
+        status: payload.status,
+        errorMessage: payload.status === "error" ? payload.message : undefined,
+        nodes:
+          payload.status === "ready"
+            ? (payload.nodes ?? []).map((node) => ({
+                id: node.id,
+                label: node.label,
+                kind: node.kind,
+              }))
+            : payload.status === "idle" || payload.status === "loading"
+              ? []
+              : this.state.repositoryGraph.nodes,
+        edges:
+          payload.status === "ready"
+            ? (payload.edges ?? []).map((edge) => ({
+                id: edge.id,
+                source: edge.source,
+                target: edge.target,
+              }))
+            : payload.status === "idle" || payload.status === "loading"
+              ? []
+              : this.state.repositoryGraph.edges,
+      },
+    };
+    this.emit();
+  }
 
   private emit() {
     for (const listener of this.listeners) {
@@ -549,9 +731,16 @@ export function clearWorkspaceCanvasSelection(runId: string) {
   workspaceStore.clearCanvasSelection(runId);
 }
 
+export function startWorkspaceRepositoryBrowse(
+  path: string,
+  showHidden: boolean,
+) {
+  workspaceStore.startRepositoryBrowse(path, showHidden);
+}
+
 function syncRunSummaries(
   runSummaries: AgentRunSummary[],
-  message: Envelope<RunEventPayload> | Envelope<ApprovalRequestPayload>,
+  message: RealtimeRunMessage,
 ) {
   const payload = message.payload;
   if (!("run_id" in payload) || typeof payload.run_id !== "string") {
@@ -589,6 +778,21 @@ function syncRunSummaries(
   if (message.type === "approval_request") {
     nextSummary.has_tool_activity = true;
     nextSummary.state = "approval_required";
+  }
+  if (message.type === "approval_state_changed") {
+    nextSummary.has_tool_activity = true;
+    const approvalPayload = payload as ApprovalStateChangedPayload;
+    if (approvalPayload.status === "approved") {
+      nextSummary.state = "tool_running";
+    }
+    if (
+      approvalPayload.status === "applied" ||
+      approvalPayload.status === "rejected" ||
+      approvalPayload.status === "blocked" ||
+      approvalPayload.status === "expired"
+    ) {
+      nextSummary.state = "thinking";
+    }
   }
   if (message.type === "complete") {
     nextSummary.state = "completed";
@@ -640,7 +844,7 @@ function dedupeRunSummaries(runSummaries: AgentRunSummary[]) {
 function syncOrchestrationDocuments(
   documents: Record<string, AgentCanvasDocument>,
   runId: string,
-  message: Envelope<RunEventPayload>,
+  message: RealtimeRunMessage,
 ) {
   const current = documents[runId] ?? createEmptyCanvasDocument();
   let next = current;
@@ -664,6 +868,11 @@ function syncOrchestrationDocuments(
         message.payload as ApprovalRequestPayload,
       );
       break;
+    case "approval_state_changed": {
+      const payload = message.payload as ApprovalStateChangedPayload;
+      next = patchApprovalStateChanged(current, payload);
+      break;
+    }
     case "tool_call":
       next = patchToolCall(current, message.payload as ToolCallPayload);
       break;
@@ -704,4 +913,109 @@ function syncOrchestrationDocuments(
     ...documents,
     [runId]: next,
   };
+}
+
+function buildPendingApprovalMap(approvals: ApprovalRequestPayload[]) {
+  return approvals.reduce<Record<string, PendingApproval>>(
+    (pending, approval) => {
+      pending[approval.tool_call_id] = {
+        sessionId: approval.session_id,
+        runId: approval.run_id,
+        toolCallId: approval.tool_call_id,
+        toolName: approval.tool_name,
+        requestKind: approval.request_kind,
+        status: approval.status,
+        repositoryRoot: approval.repository_root,
+        inputPreview: approval.input_preview,
+        diffPreview: approval.diff_preview
+          ? {
+              targetPath: approval.diff_preview.target_path,
+              originalContent: approval.diff_preview.original_content,
+              proposedContent: approval.diff_preview.proposed_content,
+              baseContentHash: approval.diff_preview.base_content_hash,
+            }
+          : undefined,
+        commandPreview: approval.command_preview
+          ? {
+              command: approval.command_preview.command,
+              args: approval.command_preview.args,
+              effectiveDir: approval.command_preview.effective_dir,
+            }
+          : undefined,
+        message: approval.message,
+        occurredAt: approval.occurred_at,
+      };
+      return pending;
+    },
+    {},
+  );
+}
+
+function mapRepositoryDirectory(
+  directory: RepositoryDirectoryPayload,
+): RepositoryBrowserDirectory {
+  return {
+    name: directory.name,
+    path: directory.path,
+    isGitRepository: directory.is_git_repository,
+  };
+}
+
+function graphSnapshotFromRepository(
+  repository: ConnectedRepositoryView,
+): RepositoryGraphSnapshot {
+  switch (repository.status) {
+    case "connected":
+      return { ...emptyRepositoryGraph, status: "loading" };
+    case "invalid":
+      return {
+        ...emptyRepositoryGraph,
+        status: "error",
+        errorMessage: repository.message,
+      };
+    default:
+      return emptyRepositoryGraph;
+  }
+}
+
+function deriveConnectedRepositoryView(
+  preferences: PreferencesView,
+): ConnectedRepositoryView {
+  if (preferences.project_root_valid && preferences.project_root) {
+    return {
+      path: preferences.project_root,
+      status: "connected",
+      message: "Repository-aware reads stay inside this local Git worktree.",
+    };
+  }
+
+  if (preferences.project_root_configured) {
+    return {
+      path: preferences.project_root,
+      status: "invalid",
+      message:
+        preferences.project_root_message ||
+        "Relay could not use the saved project root. Choose a valid local Git repository.",
+    };
+  }
+
+  return {
+    path: "",
+    status: "not_configured",
+    message: "Choose a local Git repository to enable repository-aware tools.",
+  };
+}
+
+function nextWorkspaceStatus(
+  current: WorkspaceStatusPayload | null,
+  message: Envelope<RunEventPayload>,
+) {
+  if (message.type === "token") {
+    return { phase: "streaming", message: "Relay is streaming agent output." };
+  }
+  if (message.type === "approval_state_changed") {
+    const payload = message.payload as ApprovalStateChangedPayload;
+    return { phase: `approval-${payload.status}`, message: payload.message };
+  }
+  return current;
 }

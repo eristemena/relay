@@ -327,11 +327,93 @@ func TestStore_ReturnsNotFoundErrorsForMissingRows(t *testing.T) {
 	if _, err := store.GetAgentRun(ctx, "run_missing"); !errors.Is(err, ErrRunNotFound) {
 		t.Fatalf("GetAgentRun() error = %v, want ErrRunNotFound", err)
 	}
+	if _, err := store.GetApprovalRequest(ctx, "run_missing", "tool_missing"); !errors.Is(err, ErrApprovalRequestNotFound) {
+		t.Fatalf("GetApprovalRequest() error = %v, want ErrApprovalRequestNotFound", err)
+	}
 	if err := store.UpdateAgentRun(ctx, AgentRun{ID: "run_missing", State: RunStateCompleted}); !errors.Is(err, ErrRunNotFound) {
 		t.Fatalf("UpdateAgentRun() error = %v, want ErrRunNotFound", err)
 	}
+	if err := store.UpdateApprovalRequestState(ctx, "run_missing", "tool_missing", ApprovalStateRejected, nil, nil); !errors.Is(err, ErrApprovalRequestNotFound) {
+		t.Fatalf("UpdateApprovalRequestState() error = %v, want ErrApprovalRequestNotFound", err)
+	}
 	if err := store.UpdateAgentExecution(ctx, AgentExecution{ID: "agent_missing", State: AgentExecutionStateCompleted}); !errors.Is(err, ErrRunNotFound) {
 		t.Fatalf("UpdateAgentExecution() error = %v, want ErrRunNotFound", err)
+	}
+}
+
+func TestStore_CreateAndResolveApprovalRequests(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	session, err := store.CreateSession(ctx, "Approval persistence")
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	run, err := store.CreateAgentRun(ctx, session.ID, "Persist approval state", RoleCoder, "coder-model")
+	if err != nil {
+		t.Fatalf("CreateAgentRun() error = %v", err)
+	}
+	occurredAt := time.Now().UTC().Add(-time.Minute)
+	approval, err := store.CreateApprovalRequest(ctx, ApprovalRequest{
+		SessionID:        session.ID,
+		RunID:            run.ID,
+		ToolCallID:       "call_1",
+		ToolName:         "write_file",
+		Role:             RoleCoder,
+		Model:            "coder-model",
+		InputPreviewJSON: `{"path":"README.md"}`,
+		Message:          "Approve the write.",
+		State:            ApprovalStateProposed,
+		OccurredAt:       occurredAt,
+	})
+	if err != nil {
+		t.Fatalf("CreateApprovalRequest() error = %v", err)
+	}
+	loaded, err := store.GetApprovalRequest(ctx, run.ID, "call_1")
+	if err != nil {
+		t.Fatalf("GetApprovalRequest() error = %v", err)
+	}
+	if loaded.ID != approval.ID || loaded.State != ApprovalStateProposed {
+		t.Fatalf("loaded approval = %#v, want persisted proposed approval", loaded)
+	}
+	pending, err := store.ListPendingApprovalRequests(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("ListPendingApprovalRequests() error = %v", err)
+	}
+	if len(pending) != 1 || pending[0].ToolCallID != "call_1" {
+		t.Fatalf("pending approvals = %#v, want one approval", pending)
+	}
+	reviewedAt := time.Now().UTC()
+	if err := store.UpdateApprovalRequestState(ctx, run.ID, "call_1", ApprovalStateApproved, &reviewedAt, nil); err != nil {
+		t.Fatalf("UpdateApprovalRequestState(approved) error = %v", err)
+	}
+	appliedAt := reviewedAt.Add(time.Second)
+	if err := store.UpdateApprovalRequestState(ctx, run.ID, "call_1", ApprovalStateApplied, &reviewedAt, &appliedAt); err != nil {
+		t.Fatalf("UpdateApprovalRequestState(applied) error = %v", err)
+	}
+	resolved, err := store.GetApprovalRequest(ctx, run.ID, "call_1")
+	if err != nil {
+		t.Fatalf("GetApprovalRequest() resolved error = %v", err)
+	}
+	if resolved.State != ApprovalStateApplied {
+		t.Fatalf("resolved.State = %q, want %q", resolved.State, ApprovalStateApplied)
+	}
+	if resolved.AppliedAt == nil || resolved.AppliedAt.Format(time.RFC3339) != appliedAt.Format(time.RFC3339) {
+		t.Fatalf("resolved.AppliedAt = %#v, want %v", resolved.AppliedAt, appliedAt)
+	}
+	if err := store.ResolvePendingApprovalRequestsForRun(ctx, run.ID, ApprovalStateExpired, &reviewedAt); err != nil {
+		t.Fatalf("ResolvePendingApprovalRequestsForRun() error = %v", err)
+	}
+	remaining, err := store.ListPendingApprovalRequestsForRun(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("ListPendingApprovalRequestsForRun() error = %v", err)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("remaining approvals = %#v, want none", remaining)
 	}
 }
 

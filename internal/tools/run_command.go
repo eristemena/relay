@@ -21,6 +21,8 @@ func NewRunCommandTool(projectRoot string) *RunCommandTool {
 	return &RunCommandTool{projectRoot: strings.TrimSpace(projectRoot)}
 }
 
+const RequestKindCommand = "command"
+
 func (t *RunCommandTool) Definition() Definition {
 	return Definition{
 		Name:             RunCommandName,
@@ -30,12 +32,36 @@ func (t *RunCommandTool) Definition() Definition {
 	}
 }
 
+func BuildRunCommandPreview(projectRoot string, input RunCommandInput) (map[string]any, error) {
+	resolvedRoot, err := resolveWithinRoot(projectRoot, ".")
+	if err != nil {
+		return nil, err
+	}
+	commandName := strings.TrimSpace(input.Command)
+	if commandName == "" {
+		return nil, fmt.Errorf("command is required")
+	}
+	args := append([]string(nil), input.Args...)
+	return map[string]any{
+		"command":         commandName,
+		"args":            args,
+		"request_kind":    RequestKindCommand,
+		"repository_root": resolvedRoot,
+		"command_preview": map[string]any{
+			"command":       commandName,
+			"args":          args,
+			"effective_dir": resolvedRoot,
+		},
+	}, nil
+}
+
 func (t *RunCommandTool) Execute(ctx context.Context, arguments json.RawMessage) (Result, error) {
 	var input RunCommandInput
 	if err := json.Unmarshal(arguments, &input); err != nil {
 		return Result{}, fmt.Errorf("decode run_command arguments: %w", err)
 	}
-	if _, err := resolveWithinRoot(t.projectRoot, "."); err != nil {
+	resolvedRoot, err := resolveWithinRoot(t.projectRoot, ".")
+	if err != nil {
 		return Result{}, err
 	}
 	if strings.TrimSpace(input.Command) == "" {
@@ -43,7 +69,7 @@ func (t *RunCommandTool) Execute(ctx context.Context, arguments json.RawMessage)
 	}
 
 	command := exec.CommandContext(ctx, input.Command, input.Args...)
-	command.Dir = t.projectRoot
+	command.Dir = resolvedRoot
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return Result{}, fmt.Errorf("run command: %w", err)

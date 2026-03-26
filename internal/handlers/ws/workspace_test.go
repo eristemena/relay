@@ -49,6 +49,20 @@ func TestHandlerServeHTTP_BootstrapSendsSnapshotAndRuntimeEvents(t *testing.T) {
 	if bootstrap.Payload.ActiveSessionID != "session_alpha" {
 		t.Fatalf("bootstrap.Payload.ActiveSessionID = %q, want session_alpha", bootstrap.Payload.ActiveSessionID)
 	}
+	if bootstrap.Payload.ConnectedRepository.Status != "connected" {
+		t.Fatalf("bootstrap.Payload.ConnectedRepository.Status = %q, want connected", bootstrap.Payload.ConnectedRepository.Status)
+	}
+
+	var graphStatus OutboundEnvelope[RepositoryGraphStatusPayload]
+	if err := wsjson.Read(ctx, conn, &graphStatus); err != nil {
+		t.Fatalf("read repository graph status error = %v", err)
+	}
+	if graphStatus.Type != TypeRepositoryGraphStatus {
+		t.Fatalf("graphStatus.Type = %q, want %q", graphStatus.Type, TypeRepositoryGraphStatus)
+	}
+	if graphStatus.Payload.Status != "loading" {
+		t.Fatalf("graphStatus.Payload.Status = %q, want loading", graphStatus.Payload.Status)
+	}
 
 	var status OutboundEnvelope[WorkspaceStatusPayload]
 	if err := wsjson.Read(ctx, conn, &status); err != nil {
@@ -76,6 +90,14 @@ func TestHandlerHandleMessage_RoutesServiceActionsAndMapsErrors(t *testing.T) {
 		openRunSnapshot:     sampleWorkspaceSnapshot(),
 		cancelSnapshot:      sampleWorkspaceSnapshot(),
 		approvalSnapshot:    sampleWorkspaceSnapshot(),
+		repositoryBrowseResult: workspaceorchestrator.RepositoryBrowseResult{
+			Path: "/tmp/repos",
+			Directories: []workspaceorchestrator.RepositoryDirectory{{
+				Name:            "relay",
+				Path:            "/tmp/repos/relay",
+				IsGitRepository: true,
+			}},
+		},
 	}
 	handler := NewHandler(service, nil, slog.Default())
 
@@ -92,7 +114,7 @@ func TestHandlerHandleMessage_RoutesServiceActionsAndMapsErrors(t *testing.T) {
 		if service.createDisplayName != "New session" {
 			t.Fatalf("service.createDisplayName = %q, want New session", service.createDisplayName)
 		}
-		assertWriteType(t, calls, TypeSessionCreated)
+		assertWriteTypes(t, calls, TypeSessionCreated, TypeRepositoryGraphStatus)
 	})
 
 	t.Run("session open not found", func(t *testing.T) {
@@ -141,11 +163,11 @@ func TestHandlerHandleMessage_RoutesServiceActionsAndMapsErrors(t *testing.T) {
 		if service.preferencesInput.ProjectRoot == nil || *service.preferencesInput.ProjectRoot != "/tmp/project" {
 			t.Fatalf("preferences project root = %#v, want /tmp/project", service.preferencesInput.ProjectRoot)
 		}
-		if len(calls) != 2 {
-			t.Fatalf("len(calls) = %d, want 2", len(calls))
+		if len(calls) != 3 {
+			t.Fatalf("len(calls) = %d, want 3", len(calls))
 		}
-		if calls[0].messageType != TypeWorkspaceStatus || calls[1].messageType != TypePreferencesSaved {
-			t.Fatalf("message types = [%q, %q], want workspace.status/preferences.saved", calls[0].messageType, calls[1].messageType)
+		if calls[0].messageType != TypeWorkspaceStatus || calls[1].messageType != TypePreferencesSaved || calls[2].messageType != TypeRepositoryGraphStatus {
+			t.Fatalf("message types = [%q, %q, %q], want workspace.status/preferences.saved/repository_graph_status", calls[0].messageType, calls[1].messageType, calls[2].messageType)
 		}
 	})
 
@@ -153,14 +175,14 @@ func TestHandlerHandleMessage_RoutesServiceActionsAndMapsErrors(t *testing.T) {
 		cases := []struct {
 			name        string
 			envelope    Envelope
-			wantType    string
+			wantTypes   []string
 			configure   func()
 			assertAfter func(t *testing.T)
 		}{
 			{
 				name:      "submit failure maps to error payload",
 				envelope:  Envelope{Type: TypeAgentRunSubmit, RequestID: "req_submit", Payload: mustMarshalJSON(t, AgentRunSubmitPayload{SessionID: "session_alpha", Task: "Inspect"})},
-				wantType:  TypeError,
+				wantTypes: []string{TypeError},
 				configure: func() { service.submitErr = errors.New("submit failed") },
 				assertAfter: func(t *testing.T) {
 					if service.submitInput.Task != "Inspect" {
@@ -170,9 +192,9 @@ func TestHandlerHandleMessage_RoutesServiceActionsAndMapsErrors(t *testing.T) {
 				},
 			},
 			{
-				name:     "open run success",
-				envelope: Envelope{Type: TypeAgentRunOpen, RequestID: "req_open_run", Payload: mustMarshalJSON(t, AgentRunOpenPayload{SessionID: "session_alpha", RunID: "run_1"})},
-				wantType: TypeWorkspaceBootstrap,
+				name:      "open run success",
+				envelope:  Envelope{Type: TypeAgentRunOpen, RequestID: "req_open_run", Payload: mustMarshalJSON(t, AgentRunOpenPayload{SessionID: "session_alpha", RunID: "run_1"})},
+				wantTypes: []string{TypeWorkspaceBootstrap, TypeRepositoryGraphStatus},
 				assertAfter: func(t *testing.T) {
 					if service.openRunInput.RunID != "run_1" {
 						t.Fatalf("service.openRunInput.RunID = %q, want run_1", service.openRunInput.RunID)
@@ -180,9 +202,9 @@ func TestHandlerHandleMessage_RoutesServiceActionsAndMapsErrors(t *testing.T) {
 				},
 			},
 			{
-				name:     "cancel run success",
-				envelope: Envelope{Type: TypeAgentRunCancel, RequestID: "req_cancel", Payload: mustMarshalJSON(t, AgentRunCancelPayload{SessionID: "session_alpha", RunID: "run_2"})},
-				wantType: TypeWorkspaceBootstrap,
+				name:      "cancel run success",
+				envelope:  Envelope{Type: TypeAgentRunCancel, RequestID: "req_cancel", Payload: mustMarshalJSON(t, AgentRunCancelPayload{SessionID: "session_alpha", RunID: "run_2"})},
+				wantTypes: []string{TypeWorkspaceBootstrap, TypeRepositoryGraphStatus},
 				assertAfter: func(t *testing.T) {
 					if service.cancelInput.RunID != "run_2" {
 						t.Fatalf("service.cancelInput.RunID = %q, want run_2", service.cancelInput.RunID)
@@ -190,9 +212,9 @@ func TestHandlerHandleMessage_RoutesServiceActionsAndMapsErrors(t *testing.T) {
 				},
 			},
 			{
-				name:     "approval respond success",
-				envelope: Envelope{Type: TypeAgentRunApprovalRespond, RequestID: "req_approval", Payload: mustMarshalJSON(t, AgentRunApprovalRespondPayload{SessionID: "session_alpha", RunID: "run_3", ToolCallID: "tool_1", Decision: "approve"})},
-				wantType: TypeWorkspaceBootstrap,
+				name:      "approval respond success",
+				envelope:  Envelope{Type: TypeAgentRunApprovalRespond, RequestID: "req_approval", Payload: mustMarshalJSON(t, AgentRunApprovalRespondPayload{SessionID: "session_alpha", RunID: "run_3", ToolCallID: "tool_1", Decision: "approve"})},
+				wantTypes: []string{TypeWorkspaceBootstrap},
 				assertAfter: func(t *testing.T) {
 					if service.approvalInput.ToolCallID != "tool_1" || service.approvalInput.Decision != "approve" {
 						t.Fatalf("approval input = %#v, want tool_1/approve", service.approvalInput)
@@ -200,9 +222,9 @@ func TestHandlerHandleMessage_RoutesServiceActionsAndMapsErrors(t *testing.T) {
 				},
 			},
 			{
-				name:     "unsupported message",
-				envelope: Envelope{Type: "workspace.unknown", RequestID: "req_unknown"},
-				wantType: TypeError,
+				name:      "unsupported message",
+				envelope:  Envelope{Type: "workspace.unknown", RequestID: "req_unknown"},
+				wantTypes: []string{TypeError},
 			},
 		}
 
@@ -216,11 +238,44 @@ func TestHandlerHandleMessage_RoutesServiceActionsAndMapsErrors(t *testing.T) {
 				if err != nil {
 					t.Fatalf("handleMessage() error = %v", err)
 				}
-				assertWriteType(t, calls, testCase.wantType)
+				assertWriteTypes(t, calls, testCase.wantTypes...)
 				if testCase.assertAfter != nil {
 					testCase.assertAfter(t)
 				}
 			})
+		}
+	})
+
+	t.Run("repository browse success and failure", func(t *testing.T) {
+		calls := make([]capturedWrite, 0, 1)
+		err := handler.handleMessage(context.Background(), Envelope{
+			Type:      TypeRepositoryBrowseRequest,
+			RequestID: "req_browse",
+			Payload:   mustMarshalJSON(t, RepositoryBrowseRequestPayload{Path: "/tmp/repos", ShowHidden: true}),
+		}, captureWrites(&calls))
+		if err != nil {
+			t.Fatalf("handleMessage() browse error = %v", err)
+		}
+		assertWriteType(t, calls, TypeRepositoryBrowseResult)
+		payload := calls[0].payload.(RepositoryBrowseResultPayload)
+		if payload.Path != "/tmp/repos" || len(payload.Directories) != 1 || !payload.Directories[0].IsGitRepository {
+			t.Fatalf("browse payload = %#v, want repo browse result", payload)
+		}
+
+		service.browseErr = errors.New("browse failed")
+		defer func() { service.browseErr = nil }()
+		calls = make([]capturedWrite, 0, 1)
+		err = handler.handleMessage(context.Background(), Envelope{
+			Type:      TypeRepositoryBrowseRequest,
+			RequestID: "req_browse_fail",
+			Payload:   mustMarshalJSON(t, RepositoryBrowseRequestPayload{Path: "/tmp/missing"}),
+		}, captureWrites(&calls))
+		if err != nil {
+			t.Fatalf("handleMessage() browse failure error = %v", err)
+		}
+		assertWriteType(t, calls, TypeError)
+		if calls[0].payload.(ErrorPayload).Code != "repository_browse_failed" {
+			t.Fatalf("browse failure payload = %#v, want repository_browse_failed", calls[0].payload)
 		}
 	})
 }
@@ -239,6 +294,122 @@ func TestToPayloadAndSummarizeRunPayload(t *testing.T) {
 	if payload.RunSummaries[0].CompletedAt == "" {
 		t.Fatal("payload.RunSummaries[0].CompletedAt = empty, want populated timestamp")
 	}
+	if len(payload.PendingApprovals) != 1 || payload.PendingApprovals[0].ToolCallID != "call_1" {
+		t.Fatalf("payload.PendingApprovals = %#v, want one persisted approval", payload.PendingApprovals)
+	}
+	if payload.ConnectedRepository.Path != "/tmp/project" {
+		t.Fatalf("payload.ConnectedRepository.Path = %q, want /tmp/project", payload.ConnectedRepository.Path)
+	}
+}
+
+func TestRepositoryGraphStatusPayloadIncludesReadyGraphData(t *testing.T) {
+	t.Parallel()
+
+	payload := repositoryGraphStatusPayload(workspaceorchestrator.WorkspaceSnapshot{
+		ConnectedRepository: workspaceorchestrator.ConnectedRepositorySummary{
+			Path:   "/tmp/project",
+			Status: "connected",
+		},
+		RepositoryGraph: workspaceorchestrator.RepositoryGraphState{
+			RepositoryRoot: "/tmp/project",
+			Status:         "ready",
+			Message:        "Repository graph ready.",
+			Nodes: []workspaceorchestrator.RepositoryGraphNode{
+				{ID: "src/index.ts", Label: "src/index.ts", Kind: "file"},
+			},
+			Edges: []workspaceorchestrator.RepositoryGraphEdge{
+				{ID: "src/index.ts->src/lib/util.ts", Source: "src/index.ts", Target: "src/lib/util.ts", Kind: "import"},
+			},
+		},
+	})
+
+	if payload.Status != "ready" {
+		t.Fatalf("payload.Status = %q, want ready", payload.Status)
+	}
+	if len(payload.Nodes) != 1 || payload.Nodes[0].ID != "src/index.ts" {
+		t.Fatalf("payload.Nodes = %#v, want ready graph nodes", payload.Nodes)
+	}
+	if len(payload.Edges) != 1 || payload.Edges[0].Target != "src/lib/util.ts" {
+		t.Fatalf("payload.Edges = %#v, want ready graph edges", payload.Edges)
+	}
+}
+
+func TestHandlerHandleMessage_RepositoryBrowseResponses(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name          string
+		service       *stubService
+		request       RepositoryBrowseRequestPayload
+		wantType      string
+		wantErrorCode string
+		assertPayload func(t *testing.T, payload RepositoryBrowseResultPayload)
+		assertService func(t *testing.T, service *stubService)
+	}{
+		{
+			name: "success forwards browse request and payload",
+			service: &stubService{repositoryBrowseResult: workspaceorchestrator.RepositoryBrowseResult{
+				Path: "/tmp/repos",
+				Directories: []workspaceorchestrator.RepositoryDirectory{{
+					Name:            "relay",
+					Path:            "/tmp/repos/relay",
+					IsGitRepository: true,
+				}},
+			}},
+			request:  RepositoryBrowseRequestPayload{Path: "/tmp/repos", ShowHidden: true},
+			wantType: TypeRepositoryBrowseResult,
+			assertPayload: func(t *testing.T, payload RepositoryBrowseResultPayload) {
+				if payload.Path != "/tmp/repos" || len(payload.Directories) != 1 || !payload.Directories[0].IsGitRepository {
+					t.Fatalf("payload = %#v, want one Git repository directory", payload)
+				}
+			},
+			assertService: func(t *testing.T, service *stubService) {
+				if service.browseInput.Path != "/tmp/repos" || !service.browseInput.ShowHidden {
+					t.Fatalf("browseInput = %#v, want /tmp/repos with ShowHidden", service.browseInput)
+				}
+			},
+		},
+		{
+			name:          "failure maps to repository browse error",
+			service:       &stubService{browseErr: errors.New("browse failed")},
+			request:       RepositoryBrowseRequestPayload{Path: "/tmp/missing"},
+			wantType:      TypeError,
+			wantErrorCode: "repository_browse_failed",
+			assertService: func(t *testing.T, service *stubService) {
+				if service.browseInput.Path != "/tmp/missing" || service.browseInput.ShowHidden {
+					t.Fatalf("browseInput = %#v, want /tmp/missing without ShowHidden", service.browseInput)
+				}
+			},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			handler := NewHandler(testCase.service, nil, slog.Default())
+			calls := make([]capturedWrite, 0, 1)
+			err := handler.handleMessage(context.Background(), Envelope{
+				Type:      TypeRepositoryBrowseRequest,
+				RequestID: "req_browse",
+				Payload:   mustMarshalJSON(t, testCase.request),
+			}, captureWrites(&calls))
+			if err != nil {
+				t.Fatalf("handleMessage() error = %v", err)
+			}
+			assertWriteType(t, calls, testCase.wantType)
+			if testCase.assertService != nil {
+				testCase.assertService(t, testCase.service)
+			}
+			if testCase.wantType == TypeRepositoryBrowseResult {
+				if testCase.assertPayload != nil {
+					testCase.assertPayload(t, calls[0].payload.(RepositoryBrowseResultPayload))
+				}
+				return
+			}
+			if got := calls[0].payload.(ErrorPayload).Code; got != testCase.wantErrorCode {
+				t.Fatalf("ErrorPayload.Code = %q, want %q", got, testCase.wantErrorCode)
+			}
+		})
+	}
 }
 
 type stubService struct {
@@ -250,6 +421,7 @@ type stubService struct {
 	openRunSnapshot        workspaceorchestrator.WorkspaceSnapshot
 	cancelSnapshot         workspaceorchestrator.WorkspaceSnapshot
 	approvalSnapshot       workspaceorchestrator.WorkspaceSnapshot
+	repositoryBrowseResult workspaceorchestrator.RepositoryBrowseResult
 	bootstrapLastSessionID string
 	createDisplayName      string
 	openSessionID          string
@@ -258,13 +430,26 @@ type stubService struct {
 	openRunInput           workspaceorchestrator.OpenRunInput
 	cancelInput            workspaceorchestrator.CancelRunInput
 	approvalInput          workspaceorchestrator.ApprovalResponseInput
+	browseInput            workspaceorchestrator.RepositoryBrowseInput
 	openErr                error
 	submitErr              error
+	browseErr              error
 }
 
 func (s *stubService) Bootstrap(_ context.Context, lastSessionID string) (workspaceorchestrator.WorkspaceSnapshot, error) {
 	s.bootstrapLastSessionID = lastSessionID
 	return s.bootstrapSnapshot, nil
+}
+
+func (s *stubService) AttachWorkspaceSubscriber(_ context.Context, _ func(workspaceorchestrator.StreamEnvelope) error) {
+}
+
+func (s *stubService) BrowseRepository(_ context.Context, input workspaceorchestrator.RepositoryBrowseInput) (workspaceorchestrator.RepositoryBrowseResult, error) {
+	s.browseInput = input
+	if s.browseErr != nil {
+		return workspaceorchestrator.RepositoryBrowseResult{}, s.browseErr
+	}
+	return s.repositoryBrowseResult, nil
 }
 
 func (s *stubService) CreateSession(_ context.Context, displayName string) (workspaceorchestrator.WorkspaceSnapshot, error) {
@@ -339,6 +524,18 @@ func assertWriteType(t *testing.T, calls []capturedWrite, wantType string) {
 	}
 }
 
+func assertWriteTypes(t *testing.T, calls []capturedWrite, wantTypes ...string) {
+	t.Helper()
+	if len(calls) != len(wantTypes) {
+		t.Fatalf("len(calls) = %d, want %d", len(calls), len(wantTypes))
+	}
+	for index, wantType := range wantTypes {
+		if calls[index].messageType != wantType {
+			t.Fatalf("calls[%d].messageType = %q, want %q", index, calls[index].messageType, wantType)
+		}
+	}
+}
+
 func mustMarshalJSON(t *testing.T, payload any) json.RawMessage {
 	t.Helper()
 	encoded, err := json.Marshal(payload)
@@ -362,6 +559,11 @@ func sampleWorkspaceSnapshot() workspaceorchestrator.WorkspaceSnapshot {
 			HasActivity:  true,
 		}},
 		Preferences: samplePreferences(),
+		ConnectedRepository: workspaceorchestrator.ConnectedRepositorySummary{
+			Path:    "/tmp/project",
+			Status:  "connected",
+			Message: "Repository-aware reads stay inside this local Git worktree.",
+		},
 		UIState:     workspaceorchestrator.UIState{HistoryState: "ready", CanvasState: "idle", SaveState: "idle"},
 		ActiveRunID: "run_1",
 		RunSummaries: []workspaceorchestrator.RunSummary{{
@@ -374,6 +576,17 @@ func sampleWorkspaceSnapshot() workspaceorchestrator.WorkspaceSnapshot {
 			StartedAt:       startedAt,
 			CompletedAt:     &completedAt,
 			HasToolActivity: false,
+		}},
+		PendingApprovals: []workspaceorchestrator.ApprovalSummary{{
+			SessionID:    "session_alpha",
+			RunID:        "run_1",
+			Role:         sqlite.RoleCoder,
+			Model:        "anthropic/claude-sonnet-4-5",
+			ToolCallID:   "call_1",
+			ToolName:     "write_file",
+			InputPreview: map[string]any{"path": "README.md"},
+			Message:      "Relay needs approval before it can write files inside the configured project root.",
+			OccurredAt:   startedAt.Add(time.Second),
 		}},
 		CredentialStatus: workspaceorchestrator.CredentialStatus{Configured: true},
 	}

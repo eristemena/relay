@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/erisristemena/relay/internal/repository"
 	toml "github.com/pelletier/go-toml/v2"
 )
 
@@ -67,16 +68,16 @@ type Config struct {
 }
 
 type SafePreferences struct {
-	PreferredPort      int    `json:"preferred_port"`
-	AppearanceVariant  string `json:"appearance_variant"`
-	HasCredentials     bool   `json:"has_credentials"`
-	OpenRouterConfigured bool `json:"openrouter_configured"`
-	ProjectRoot          string `json:"project_root"`
-	ProjectRootConfigured bool `json:"project_root_configured"`
-	ProjectRootValid      bool `json:"project_root_valid"`
-	ProjectRootMessage    string `json:"project_root_message,omitempty"`
+	PreferredPort         int         `json:"preferred_port"`
+	AppearanceVariant     string      `json:"appearance_variant"`
+	HasCredentials        bool        `json:"has_credentials"`
+	OpenRouterConfigured  bool        `json:"openrouter_configured"`
+	ProjectRoot           string      `json:"project_root"`
+	ProjectRootConfigured bool        `json:"project_root_configured"`
+	ProjectRootValid      bool        `json:"project_root_valid"`
+	ProjectRootMessage    string      `json:"project_root_message,omitempty"`
 	AgentModels           AgentModels `json:"agent_models"`
-	OpenBrowserOnStart bool   `json:"open_browser_on_start"`
+	OpenBrowserOnStart    bool        `json:"open_browser_on_start"`
 }
 
 type ProjectRootStatus struct {
@@ -242,11 +243,11 @@ func Save(paths Paths, cfg Config) error {
 func (cfg Config) SafePreferences() SafePreferences {
 	projectRootStatus := cfg.ProjectRootState()
 	return SafePreferences{
-		PreferredPort:        cfg.Port,
-		AppearanceVariant:    cfg.AppearanceVariant,
-		HasCredentials:       len(cfg.Credentials) > 0 || cfg.HasOpenRouterKey(),
-		OpenRouterConfigured: cfg.HasOpenRouterKey(),
-		ProjectRoot:          cfg.ProjectRoot,
+		PreferredPort:         cfg.Port,
+		AppearanceVariant:     cfg.AppearanceVariant,
+		HasCredentials:        len(cfg.Credentials) > 0 || cfg.HasOpenRouterKey(),
+		OpenRouterConfigured:  cfg.HasOpenRouterKey(),
+		ProjectRoot:           cfg.ProjectRoot,
 		ProjectRootConfigured: projectRootStatus.Configured,
 		ProjectRootValid:      projectRootStatus.Valid,
 		ProjectRootMessage:    projectRootStatus.Message,
@@ -260,41 +261,8 @@ func (cfg Config) HasOpenRouterKey() bool {
 }
 
 func (cfg Config) ProjectRootState() ProjectRootStatus {
-	projectRoot := strings.TrimSpace(cfg.ProjectRoot)
-	if projectRoot == "" {
-		return ProjectRootStatus{
-			Configured: false,
-			Valid:      false,
-			Message:    "Repository-reading tools stay disabled until Relay has a valid project_root in config.toml.",
-		}
-	}
-
-	if !filepath.IsAbs(projectRoot) {
-		return ProjectRootStatus{
-			Configured: true,
-			Valid:      false,
-			Message:    "The saved project_root must be an absolute path.",
-		}
-	}
-
-	info, err := os.Stat(projectRoot)
-	if err != nil {
-		return ProjectRootStatus{
-			Configured: true,
-			Valid:      false,
-			Message:    "Relay could not read the saved project_root. Update config.toml to point at an accessible repository.",
-		}
-	}
-
-	if !info.IsDir() {
-		return ProjectRootStatus{
-			Configured: true,
-			Valid:      false,
-			Message:    "The saved project_root must point to a directory.",
-		}
-	}
-
-	return ProjectRootStatus{Configured: true, Valid: true}
+	status := repository.ValidateRoot(cfg.ProjectRoot)
+	return ProjectRootStatus{Configured: status.Configured, Valid: status.Valid, Message: status.Message}
 }
 
 func (models AgentModels) WithDefaults() AgentModels {

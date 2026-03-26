@@ -25,6 +25,7 @@ type Options struct {
 	PreferredPort int
 	DevMode       bool
 	NoBrowser     bool
+	ProjectRoot   string
 	HomeDir       string
 	Version       string
 	Logger        *slog.Logger
@@ -79,6 +80,12 @@ func NewServer(ctx context.Context, options Options) (*Server, error) {
 	loadedConfig, warnings, err := config.Load(paths)
 	if err != nil {
 		return nil, err
+	}
+	if root := strings.TrimSpace(options.ProjectRoot); root != "" {
+		loadedConfig.ProjectRoot = root
+		if err := config.Save(paths, loadedConfig); err != nil {
+			return nil, err
+		}
 	}
 
 	preferredPort := options.PreferredPort

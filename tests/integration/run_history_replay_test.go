@@ -4,16 +4,20 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/erisristemena/relay/internal/app"
 	"github.com/erisristemena/relay/internal/config"
 	"github.com/erisristemena/relay/internal/storage/sqlite"
+	git "github.com/go-git/go-git/v5"
 )
 
 func TestRunHistoryReplay_RestartHydratesBootstrapAndReplaysRun(t *testing.T) {
 	homeDir := t.TempDir()
+	repoDir := initReplayRepositoryAtHome(t, homeDir)
 
 	firstServer, firstCancel := startServerAtHome(t, homeDir)
 	firstCancel()
@@ -70,7 +74,7 @@ func TestRunHistoryReplay_RestartHydratesBootstrapAndReplaysRun(t *testing.T) {
 		t.Fatalf("config warnings = %v, want none", warnings)
 	}
 	cfg.OpenRouter.APIKey = "or-test-key"
-	cfg.ProjectRoot = homeDir
+	cfg.ProjectRoot = repoDir
 	cfg.LastSessionID = session.ID
 	if err := config.Save(paths, cfg); err != nil {
 		t.Fatalf("config.Save() error = %v", err)
@@ -84,7 +88,7 @@ func TestRunHistoryReplay_RestartHydratesBootstrapAndReplaysRun(t *testing.T) {
 
 	connection := dialWorkspace(t, secondServer.BaseURL())
 	writeMessage(t, connection, map[string]any{
-		"type": "workspace.bootstrap.request",
+		"type":    "workspace.bootstrap.request",
 		"payload": map[string]any{},
 	})
 	bootstrap := readUntilType(t, connection, "workspace.bootstrap")
@@ -103,8 +107,8 @@ func TestRunHistoryReplay_RestartHydratesBootstrapAndReplaysRun(t *testing.T) {
 	if preferences["openrouter_configured"] != true {
 		t.Fatalf("preferences.openrouter_configured = %v, want true", preferences["openrouter_configured"])
 	}
-	if preferences["project_root"] != homeDir {
-		t.Fatalf("preferences.project_root = %v, want %q", preferences["project_root"], homeDir)
+	if preferences["project_root"] != repoDir {
+		t.Fatalf("preferences.project_root = %v, want %q", preferences["project_root"], repoDir)
 	}
 	if preferences["project_root_valid"] != true {
 		t.Fatalf("preferences.project_root_valid = %v, want true", preferences["project_root_valid"])
@@ -148,6 +152,7 @@ func TestRunHistoryReplay_RestartHydratesBootstrapAndReplaysRun(t *testing.T) {
 
 func TestRunHistoryReplay_RestartReplaysStoredOrchestrationNodeEvents(t *testing.T) {
 	homeDir := t.TempDir()
+	_ = initReplayRepositoryAtHome(t, homeDir)
 
 	firstServer, firstCancel := startServerAtHome(t, homeDir)
 	firstCancel()
@@ -208,7 +213,7 @@ func TestRunHistoryReplay_RestartReplaysStoredOrchestrationNodeEvents(t *testing
 		t.Fatalf("config warnings = %v, want none", warnings)
 	}
 	cfg.OpenRouter.APIKey = "or-test-key"
-	cfg.ProjectRoot = homeDir
+	cfg.ProjectRoot = filepath.Join(homeDir, "relay-repo")
 	cfg.LastSessionID = session.ID
 	if err := config.Save(paths, cfg); err != nil {
 		t.Fatalf("config.Save() error = %v", err)
@@ -254,6 +259,7 @@ func TestRunHistoryReplay_RestartReplaysStoredOrchestrationNodeEvents(t *testing
 
 func TestRunHistoryReplay_RestartReplaysHaltedOrchestrationRun(t *testing.T) {
 	homeDir := t.TempDir()
+	_ = initReplayRepositoryAtHome(t, homeDir)
 
 	firstServer, firstCancel := startServerAtHome(t, homeDir)
 	firstCancel()
@@ -312,7 +318,7 @@ func TestRunHistoryReplay_RestartReplaysHaltedOrchestrationRun(t *testing.T) {
 		t.Fatalf("config warnings = %v, want none", warnings)
 	}
 	cfg.OpenRouter.APIKey = "or-test-key"
-	cfg.ProjectRoot = homeDir
+	cfg.ProjectRoot = filepath.Join(homeDir, "relay-repo")
 	cfg.LastSessionID = session.ID
 	if err := config.Save(paths, cfg); err != nil {
 		t.Fatalf("config.Save() error = %v", err)
@@ -368,4 +374,16 @@ func startServerAtHome(t *testing.T, homeDir string) (*app.Server, context.Cance
 	}()
 	waitForHealth(t, server.BaseURL())
 	return server, cancel
+}
+
+func initReplayRepositoryAtHome(t *testing.T, homeDir string) string {
+	t.Helper()
+	repoDir := filepath.Join(homeDir, "relay-repo")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(repoDir) error = %v", err)
+	}
+	if _, err := git.PlainInit(repoDir, false); err != nil {
+		t.Fatalf("git.PlainInit() error = %v", err)
+	}
+	return repoDir
 }

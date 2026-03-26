@@ -69,7 +69,7 @@
 - [X] T019 [P] [US1] Implement concrete role `Agent` types and prompt-only task assignment flow in `internal/agents/registry.go`, `internal/agents/planner.go`, `internal/agents/coder.go`, `internal/agents/reviewer.go`, `internal/agents/tester.go`, and `internal/agents/explainer.go`
 - [X] T020 [P] [US1] Wire orchestration submit, active-run bootstrap hydration, and live event subscription into the frontend socket layer in `web/src/shared/lib/useWorkspaceSocket.ts` and `web/src/shared/lib/workspace-store.ts`
 - [X] T021 [P] [US1] Implement live canvas node creation and per-agent state patching driven by `agent_spawned` and `agent_state_changed` events in `web/src/features/canvas/AgentCanvas.tsx` and `web/src/features/canvas/canvasModel.ts`
-- [X] T022 [US1] Surface orchestration idle, submitting, active, and completed states plus run summary messaging in `web/src/features/canvas/WorkspaceCanvas.tsx`, `web/src/features/canvas/AgentCanvas.tsx`, and `web/src/features/agent-panel/AgentPanel.tsx`
+- [X] T022 [US1] Surface orchestration idle, submitting, active, and completed states plus run summary messaging in `web/src/features/canvas/WorkspaceCanvas.tsx`, `web/src/features/canvas/AgentCanvas.tsx`, and `web/src/features/workspace-shell/WorkspaceShell.tsx`
 
 **Checkpoint**: User Story 1 is functional and independently testable as the MVP.
 

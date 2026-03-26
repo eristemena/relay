@@ -1,5 +1,6 @@
 import type {
   ApprovalRequestPayload,
+  ApprovalStateChangedPayload,
   AgentStateChangedPayload,
   AgentSpawnedPayload,
   ErrorPayload,
@@ -36,6 +37,13 @@ export const agentCanvasStates = [
 export type AgentCanvasRole = (typeof agentCanvasRoles)[number];
 export type AgentCanvasState = (typeof agentCanvasStates)[number];
 export type AgentCanvasEdgePulseState = "idle" | "active" | "settling";
+export type AgentProposalApprovalState =
+  | "proposed"
+  | "approved"
+  | "applied"
+  | "rejected"
+  | "blocked"
+  | "expired";
 export type CanvasRunState =
   | "idle"
   | "submitting"
@@ -43,11 +51,19 @@ export type CanvasRunState =
   | "completed"
   | "halted";
 
+export interface AgentNodeProposedChange {
+  path: string;
+  toolCallId: string;
+  approvalState: AgentProposalApprovalState;
+}
+
 export interface AgentNodeDetails {
   summary: string;
   currentStateLabel: string;
   incomingFrom: string[];
   outgoingTo: string[];
+  readPaths: string[];
+  proposedChanges: AgentNodeProposedChange[];
   taskText: string;
   transcript: string;
   errorMessage?: string;
@@ -180,6 +196,8 @@ export function addSpawnedNode(
       currentStateLabel: stateLabels.queued,
       incomingFrom: [],
       outgoingTo: [],
+      readPaths: [],
+      proposedChanges: [],
       taskText: "",
       transcript: "",
     },
@@ -297,7 +315,46 @@ export function patchApprovalRequest(
     state: "approval_required",
     details: {
       currentStateLabel: stateLabels.approval_required,
+      proposedChanges: upsertProposedChange(
+        findRoleNode(document, role)?.details.proposedChanges ?? [],
+        {
+          path: proposalPathFromApprovalRequest(payload),
+          toolCallId: payload.tool_call_id,
+          approvalState: payload.status ?? "proposed",
+        },
+      ),
       summary: payload.message,
+    },
+  });
+}
+
+export function patchApprovalStateChanged(
+  document: AgentCanvasDocument,
+  payload: ApprovalStateChangedPayload,
+): AgentCanvasDocument {
+  const role = payload.role as AgentCanvasRole | undefined;
+  if (!role) {
+    return document;
+  }
+
+  const nextState =
+    payload.status === "approved"
+      ? "tool_running"
+      : payload.status === "applied"
+        ? "thinking"
+        : "blocked";
+
+  return patchRoleState(document, role, payload.occurred_at, {
+    state: nextState,
+    details: {
+      currentStateLabel: stateLabels[nextState],
+      summary: payload.message,
+      errorMessage: nextState === "blocked" ? payload.message : undefined,
+      proposedChanges: upsertProposalStatus(
+        findRoleNode(document, role)?.details.proposedChanges ?? [],
+        payload.tool_call_id,
+        payload.status,
+      ),
     },
   });
 }
@@ -314,6 +371,26 @@ export function patchToolCall(
       state: "tool_running",
       details: {
         currentStateLabel: stateLabels.tool_running,
+        readPaths: appendUniquePath(
+          findRoleNode(document, payload.role as AgentCanvasRole)?.details
+            .readPaths ?? [],
+          payload.tool_name === "read_file"
+            ? readStringValue(payload.input_preview, ["path", "file_path"])
+            : null,
+        ),
+        proposedChanges:
+          payload.tool_name === "write_file"
+            ? upsertProposedChange(
+                findRoleNode(document, payload.role as AgentCanvasRole)?.details
+                  .proposedChanges ?? [],
+                {
+                  path: proposalPathFromPreview(payload.input_preview),
+                  toolCallId: payload.tool_call_id,
+                  approvalState: "proposed",
+                },
+              )
+            : findRoleNode(document, payload.role as AgentCanvasRole)?.details
+                .proposedChanges,
         summary: `Running ${formatToolName(payload.tool_name)}.`,
       },
     },
@@ -345,6 +422,16 @@ export function patchToolResult(
       state: nextState,
       details: {
         currentStateLabel: stateLabels[nextState],
+        proposedChanges:
+          payload.tool_name === "write_file"
+            ? upsertProposalStatus(
+                findRoleNode(document, payload.role as AgentCanvasRole)?.details
+                  .proposedChanges ?? [],
+                payload.tool_call_id,
+                approvalStateFromToolResult(payload.status),
+              )
+            : findRoleNode(document, payload.role as AgentCanvasRole)?.details
+                .proposedChanges,
         summary: previewSummary,
         errorMessage:
           nextState === "blocked" || nextState === "errored"
@@ -565,6 +652,117 @@ function patchRoleState(
 
 function formatToolName(toolName: string) {
   return toolName.replaceAll("_", " ");
+}
+
+function findRoleNode(document: AgentCanvasDocument, role: AgentCanvasRole) {
+  return document.nodes.find((node) => node.role === role);
+}
+
+function readStringValue(
+  value: Record<string, unknown>,
+  keys: string[],
+): string | null {
+  for (const key of keys) {
+    const candidate = value[key];
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function appendUniquePath(paths: string[], nextPath: string | null) {
+  if (!nextPath) {
+    return paths;
+  }
+  return paths.includes(nextPath) ? paths : [...paths, nextPath];
+}
+
+function proposalPathFromApprovalRequest(payload: ApprovalRequestPayload) {
+  return (
+    payload.diff_preview?.target_path ||
+    proposalPathFromPreview(payload.input_preview)
+  );
+}
+
+function proposalPathFromPreview(inputPreview: Record<string, unknown>) {
+  const diffPreview = inputPreview.diff_preview;
+  if (isRecord(diffPreview)) {
+    const diffTargetPath = readStringValue(diffPreview, ["target_path"]);
+    if (diffTargetPath) {
+      return diffTargetPath;
+    }
+  }
+
+  return readStringValue(inputPreview, ["target_path", "path", "file_path"]);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function upsertProposedChange(
+  changes: AgentNodeProposedChange[],
+  proposal: {
+    path: string | null;
+    toolCallId: string;
+    approvalState: AgentProposalApprovalState;
+  },
+) {
+  if (!proposal.path || proposal.toolCallId.trim().length === 0) {
+    return changes;
+  }
+
+  const existingIndex = changes.findIndex(
+    (change) => change.toolCallId === proposal.toolCallId,
+  );
+  if (existingIndex === -1) {
+    return [
+      ...changes,
+      {
+        path: proposal.path,
+        toolCallId: proposal.toolCallId,
+        approvalState: proposal.approvalState,
+      },
+    ];
+  }
+
+  const nextChanges = [...changes];
+  nextChanges[existingIndex] = {
+    ...nextChanges[existingIndex],
+    path: proposal.path,
+    approvalState: proposal.approvalState,
+  };
+  return nextChanges;
+}
+
+function upsertProposalStatus(
+  changes: AgentNodeProposedChange[],
+  toolCallId: string,
+  approvalState: AgentProposalApprovalState,
+) {
+  return changes.map((change) =>
+    change.toolCallId === toolCallId
+      ? {
+          ...change,
+          approvalState,
+        }
+      : change,
+  );
+}
+
+function approvalStateFromToolResult(
+  status: string,
+): AgentProposalApprovalState {
+  switch (status) {
+    case "completed":
+      return "applied";
+    case "rejected":
+      return "rejected";
+    default:
+      return "blocked";
+  }
 }
 
 function settleCanvasEdges(edges: AgentCanvasEdgeModel[]) {

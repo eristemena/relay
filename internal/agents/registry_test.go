@@ -33,7 +33,7 @@ func TestRegistrySelectProfileUsesRoleSpecificPromptsModelsAndToolAllowlists(t *
 			promptNeedle: "Break developer tasks into a concrete sequence of steps",
 			policyNeedle: "Do not ask the user for confirmation before taking allowed actions.",
 			extraNeedle:  "Never ask questions such as 'Would you like me to search for related configuration files or documentation?'",
-			wantTools:    []ToolName{ToolReadFile, ToolSearchCodebase},
+			wantTools:    []ToolName{ToolReadFile, ToolListFiles, ToolSearchCodebase, ToolGitLog, ToolGitDiff},
 		},
 		{
 			name:         "coder",
@@ -43,7 +43,7 @@ func TestRegistrySelectProfileUsesRoleSpecificPromptsModelsAndToolAllowlists(t *
 			promptNeedle: "Produce focused implementation guidance",
 			policyNeedle: "Do not ask the user for confirmation before taking allowed actions.",
 			extraNeedle:  "Never ask questions such as 'Would you like me to proceed with writing these changes?'",
-			wantTools:    []ToolName{ToolReadFile, ToolSearchCodebase, ToolWriteFile, ToolRunCommand},
+			wantTools:    []ToolName{ToolReadFile, ToolListFiles, ToolSearchCodebase, ToolGitLog, ToolGitDiff, ToolWriteFile, ToolRunCommand},
 		},
 		{
 			name:         "reviewer",
@@ -53,7 +53,7 @@ func TestRegistrySelectProfileUsesRoleSpecificPromptsModelsAndToolAllowlists(t *
 			promptNeedle: "Prioritize correctness, regressions, missing tests, and security issues",
 			policyNeedle: "Do not ask the user for confirmation before taking allowed actions.",
 			extraNeedle:  "Never ask questions such as 'Would you like me to review this file?'",
-			wantTools:    []ToolName{ToolReadFile, ToolSearchCodebase},
+			wantTools:    []ToolName{ToolReadFile, ToolListFiles, ToolSearchCodebase, ToolGitLog, ToolGitDiff},
 		},
 		{
 			name:         "tester",
@@ -63,7 +63,7 @@ func TestRegistrySelectProfileUsesRoleSpecificPromptsModelsAndToolAllowlists(t *
 			promptNeedle: "Focus on validation strategy, failure modes",
 			policyNeedle: "Do not ask the user for confirmation before taking allowed actions.",
 			extraNeedle:  "The write_file tool is only for creating or updating recognized test files under tests/, __tests__/, or testdata/",
-			wantTools:    []ToolName{ToolReadFile, ToolSearchCodebase, ToolWriteFile, ToolRunCommand},
+			wantTools:    []ToolName{ToolReadFile, ToolListFiles, ToolSearchCodebase, ToolGitLog, ToolGitDiff, ToolWriteFile, ToolRunCommand},
 		},
 		{
 			name:         "explainer",
@@ -72,7 +72,7 @@ func TestRegistrySelectProfileUsesRoleSpecificPromptsModelsAndToolAllowlists(t *
 			wantModel:    config.DefaultExplainerModel,
 			promptNeedle: "Explain code and architecture clearly",
 			policyNeedle: "Do not ask the user for confirmation before taking allowed actions.",
-			wantTools:    []ToolName{ToolReadFile, ToolSearchCodebase},
+			wantTools:    []ToolName{ToolReadFile, ToolListFiles, ToolSearchCodebase, ToolGitLog, ToolGitDiff},
 		},
 	}
 
@@ -241,14 +241,23 @@ func TestRegistryRunnerAdvertisesAndExecutesReadOnlyTools(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	if len(fakeClient.request.Tools) != 2 {
-		t.Fatalf("len(request.Tools) = %d, want 2", len(fakeClient.request.Tools))
+	if len(fakeClient.request.Tools) != 5 {
+		t.Fatalf("len(request.Tools) = %d, want 5", len(fakeClient.request.Tools))
 	}
 	if fakeClient.request.Tools[0].Name != string(ToolReadFile) {
 		t.Fatalf("request.Tools[0].Name = %q, want %q", fakeClient.request.Tools[0].Name, ToolReadFile)
 	}
-	if fakeClient.request.Tools[1].Name != string(ToolSearchCodebase) {
-		t.Fatalf("request.Tools[1].Name = %q, want %q", fakeClient.request.Tools[1].Name, ToolSearchCodebase)
+	if fakeClient.request.Tools[1].Name != string(ToolListFiles) {
+		t.Fatalf("request.Tools[1].Name = %q, want %q", fakeClient.request.Tools[1].Name, ToolListFiles)
+	}
+	if fakeClient.request.Tools[2].Name != string(ToolSearchCodebase) {
+		t.Fatalf("request.Tools[2].Name = %q, want %q", fakeClient.request.Tools[2].Name, ToolSearchCodebase)
+	}
+	if fakeClient.request.Tools[3].Name != string(ToolGitLog) {
+		t.Fatalf("request.Tools[3].Name = %q, want %q", fakeClient.request.Tools[3].Name, ToolGitLog)
+	}
+	if fakeClient.request.Tools[4].Name != string(ToolGitDiff) {
+		t.Fatalf("request.Tools[4].Name = %q, want %q", fakeClient.request.Tools[4].Name, ToolGitDiff)
 	}
 	if len(toolCalls) != 1 {
 		t.Fatalf("len(toolCalls) = %d, want 1", len(toolCalls))

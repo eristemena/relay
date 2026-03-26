@@ -13,6 +13,8 @@ The browser never receives the saved OpenRouter API key. Relay persists configur
 - TOML config at `~/.relay/config.toml`
 - Next.js App Router frontend in `web/`
 - Tailwind CSS for styling
+- `go-git` for local repository inspection without shelling out to Git
+- `monaco-editor` for side-by-side approval diff review surfaces
 - WebSocket-only runtime state delivery between Go and the browser
 
 ## Commands
@@ -59,6 +61,13 @@ Relay keeps the key server-side, exposes only configuration status to the browse
 
 Relay keeps the prompts and tool allowlists fixed in code per role. The config file only controls model assignment.
 
+## Repository-Aware Setup
+
+- Install backend and frontend dependencies before working on codebase awareness: `go mod download` and `npm --prefix web install`
+- Relay only enables repository-aware tools when `project_root` points at a readable local Git repository root.
+- Relay uses `monaco-editor` for side-by-side approval diff review and keeps background repository-context state available for backend-driven activity tracking.
+- Repository inspection stays inside the Go process through `go-git`, so Relay does not shell out to the system `git` binary for repository validation, history, or working-tree diff reads.
+
 ## Live Agent Orchestration
 
 Relay now includes a live orchestration canvas inside the workspace shell.
@@ -76,6 +85,7 @@ This orchestration mode is intentionally prompt-only. It does not read the repos
 
 - `npm --prefix web run typecheck`: run the frontend TypeScript checker
 - `npm --prefix web test`: run the frontend component and store tests, including the live canvas suite
+- `npm --prefix web test -- src/features/preferences/PreferencesPanel.test.tsx src/features/approvals/ApprovalReviewPanel.test.tsx src/features/canvas/AgentCanvasNode.test.tsx src/shared/lib/workspace-store.test.ts`: run the focused repository-awareness UI and store validation suite
 - `npm --prefix web test -- src/features/canvas/AgentCanvas.test.tsx src/features/workspace-shell/WorkspaceShell.test.tsx`: run the focused orchestration canvas coverage
 - `npm --prefix web test -- src/features/canvas/AgentCanvas.test.tsx src/features/canvas/AnimatedHandoffEdge.test.tsx src/features/canvas/AgentNodeDetailPanel.test.tsx src/features/canvas/AgentCanvasNode.test.tsx src/features/canvas/canvasModel.test.ts src/features/canvas/layoutGraph.test.ts src/shared/lib/workspace-store.test.ts`: run the focused canvas animation and motion-regression suite
 - If `make dev` opens Relay with a "frontend dev server is unavailable" page, start the Relay Next.js app on any free port from `3000` to `3010` and restart the backend so the dev proxy can rediscover it.
@@ -84,7 +94,8 @@ This orchestration mode is intentionally prompt-only. It does not read the repos
 
 - `read_file` and `search_codebase` run without approval when `project_root` is valid.
 - `write_file` and `run_command` always emit an approval request before execution.
-- Approval requests are transient live events. They are not stored in SQLite history after the run finishes.
+- Pending approval requests are persisted in SQLite while they remain actionable, then restored through workspace bootstrap after reconnect or refresh.
+- Approval outcomes are also reflected back into the ordered run-event timeline so replay preserves the same visible decision path.
 - If approval is rejected, Relay records the rejected tool result and ends the run with a terminal error while preserving the earlier timeline.
 
 ## Run Review And Reconnect
@@ -92,7 +103,7 @@ This orchestration mode is intentionally prompt-only. It does not read the repos
 - Relay allows only one active run at a time.
 - Completed, halted, and errored runs are stored in `~/.relay/relay.db` as ordered events.
 - Opening a saved run replays its stored timeline without contacting OpenRouter.
-- If the browser reconnects during an active run, Relay can reattach the live stream and continue delivery after replaying stored events.
+- If the browser reconnects during an active run, Relay restores any still-pending approvals, replays stored events, then reattaches the live stream.
 
 ## Orchestration Validation
 

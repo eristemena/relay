@@ -2,6 +2,9 @@ export type ConnectionMessageType =
   | "workspace.bootstrap.request"
   | "workspace.bootstrap"
   | "workspace.status"
+  | "repository.browse.request"
+  | "repository.browse.result"
+  | "repository_graph_status"
   | "session.create"
   | "session.created"
   | "session.open"
@@ -13,6 +16,7 @@ export type ConnectionMessageType =
   | "agent.run.cancel"
   | "agent.run.approval.respond"
   | "approval_request"
+  | "approval_state_changed"
   | "state_change"
   | "token"
   | "tool_call"
@@ -36,6 +40,49 @@ export interface Envelope<TPayload> {
 
 export interface WorkspaceBootstrapRequestPayload {
   last_session_id?: string;
+}
+
+export interface RepositoryBrowseRequestPayload {
+  path?: string;
+  show_hidden?: boolean;
+}
+
+export interface RepositoryDirectoryPayload {
+  name: string;
+  path: string;
+  is_git_repository: boolean;
+}
+
+export interface RepositoryBrowseResultPayload {
+  path: string;
+  directories: RepositoryDirectoryPayload[];
+}
+
+export interface RepositoryGraphStatusPayload {
+  repository_root?: string;
+  status: "idle" | "loading" | "ready" | "error";
+  message?: string;
+  nodes?: RepositoryGraphNodePayload[];
+  edges?: RepositoryGraphEdgePayload[];
+}
+
+export interface RepositoryGraphNodePayload {
+  id: string;
+  label: string;
+  kind: "directory" | "file";
+}
+
+export interface RepositoryGraphEdgePayload {
+  id: string;
+  source: string;
+  target: string;
+  kind?: string;
+}
+
+export interface ConnectedRepositoryView {
+  path: string;
+  status: "connected" | "invalid" | "not_configured";
+  message?: string;
 }
 
 export interface SessionCreatePayload {
@@ -123,11 +170,41 @@ export interface WorkspaceSnapshotPayload {
   active_session_id: string;
   sessions: SessionSummary[];
   preferences: PreferencesView;
+  connected_repository: ConnectedRepositoryView;
   ui_state: WorkspaceUIState;
   active_run_id?: string;
   run_summaries?: AgentRunSummary[];
+  pending_approvals?: ApprovalRequestPayload[];
   credential_status: CredentialStatusView;
   warnings?: string[];
+}
+
+export function buildConnectedRepositoryView(
+  preferences: PreferencesView,
+): ConnectedRepositoryView {
+  if (preferences.project_root_valid && preferences.project_root) {
+    return {
+      path: preferences.project_root,
+      status: "connected",
+      message: "Repository-aware reads stay inside this local Git worktree.",
+    };
+  }
+
+  if (preferences.project_root_configured) {
+    return {
+      path: preferences.project_root,
+      status: "invalid",
+      message:
+        preferences.project_root_message ||
+        "Relay could not use the saved project root. Choose a valid local Git repository.",
+    };
+  }
+
+  return {
+    path: "",
+    status: "not_configured",
+    message: "Choose a local Git repository to enable repository-aware tools.",
+  };
 }
 
 export interface AgentRunSummary {
@@ -189,6 +266,19 @@ export interface ToolResultPayload extends RunEventBase {
   result_preview: Record<string, unknown>;
 }
 
+export interface DiffPreviewPayload {
+  target_path: string;
+  original_content: string;
+  proposed_content: string;
+  base_content_hash: string;
+}
+
+export interface CommandPreviewPayload {
+  command: string;
+  args: string[];
+  effective_dir: string;
+}
+
 export interface ApprovalRequestPayload {
   session_id: string;
   run_id: string;
@@ -196,9 +286,28 @@ export interface ApprovalRequestPayload {
   model?: string;
   tool_call_id: string;
   tool_name: string;
+  request_kind?: "file_write" | "command";
+  status?: "proposed";
+  repository_root?: string;
   input_preview: Record<string, unknown>;
+  diff_preview?: DiffPreviewPayload;
+  command_preview?: CommandPreviewPayload;
   message: string;
   occurred_at: string;
+}
+
+export interface ApprovalStateChangedPayload {
+  session_id: string;
+  run_id: string;
+  role?: AgentRunSummary["role"];
+  model?: string;
+  tool_call_id: string;
+  tool_name: string;
+  status: "approved" | "applied" | "rejected" | "blocked" | "expired";
+  message: string;
+  occurred_at: string;
+  sequence?: number;
+  replay?: boolean;
 }
 
 export interface CompletePayload extends RunEventBase {
@@ -217,6 +326,7 @@ export interface AgentStateChangedPayload extends RunEventBase {
     | "queued"
     | "assigned"
     | "thinking"
+    | "tool_running"
     | "streaming"
     | "completed"
     | "errored"
@@ -260,6 +370,7 @@ export interface ErrorPayload {
 }
 
 export type RunEventPayload =
+  | ApprovalStateChangedPayload
   | StateChangePayload
   | TokenPayload
   | ToolCallPayload
@@ -272,11 +383,18 @@ export type RunEventPayload =
   | RunCompletePayload
   | ErrorPayload;
 
+export type RealtimeRunMessage =
+  | Envelope<RunEventPayload>
+  | Envelope<ApprovalRequestPayload>;
+
 export type IncomingEnvelope =
   | Envelope<WorkspaceSnapshotPayload>
+  | Envelope<RepositoryBrowseResultPayload>
+  | Envelope<RepositoryGraphStatusPayload>
   | Envelope<WorkspaceStatusPayload>
   | Envelope<ErrorPayload>
   | Envelope<ApprovalRequestPayload>
+  | Envelope<ApprovalStateChangedPayload>
   | Envelope<StateChangePayload>
   | Envelope<TokenPayload>
   | Envelope<ToolCallPayload>
@@ -301,6 +419,20 @@ export function createSessionCreateRequest(displayName?: string): Envelope<Sessi
     type: "session.create",
     request_id: crypto.randomUUID(),
     payload: displayName ? { display_name: displayName } : {},
+  };
+}
+
+export function createRepositoryBrowseRequest(
+  path?: string,
+  showHidden = false,
+): Envelope<RepositoryBrowseRequestPayload> {
+  return {
+    type: "repository.browse.request",
+    request_id: crypto.randomUUID(),
+    payload: {
+      ...(path ? { path } : {}),
+      show_hidden: showHidden,
+    },
   };
 }
 
