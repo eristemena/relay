@@ -134,6 +134,9 @@ describe("WorkspaceShell", () => {
     expect(
       screen.getByRole("heading", { name: /choose a local git repository/i }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /close workspace menu/i }),
+    ).toBeInTheDocument();
   });
 
   it("forwards repository browse requests from the preferences panel", async () => {

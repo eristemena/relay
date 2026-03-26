@@ -19,11 +19,10 @@ export function WorkspaceUtilityDrawer({
 
   return (
     <div className="workspace-utility-shell" data-state="open">
-      <button
-        aria-label="Close workspace menu"
+      <div
+        aria-hidden="true"
         className="workspace-utility-backdrop"
         onClick={onClose}
-        type="button"
       />
       <aside
         aria-labelledby="workspace-utility-heading"
@@ -42,11 +41,25 @@ export function WorkspaceUtilityDrawer({
             </h2>
           </div>
           <button
-            className="rounded-full border border-border bg-raised px-4 py-2 text-sm text-text"
+            aria-label="Close workspace menu"
+            className="agent-canvas-detail-close"
             onClick={onClose}
             type="button"
           >
-            Close
+            <svg
+              aria-hidden="true"
+              fill="none"
+              height="18"
+              viewBox="0 0 18 18"
+              width="18"
+            >
+              <path
+                d="M4.5 4.5L13.5 13.5M13.5 4.5L4.5 13.5"
+                stroke="currentColor"
+                strokeLinecap="round"
+                strokeWidth="1.8"
+              />
+            </svg>
           </button>
         </div>
 
