@@ -116,6 +116,11 @@ describe("AgentCanvas", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
+  function getCanvasDetailHost() {
+    return screen
+      .getByTestId("agent-canvas-flow")
+      .closest("[data-detail-open]");
+  }
 
   it("shows the orchestration empty state before any node has spawned", () => {
     const snapshot = buildWorkspaceSnapshot();
@@ -182,12 +187,23 @@ describe("AgentCanvas", () => {
     expect(
       screen.getByTestId("agent-canvas-detail-mode-selected"),
     ).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /close agent details/i }),
+    );
+
+    expect(
+      screen.queryByTestId("agent-canvas-detail-mode-selected"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Planner, Planner node" }),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Canvas background" }));
 
-    expect(
-      screen.getByTestId("agent-canvas-flow").parentElement,
-    ).toHaveAttribute("data-detail-open", "false");
+    expect(getCanvasDetailHost()).toHaveAttribute("data-detail-open", "false");
   });
 
   it("appends spawned nodes and patches node state without losing interactivity", () => {
@@ -348,9 +364,7 @@ describe("AgentCanvas", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /canvas background/i }));
 
-    expect(
-      screen.getByTestId("agent-canvas-flow").parentElement,
-    ).toHaveAttribute("data-detail-open", "false");
+    expect(getCanvasDetailHost()).toHaveAttribute("data-detail-open", "false");
   });
 
   it("keeps viewport controls available while orchestration nodes stream and fail", () => {
@@ -839,7 +853,7 @@ describe("AgentCanvas", () => {
     ).toHaveClass("agent-canvas-detail-copy");
   });
 
-  it("renders markdown in the final run result and selected node summary", () => {
+  it("keeps the final run result out of the canvas while rendering markdown in the selected node summary", () => {
     const snapshot = buildWorkspaceSnapshot({
       active_run_id: "run_1",
       run_summaries: [
@@ -909,22 +923,7 @@ describe("AgentCanvas", () => {
       } as never);
     });
 
-    const status = screen
-      .getAllByRole("status")
-      .find((element) => /Ask for the/i.test(element.textContent ?? ""));
-
-    expect(status).toBeDefined();
-    expect(
-      within(status as HTMLElement).getByText("Goal:", { selector: "strong" }),
-    ).toBeInTheDocument();
-    expect(
-      within(status as HTMLElement).getByText(".env.example", {
-        selector: "code",
-      }),
-    ).toBeInTheDocument();
-    expect(
-      within(status as HTMLElement).getByText(/Ask for the/i),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/Ask for the/i)).not.toBeInTheDocument();
 
     fireEvent.click(
       screen.getAllByRole("button", { name: /reviewer, reviewer node/i })[0],

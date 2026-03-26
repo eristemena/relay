@@ -37,7 +37,7 @@ export function WorkspaceCanvas({ activeSession }: WorkspaceCanvasProps) {
   return (
     <motion.section
       animate={{ opacity: 1, y: 0 }}
-      className="relative"
+      className="relative h-full min-h-0"
       initial={{ opacity: 0, y: 12 }}
       transition={{ duration: CANVAS_MOTION_SECONDS, ease: CANVAS_MOTION_EASE }}
     >

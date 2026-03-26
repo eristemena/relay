@@ -31,7 +31,6 @@ import {
   clearWorkspaceCanvasSelection,
   selectWorkspaceCanvasNode,
 } from "@/shared/lib/workspace-store";
-import { FormattedMarkdown } from "@/shared/lib/FormattedMarkdown";
 import type { WorkspaceUIState } from "@/shared/lib/workspace-protocol";
 import {
   getRunFailureTitle,
@@ -99,6 +98,24 @@ function AgentCanvasSurface({
   const haltNote = isClarificationRequiredCode(canvasDocument?.haltCode)
     ? "Relay stopped before continuing to downstream agents because one stage asked for more input instead of taking action."
     : null;
+
+  useEffect(() => {
+    if (!selectedNode) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      clearWorkspaceCanvasSelection(runId);
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [runId, selectedNode]);
+
   const flowNodes = useMemo<AgentCanvasFlowNode[]>(
     () =>
       (canvasDocument?.nodes ?? []).map((node) => ({
@@ -144,25 +161,16 @@ function AgentCanvasSurface({
     <section
       aria-describedby="agent-canvas-description agent-canvas-status"
       aria-labelledby="agent-canvas-heading"
-      className="panel-surface noise-overlay relative overflow-hidden rounded-[2rem] p-5 shadow-idle"
+      className="panel-surface noise-overlay relative flex h-full min-h-0 flex-col overflow-hidden rounded-[2rem] p-5 shadow-idle"
     >
-      <div className="relative z-10 space-y-5">
-        <div className="max-w-3xl">
-          <p className="eyebrow">Live orchestration</p>
-          <h2
-            className="mt-2 font-display text-3xl text-text"
-            id="agent-canvas-heading"
-          >
-            {sessionLabel} agent graph
-          </h2>
-          <p
-            className="mt-3 text-sm leading-6 text-text-muted"
-            id="agent-canvas-description"
-          >
-            Watch the live orchestration unfold, inspect any node, and reopen
-            saved runs without losing per-agent context.
-          </p>
-        </div>
+      <div className="relative z-10 flex h-full min-h-0 flex-col gap-5">
+        <h2 className="sr-only" id="agent-canvas-heading">
+          {sessionLabel} agent graph
+        </h2>
+        <p className="sr-only" id="agent-canvas-description">
+          Inspect any node and reopen saved runs without losing per-agent
+          context.
+        </p>
 
         {canvasDocument?.validationMessage ? (
           <div
@@ -183,16 +191,6 @@ function AgentCanvasSurface({
             {haltNote ? (
               <p className="mt-2 text-text-muted">{haltNote}</p>
             ) : null}
-          </div>
-        ) : null}
-
-        {canvasDocument?.runSummary ? (
-          <div
-            aria-live="polite"
-            className="rounded-[1.25rem] border border-border bg-raised/80 p-4 text-sm leading-6 text-text"
-            role="status"
-          >
-            <FormattedMarkdown content={canvasDocument.runSummary} />
           </div>
         ) : null}
 
@@ -234,50 +232,53 @@ function AgentCanvasSurface({
               className="agent-canvas-detail-grid"
               data-detail-open={selectedNode ? "true" : "false"}
             >
-              <div
-                className="agent-canvas-stage agent-canvas-flow"
-                data-testid="agent-canvas-flow"
-              >
-                <ReactFlow<AgentCanvasFlowNode, AgentCanvasFlowEdge>
-                  aria-label="Agent canvas graph"
-                  edgeTypes={edgeTypes}
-                  edges={flowEdges}
-                  elementsSelectable
-                  fitView
-                  maxZoom={1.6}
-                  minZoom={0.5}
-                  nodeTypes={nodeTypes}
-                  nodes={flowNodes}
-                  nodesConnectable={false}
-                  nodesDraggable={false}
-                  onNodeClick={(_, node) =>
-                    selectWorkspaceCanvasNode(runId, node.id)
-                  }
-                  onPaneClick={() => clearWorkspaceCanvasSelection(runId)}
-                  panOnDrag
-                  proOptions={{ hideAttribution: true }}
-                  zoomOnPinch
-                  zoomOnScroll
+              <div className="agent-canvas-stage-shell">
+                <div
+                  className="agent-canvas-stage agent-canvas-flow"
+                  data-testid="agent-canvas-flow"
                 >
-                  <Background />
-                  <Controls showInteractive={false} />
-                  <ViewportSync
-                    layoutRevision={canvasDocument.layoutRevision}
-                  />
-                </ReactFlow>
+                  <ReactFlow<AgentCanvasFlowNode, AgentCanvasFlowEdge>
+                    aria-label="Agent canvas graph"
+                    edgeTypes={edgeTypes}
+                    edges={flowEdges}
+                    elementsSelectable
+                    fitView
+                    maxZoom={1.6}
+                    minZoom={0.5}
+                    nodeTypes={nodeTypes}
+                    nodes={flowNodes}
+                    nodesConnectable={false}
+                    nodesDraggable={false}
+                    onNodeClick={(_, node) =>
+                      selectWorkspaceCanvasNode(runId, node.id)
+                    }
+                    onPaneClick={() => clearWorkspaceCanvasSelection(runId)}
+                    panOnDrag
+                    proOptions={{ hideAttribution: true }}
+                    zoomOnPinch
+                    zoomOnScroll
+                  >
+                    <Background />
+                    <Controls showInteractive={false} />
+                    <ViewportSync
+                      layoutRevision={canvasDocument.layoutRevision}
+                    />
+                  </ReactFlow>
+                </div>
+                <AnimatePresence initial={false} mode="sync">
+                  {selectedNode ? (
+                    <AgentNodeDetailPanel
+                      haltAgentId={canvasDocument.haltAgentId}
+                      haltCode={canvasDocument.haltCode}
+                      haltMessage={canvasDocument.haltMessage}
+                      haltRole={canvasDocument.haltRole}
+                      key={selectedNode.id}
+                      onClose={() => clearWorkspaceCanvasSelection(runId)}
+                      selectedNode={selectedNode}
+                    />
+                  ) : null}
+                </AnimatePresence>
               </div>
-              <AnimatePresence initial={false} mode="sync">
-                {selectedNode ? (
-                  <AgentNodeDetailPanel
-                    haltAgentId={canvasDocument.haltAgentId}
-                    haltCode={canvasDocument.haltCode}
-                    haltMessage={canvasDocument.haltMessage}
-                    haltRole={canvasDocument.haltRole}
-                    key={selectedNode.id}
-                    selectedNode={selectedNode}
-                  />
-                ) : null}
-              </AnimatePresence>
             </div>
           )}
         </div>

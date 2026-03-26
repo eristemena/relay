@@ -111,6 +111,10 @@ describe("AgentNodeDetailPanel", () => {
     expect(
       screen.getByRole("heading", { name: "Coder" }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", { name: /close agent details/i }).length,
+    ).toBeGreaterThan(0);
     expect(screen.getByText(/coder transcript\./i)).toBeInTheDocument();
     expect(screen.getByText(/coder needs a missing file path/i)).toBeInTheDocument();
   });

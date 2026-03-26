@@ -1,6 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { useEffect, useRef } from "react";
 import { StateBadge } from "@/features/agent-panel/StateBadge";
 import {
   canvasPanelPresenceVariants,
@@ -20,6 +21,7 @@ interface AgentNodeDetailPanelProps {
   haltMessage: string;
   haltRole: AgentCanvasRole | null;
   isLoading?: boolean;
+  onClose?: () => void;
   errorMessage?: string | null;
   selectedNode: SelectedCanvasNodeView | null;
 }
@@ -30,10 +32,12 @@ export function AgentNodeDetailPanel({
   haltMessage,
   haltRole,
   isLoading = false,
+  onClose,
   errorMessage = null,
   selectedNode,
 }: AgentNodeDetailPanelProps) {
   const prefersReducedMotion = useReducedMotion() ?? false;
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const panelMode = selectedNode
     ? "selected"
     : isLoading
@@ -118,15 +122,21 @@ export function AgentNodeDetailPanel({
       ? "Clarification required"
       : "Failure";
 
+  useEffect(() => {
+    closeButtonRef.current?.focus();
+  }, [selectedNode]);
+
   return (
     <aside
       aria-labelledby="agent-canvas-detail-heading"
-      className="agent-canvas-detail-panel panel-surface rounded-[1.5rem] p-5 shadow-idle"
+      aria-modal="false"
+      className="agent-canvas-detail-panel agent-canvas-detail-popup panel-surface rounded-[1.5rem] p-5 shadow-idle"
+      role="dialog"
     >
       <AnimatePresence initial={false} mode="sync">
         <motion.div
           key={panelKey}
-          className="agent-canvas-panel-motion"
+          className="agent-canvas-panel-motion agent-canvas-detail-layout h-full"
           data-panel-mode={panelMode}
           data-testid={`agent-canvas-detail-mode-${panelMode}`}
           initial="hidden"
@@ -135,7 +145,7 @@ export function AgentNodeDetailPanel({
           transition={getCanvasTransition(prefersReducedMotion)}
           variants={canvasPanelPresenceVariants}
         >
-          <div className="flex items-start justify-between gap-3">
+          <div className="agent-canvas-detail-header flex items-start justify-between gap-3">
             <div>
               <p className="eyebrow">Selected node</p>
               <h3
@@ -145,10 +155,34 @@ export function AgentNodeDetailPanel({
                 {selectedNode.label}
               </h3>
             </div>
-            <StateBadge state={selectedNode.state} />
+            <div className="flex items-start gap-3">
+              <StateBadge state={selectedNode.state} />
+              <button
+                aria-label="Close agent details"
+                className="agent-canvas-detail-close"
+                onClick={onClose}
+                ref={closeButtonRef}
+                type="button"
+              >
+                <svg
+                  aria-hidden="true"
+                  fill="none"
+                  height="18"
+                  viewBox="0 0 18 18"
+                  width="18"
+                >
+                  <path
+                    d="M4.5 4.5L13.5 13.5M13.5 4.5L4.5 13.5"
+                    stroke="currentColor"
+                    strokeLinecap="round"
+                    strokeWidth="1.8"
+                  />
+                </svg>
+              </button>
+            </div>
           </div>
 
-          <div className="mt-5 grid gap-4 text-sm leading-6 text-text-muted">
+          <div className="agent-canvas-detail-scroll mt-5 grid gap-4 text-sm leading-6 text-text-muted">
             <div>
               <p className="eyebrow">Role</p>
               <p className="mt-2 text-text">{selectedNode.role}</p>

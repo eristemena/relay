@@ -89,17 +89,16 @@ describe("WorkspaceShell", () => {
       screen.getByRole("button", { name: /run task/i }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("heading", { name: /watch relay work in order/i }),
-    ).not.toBeInTheDocument();
-    expect(
       screen.queryByRole("navigation", {
         name: /session history and switching/i,
       }),
     ).not.toBeInTheDocument();
-    expect(screen.queryByText(/workspace summary/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/saved workspace defaults/i),
+    ).not.toBeInTheDocument();
   });
 
-  it("opens the slide-out workspace menu on demand", async () => {
+  it("opens the workspace menu on demand", async () => {
     primeWorkspaceStore(buildWorkspaceSnapshot());
     render(<WorkspaceShell />);
 
@@ -118,9 +117,12 @@ describe("WorkspaceShell", () => {
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", {
-        name: /pending write and command requests/i,
-      }),
+      screen.getByRole("heading", { name: /latest orchestration recap/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /replay or complete a run to capture the orchestration summary here/i,
+      ),
     ).toBeInTheDocument();
     expect(screen.getByText(/saved workspace defaults/i)).toBeInTheDocument();
     expect(screen.getByText(/port 4747/i)).toBeInTheDocument();
@@ -141,6 +143,7 @@ describe("WorkspaceShell", () => {
     fireEvent.click(
       screen.getByRole("button", { name: /open workspace menu/i }),
     );
+
     fireEvent.click(
       await screen.findByRole("button", { name: /browse folders/i }),
     );
@@ -288,10 +291,6 @@ describe("WorkspaceShell", () => {
 
     render(<WorkspaceShell />);
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /open workspace menu/i }),
-    );
-
     act(() => {
       workspaceStore.handleEnvelope({
         type: "run_error",
@@ -355,10 +354,6 @@ describe("WorkspaceShell", () => {
     );
 
     render(<WorkspaceShell />);
-
-    fireEvent.click(
-      screen.getByRole("button", { name: /open workspace menu/i }),
-    );
 
     act(() => {
       workspaceStore.handleEnvelope({
@@ -427,7 +422,7 @@ describe("WorkspaceShell", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows the repository summary in the workspace drawer", async () => {
+  it("shows the repository summary in the workspace menu", async () => {
     primeWorkspaceStore(
       buildWorkspaceSnapshot({
         preferences: {
@@ -466,7 +461,7 @@ describe("WorkspaceShell", () => {
     expect(within(drawer).getAllByText("/tmp/relay").length).toBeGreaterThan(0);
   });
 
-  it("forwards approval decisions from the inline approval prompt", () => {
+  it("opens a blocking approval dialog and forwards approval decisions", async () => {
     primeWorkspaceStore(
       buildWorkspaceSnapshot({
         active_run_id: "run_1",
@@ -519,9 +514,12 @@ describe("WorkspaceShell", () => {
 
     render(<WorkspaceShell />);
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /open workspace menu/i }),
-    );
+    expect(
+      await screen.findByText(/relay is waiting for approval/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /approve request/i }),
+    ).toBeInTheDocument();
 
     act(() => {
       screen.getByRole("button", { name: /approve request/i }).click();
