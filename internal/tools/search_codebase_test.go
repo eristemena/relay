@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestSearchCodebaseToolFindsMatchesAndRespectsPattern(t *testing.T) {
-	projectRoot := t.TempDir()
+	projectRoot := initRepositoryRoot(t)
 	writeTextFile(t, filepath.Join(projectRoot, "README.md"), "alpha beta\n")
 	writeTextFile(t, filepath.Join(projectRoot, "notes.txt"), "alpha only\n")
 	writeTextFile(t, filepath.Join(projectRoot, "nested", "guide.md"), "beta alpha\n")
@@ -27,7 +28,7 @@ func TestSearchCodebaseToolFindsMatchesAndRespectsPattern(t *testing.T) {
 }
 
 func TestSearchCodebaseToolFindsFilenameMatches(t *testing.T) {
-	projectRoot := t.TempDir()
+	projectRoot := initRepositoryRoot(t)
 	writeTextFile(t, filepath.Join(projectRoot, ".env.example"), "API_KEY=placeholder\n")
 	writeTextFile(t, filepath.Join(projectRoot, "config", "app.env"), "ENV=dev\n")
 
@@ -45,12 +46,23 @@ func TestSearchCodebaseToolFindsFilenameMatches(t *testing.T) {
 }
 
 func TestSearchCodebaseToolRequiresQuery(t *testing.T) {
-	tool := NewSearchCodebaseTool(t.TempDir())
+	tool := NewSearchCodebaseTool(initRepositoryRoot(t))
 	_, err := tool.Execute(context.Background(), json.RawMessage(`{"query":"  "}`))
 	if err == nil {
 		t.Fatal("Execute() error = nil, want query validation error")
 	}
 	if err.Error() != "search query is required" {
 		t.Fatalf("Execute() error = %q", err.Error())
+	}
+}
+
+func TestSearchCodebaseToolRejectsInvalidProjectRoot(t *testing.T) {
+	tool := NewSearchCodebaseTool(t.TempDir())
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{"query":"alpha"}`))
+	if err == nil {
+		t.Fatal("Execute() error = nil, want repository validation failure")
+	}
+	if !strings.Contains(err.Error(), "local Git repository root") {
+		t.Fatalf("Execute() error = %q, want git repository guidance", err.Error())
 	}
 }

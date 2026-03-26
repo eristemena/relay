@@ -33,7 +33,14 @@ vi.mock("@xyflow/react", async () => {
   };
 });
 
+vi.mock("@/features/approvals/MonacoDiffViewer", () => ({
+  MonacoDiffViewer: ({ targetPath }: { targetPath: string }) => (
+    <div data-testid="monaco-diff-viewer">Diff viewer for {targetPath}</div>
+  ),
+}));
+
 const socketActions = {
+  browseRepository: vi.fn(),
   cancelRun: vi.fn(),
   createSession: vi.fn(),
   openRun: vi.fn(),
@@ -106,18 +113,42 @@ describe("WorkspaceShell", () => {
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: /watch relay work in order/i }),
-    ).toBeInTheDocument();
-    expect(
       screen.getByRole("navigation", {
         name: /session history and switching/i,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", {
+        name: /pending write and command requests/i,
       }),
     ).toBeInTheDocument();
     expect(screen.getByText(/saved workspace defaults/i)).toBeInTheDocument();
     expect(screen.getByText(/port 4747/i)).toBeInTheDocument();
     expect(screen.getByText(/theme midnight/i)).toBeInTheDocument();
     expect(screen.getAllByText(/saved runs/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/local settings/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /local settings/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /choose a local git repository/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("forwards repository browse requests from the preferences panel", async () => {
+    primeWorkspaceStore(buildWorkspaceSnapshot());
+    render(<WorkspaceShell />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /open workspace menu/i }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /browse folders/i }),
+    );
+
+    expect(socketActions.browseRepository).toHaveBeenCalledWith(
+      undefined,
+      false,
+    );
   });
 
   it("submits tasks from the floating bottom composer", () => {
@@ -209,9 +240,15 @@ describe("WorkspaceShell", () => {
       } as never);
     });
 
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      /that session is no longer available/i,
-    );
+    expect(
+      screen
+        .getAllByRole("alert")
+        .some((element) =>
+          /that session is no longer available/i.test(
+            element.textContent ?? "",
+          ),
+        ),
+    ).toBe(true);
   });
 
   it("describes halted orchestration runs with the preserved halt reason", () => {
@@ -381,13 +418,52 @@ describe("WorkspaceShell", () => {
     const header = screen.getByRole("banner");
     const workspaceStatusBanner = within(header).getByRole("status");
     expect(
-      within(workspaceStatusBanner).getByText(/project root needs attention/i),
+      within(workspaceStatusBanner).getByText(/repository not connected/i),
     ).toBeInTheDocument();
     expect(
       within(workspaceStatusBanner).getByText(
         /repository-reading tools stay disabled/i,
       ),
     ).toBeInTheDocument();
+  });
+
+  it("shows the repository summary in the workspace drawer", async () => {
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        preferences: {
+          preferred_port: 4747,
+          appearance_variant: "midnight",
+          has_credentials: false,
+          openrouter_configured: true,
+          project_root: "/tmp/relay",
+          project_root_configured: true,
+          project_root_valid: true,
+          agent_models: {
+            planner: "anthropic/claude-opus-4",
+            coder: "anthropic/claude-sonnet-4-5",
+            reviewer: "anthropic/claude-sonnet-4-5",
+            tester: "deepseek/deepseek-chat",
+            explainer: "google/gemini-2.0-flash-001",
+          },
+          open_browser_on_start: true,
+        },
+      }),
+    );
+
+    render(<WorkspaceShell />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /open workspace menu/i }),
+    );
+
+    const drawer = await screen.findByRole("dialog", {
+      name: /sessions, saved runs, and preferences/i,
+    });
+
+    expect(
+      within(drawer).getByText(/repository connected/i),
+    ).toBeInTheDocument();
+    expect(within(drawer).getAllByText("/tmp/relay").length).toBeGreaterThan(0);
   });
 
   it("forwards approval decisions from the inline approval prompt", () => {
@@ -448,7 +524,7 @@ describe("WorkspaceShell", () => {
     );
 
     act(() => {
-      screen.getByRole("button", { name: /approve tool/i }).click();
+      screen.getByRole("button", { name: /approve request/i }).click();
     });
 
     expect(socketActions.respondToApproval).toHaveBeenCalledWith(

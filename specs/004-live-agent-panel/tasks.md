@@ -3,6 +3,8 @@
 **Input**: Design documents from `/specs/004-live-agent-panel/`
 **Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/, quickstart.md
 
+**Historical Note**: These tasks record the original implementation of the dedicated live execution drawer panel. The current product has since removed that panel in favor of the command bar, canvas node detail, saved runs, and approval review surfaces.
+
 **Tests**: Tests are REQUIRED for this feature by the specification and constitution. Include Go unit coverage for config, agents, orchestrator, and every tool happy/error path; Go integration coverage for WebSocket protocol ordering, approval gating, replay, and OpenRouter failure handling; plus frontend component coverage for the live panel, tool timeline, history review, and preferences flows.
 
 **Organization**: Tasks are grouped by user story to enable independent implementation and testing.

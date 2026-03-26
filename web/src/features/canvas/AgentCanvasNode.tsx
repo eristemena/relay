@@ -21,12 +21,17 @@ export interface AgentCanvasNodeData extends Record<string, unknown> {
   role: AgentCanvasRole;
   state: AgentCanvasState;
   stateRevision: number;
+  readCount: number;
+  proposalCount: number;
   summary: string;
 }
 
 export type AgentCanvasFlowNode = Node<AgentCanvasNodeData, "agentCanvasNode">;
 
-export function AgentCanvasNode({ data, selected }: NodeProps<AgentCanvasFlowNode>) {
+export function AgentCanvasNode({
+  data,
+  selected,
+}: NodeProps<AgentCanvasFlowNode>) {
   const prefersReducedMotion = useReducedMotion() ?? false;
   const timeoutRef = useRef<number | null>(null);
   const [streamingActive, setStreamingActive] = useState(
@@ -98,6 +103,9 @@ export function AgentCanvasNode({ data, selected }: NodeProps<AgentCanvasFlowNod
           <StateBadge state={data.state} />
         </div>
         <p className="mt-4 text-sm leading-6 text-text-muted">{data.summary}</p>
+        <p className="mt-4 text-xs text-text-muted">
+          {formatActivitySummary(data.readCount, data.proposalCount)}
+        </p>
         <p className="mt-4 text-xs uppercase tracking-[0.22em] text-text-muted">
           {selected ? "Selected" : "Inspect node"}
         </p>
@@ -110,4 +118,21 @@ export function AgentCanvasNode({ data, selected }: NodeProps<AgentCanvasFlowNod
       />
     </motion.div>
   );
+}
+
+function formatActivitySummary(readCount: number, proposalCount: number) {
+  const segments: string[] = [];
+
+  if (readCount > 0) {
+    segments.push(`${readCount} file${readCount === 1 ? "" : "s"} read`);
+  }
+  if (proposalCount > 0) {
+    segments.push(
+      `${proposalCount} change${proposalCount === 1 ? "" : "s"} proposed`,
+    );
+  }
+
+  return segments.length > 0
+    ? segments.join(" · ")
+    : "No repository file activity recorded yet.";
 }

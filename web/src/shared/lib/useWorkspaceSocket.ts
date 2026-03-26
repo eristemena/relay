@@ -8,13 +8,17 @@ import {
   createAgentRunSubmitRequest,
   createBootstrapRequest,
   createPreferencesSaveRequest,
+  createRepositoryBrowseRequest,
   createSessionCreateRequest,
   createSessionOpenRequest,
   type Envelope,
   type PreferencesSavePayload,
   type WorkspaceSnapshotPayload,
 } from "@/shared/lib/workspace-protocol";
-import { workspaceStore } from "@/shared/lib/workspace-store";
+import {
+  startWorkspaceRepositoryBrowse,
+  workspaceStore,
+} from "@/shared/lib/workspace-store";
 
 function getSocketURL() {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -151,6 +155,10 @@ export function useWorkspaceSocket() {
     },
     savePreferences(payload: PreferencesSavePayload) {
       sendEnvelope(createPreferencesSaveRequest(payload));
+    },
+    browseRepository(path?: string, showHidden = false) {
+      startWorkspaceRepositoryBrowse(path ?? "", showHidden);
+      sendEnvelope(createRepositoryBrowseRequest(path, showHidden));
     },
     submitRun(sessionId: string, task: string) {
       sendEnvelope(createAgentRunSubmitRequest(sessionId, task));

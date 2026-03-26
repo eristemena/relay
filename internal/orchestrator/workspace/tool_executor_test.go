@@ -10,30 +10,44 @@ import (
 	"time"
 
 	"github.com/erisristemena/relay/internal/agents"
+	toolspkg "github.com/erisristemena/relay/internal/tools"
+	git "github.com/go-git/go-git/v5"
 )
 
 func TestCatalogToolExecutorDefinitionsSkipApprovalTools(t *testing.T) {
 	executor := newCatalogToolExecutor(t.TempDir(), nil)
 	definitions := executor.Definitions([]agents.ToolName{
 		agents.ToolReadFile,
+		agents.ToolListFiles,
 		agents.ToolSearchCodebase,
+		agents.ToolGitLog,
+		agents.ToolGitDiff,
 		agents.ToolWriteFile,
 		agents.ToolRunCommand,
 	})
 
-	if len(definitions) != 2 {
-		t.Fatalf("len(definitions) = %d, want 2", len(definitions))
+	if len(definitions) != 5 {
+		t.Fatalf("len(definitions) = %d, want 5", len(definitions))
 	}
 	if definitions[0].Name != agents.ToolReadFile {
 		t.Fatalf("definitions[0].Name = %q, want %q", definitions[0].Name, agents.ToolReadFile)
 	}
-	if definitions[1].Name != agents.ToolSearchCodebase {
-		t.Fatalf("definitions[1].Name = %q, want %q", definitions[1].Name, agents.ToolSearchCodebase)
+	if definitions[1].Name != agents.ToolListFiles {
+		t.Fatalf("definitions[1].Name = %q, want %q", definitions[1].Name, agents.ToolListFiles)
+	}
+	if definitions[2].Name != agents.ToolSearchCodebase {
+		t.Fatalf("definitions[2].Name = %q, want %q", definitions[2].Name, agents.ToolSearchCodebase)
+	}
+	if definitions[3].Name != agents.ToolGitLog {
+		t.Fatalf("definitions[3].Name = %q, want %q", definitions[3].Name, agents.ToolGitLog)
+	}
+	if definitions[4].Name != agents.ToolGitDiff {
+		t.Fatalf("definitions[4].Name = %q, want %q", definitions[4].Name, agents.ToolGitDiff)
 	}
 }
 
 func TestCatalogToolExecutorExecutesReadFileWithinProjectRoot(t *testing.T) {
-	projectRoot := t.TempDir()
+	projectRoot := initWorkspaceRepositoryRoot(t)
 	readmePath := filepath.Join(projectRoot, "README.md")
 	if err := os.WriteFile(readmePath, []byte("alpha\nbeta\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -65,7 +79,7 @@ func TestCatalogToolExecutorExecutesReadFileWithinProjectRoot(t *testing.T) {
 }
 
 func TestCatalogToolExecutorRequestsApprovalBeforeWriteFile(t *testing.T) {
-	projectRoot := t.TempDir()
+	projectRoot := initWorkspaceRepositoryRoot(t)
 	approvals := &stubApprovalManager{decision: ApprovalDecision{Approved: true}}
 	executor := newCatalogToolExecutor(projectRoot, approvals)
 
@@ -99,12 +113,35 @@ func TestCatalogToolExecutorRequestsApprovalBeforeWriteFile(t *testing.T) {
 	if approvals.request.InputPreview["path"] != "README.md" {
 		t.Fatalf("approvals.request.InputPreview[path] = %v, want README.md", approvals.request.InputPreview["path"])
 	}
+	if approvals.request.InputPreview["request_kind"] != toolspkg.RequestKindFileWrite {
+		t.Fatalf("approvals.request.InputPreview[request_kind] = %v, want %q", approvals.request.InputPreview["request_kind"], toolspkg.RequestKindFileWrite)
+	}
+	diffPreview, ok := approvals.request.InputPreview["diff_preview"].(map[string]any)
+	if !ok || diffPreview["base_content_hash"] == "" {
+		t.Fatalf("approvals.request.InputPreview[diff_preview] = %#v, want diff preview with base hash", approvals.request.InputPreview["diff_preview"])
+	}
 	content, err := os.ReadFile(filepath.Join(projectRoot, "README.md"))
 	if err != nil {
 		t.Fatalf("ReadFile() error = %v", err)
 	}
 	if string(content) != "hello" {
 		t.Fatalf("written content = %q, want hello", string(content))
+	}
+}
+
+func TestCatalogToolExecutorBuildsCommandPreviewForApprovals(t *testing.T) {
+	projectRoot := initWorkspaceRepositoryRoot(t)
+	executor := newCatalogToolExecutor(projectRoot, nil)
+	preview := executor.PreviewToolCall(agents.ToolRunCommand, json.RawMessage(`{"command":"go","args":["test","./..."]}`))
+	if preview["request_kind"] != toolspkg.RequestKindCommand {
+		t.Fatalf("preview[request_kind] = %v, want %q", preview["request_kind"], toolspkg.RequestKindCommand)
+	}
+	commandPreview, ok := preview["command_preview"].(map[string]any)
+	if !ok {
+		t.Fatalf("preview[command_preview] = %#v, want command preview map", preview["command_preview"])
+	}
+	if commandPreview["effective_dir"] != projectRoot {
+		t.Fatalf("commandPreview[effective_dir] = %v, want %q", commandPreview["effective_dir"], projectRoot)
 	}
 }
 
@@ -156,7 +193,7 @@ func TestCatalogToolExecutorBlocksTesterWritesOutsideTestArtifacts(t *testing.T)
 }
 
 func TestCatalogToolExecutorAllowsTesterWritesForTestArtifacts(t *testing.T) {
-	projectRoot := t.TempDir()
+	projectRoot := initWorkspaceRepositoryRoot(t)
 	approvals := &stubApprovalManager{decision: ApprovalDecision{Approved: true}}
 	executor := newCatalogToolExecutor(projectRoot, approvals)
 	ctx := withRunExecutionContext(context.Background(), runExecutionContext{
@@ -271,6 +308,18 @@ func TestCatalogToolExecutorPreviewAndSchemaHelpers(t *testing.T) {
 	if readSchema.Required[0] != "path" || readSchema.Properties["path"].Type != "string" {
 		t.Fatalf("toolSchema(read_file) = %#v, want path requirement", readSchema)
 	}
+	listSchema := toolSchema(agents.ToolListFiles)
+	if listSchema.Properties["recursive"].Type != "boolean" {
+		t.Fatalf("toolSchema(list_files) recursive = %#v, want boolean", listSchema.Properties["recursive"])
+	}
+	gitLogSchema := toolSchema(agents.ToolGitLog)
+	if gitLogSchema.Properties["max_results"].Type != "number" {
+		t.Fatalf("toolSchema(git_log) max_results = %#v, want number", gitLogSchema.Properties["max_results"])
+	}
+	gitDiffSchema := toolSchema(agents.ToolGitDiff)
+	if gitDiffSchema.Properties["path"].Type != "string" {
+		t.Fatalf("toolSchema(git_diff) path = %#v, want string", gitDiffSchema.Properties["path"])
+	}
 	commandSchema := toolSchema(agents.ToolRunCommand)
 	if commandSchema.Properties["args"].Type != "array" {
 		t.Fatalf("toolSchema(run_command) args = %#v, want array", commandSchema.Properties["args"])
@@ -299,4 +348,14 @@ func (s *stubApprovalManager) RequestApproval(_ context.Context, request Approva
 	}
 	s.request = request
 	return s.decision, nil
+}
+
+func initWorkspaceRepositoryRoot(t *testing.T) string {
+	t.Helper()
+
+	root := t.TempDir()
+	if _, err := git.PlainInit(root, false); err != nil {
+		t.Fatalf("git.PlainInit() error = %v", err)
+	}
+	return root
 }

@@ -114,6 +114,8 @@ function AgentCanvasSurface({
           roleLabel: getRoleLabel(node.role),
           state: node.state,
           stateRevision: node.stateRevision,
+          readCount: node.details.readPaths.length,
+          proposalCount: node.details.proposedChanges.length,
           summary: node.details.summary,
         },
         selected: node.id === canvasDocument?.selectedNodeId,

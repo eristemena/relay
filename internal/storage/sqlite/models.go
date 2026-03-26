@@ -3,33 +3,43 @@ package sqlite
 import "time"
 
 const (
-	StatusActive   = "active"
-	StatusIdle     = "idle"
-	StatusArchived = "archived"
-	RunStateAccepted   = "accepted"
-	RunStateActive     = "active"
-	RunStateThinking   = "thinking"
-	RunStateToolRunning = "tool_running"
-	RunStateCompleted  = "completed"
-	RunStateCancelled  = "cancelled"
-	RunStateHalted     = "halted"
-	RunStateErrored    = "errored"
-	RunModeSingleAgent = "single_agent"
-	RunModeOrchestration = "orchestration"
-	EventTypeStateChange = "state_change"
-	EventTypeToken      = "token"
-	EventTypeToolCall   = "tool_call"
-	EventTypeToolResult = "tool_result"
-	EventTypeComplete   = "complete"
-	EventTypeError      = "error"
-	EventTypeAgentSpawned     = "agent_spawned"
-	EventTypeAgentStateChanged = "agent_state_changed"
-	EventTypeTaskAssigned     = "task_assigned"
-	EventTypeHandoffStart     = "handoff_start"
-	EventTypeHandoffComplete  = "handoff_complete"
-	EventTypeAgentError       = "agent_error"
-	EventTypeRunComplete      = "run_complete"
-	EventTypeRunError         = "run_error"
+	StatusActive                  = "active"
+	StatusIdle                    = "idle"
+	StatusArchived                = "archived"
+	RunStateAccepted              = "accepted"
+	RunStateActive                = "active"
+	RunStateThinking              = "thinking"
+	RunStateToolRunning           = "tool_running"
+	RunStateCompleted             = "completed"
+	RunStateCancelled             = "cancelled"
+	RunStateHalted                = "halted"
+	RunStateErrored               = "errored"
+	RunModeSingleAgent            = "single_agent"
+	RunModeOrchestration          = "orchestration"
+	EventTypeStateChange          = "state_change"
+	EventTypeToken                = "token"
+	EventTypeToolCall             = "tool_call"
+	EventTypeToolResult           = "tool_result"
+	EventTypeComplete             = "complete"
+	EventTypeError                = "error"
+	EventTypeAgentSpawned         = "agent_spawned"
+	EventTypeAgentStateChanged    = "agent_state_changed"
+	EventTypeTaskAssigned         = "task_assigned"
+	EventTypeHandoffStart         = "handoff_start"
+	EventTypeHandoffComplete      = "handoff_complete"
+	EventTypeAgentError           = "agent_error"
+	EventTypeRunComplete          = "run_complete"
+	EventTypeRunError             = "run_error"
+	EventTypeApprovalStateChanged = "approval_state_changed"
+)
+
+const (
+	ApprovalStateProposed = "proposed"
+	ApprovalStateApproved = "approved"
+	ApprovalStateRejected = "rejected"
+	ApprovalStateApplied  = "applied"
+	ApprovalStateBlocked  = "blocked"
+	ApprovalStateExpired  = "expired"
 )
 
 const (
@@ -113,6 +123,22 @@ type AgentRunEvent struct {
 	Model       string    `json:"model"`
 	PayloadJSON string    `json:"payload_json"`
 	CreatedAt   time.Time `json:"created_at"`
+}
+
+type ApprovalRequest struct {
+	ID               string     `json:"id"`
+	SessionID        string     `json:"session_id"`
+	RunID            string     `json:"run_id"`
+	ToolCallID       string     `json:"tool_call_id"`
+	ToolName         string     `json:"tool_name"`
+	Role             AgentRole  `json:"role,omitempty"`
+	Model            string     `json:"model,omitempty"`
+	InputPreviewJSON string     `json:"input_preview_json"`
+	Message          string     `json:"message"`
+	State            string     `json:"state"`
+	OccurredAt       time.Time  `json:"occurred_at"`
+	ReviewedAt       *time.Time `json:"reviewed_at,omitempty"`
+	AppliedAt        *time.Time `json:"applied_at,omitempty"`
 }
 
 type RunSummary struct {

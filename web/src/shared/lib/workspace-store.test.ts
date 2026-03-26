@@ -140,6 +140,99 @@ describe("workspaceStore", () => {
     resetWorkspaceStore();
   });
 
+  it("derives node file activity from replayed tool and approval events", () => {
+    resetWorkspaceStore();
+    primeWorkspaceStore(buildWorkspaceSnapshot({ active_run_id: "run_10" }));
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_10",
+          sequence: 1,
+          replay: true,
+          role: "coder",
+          model: "anthropic/claude-sonnet-4-5",
+          agent_id: "agent_coder_2",
+          label: "Coder",
+          spawn_order: 2,
+          occurred_at: "2026-03-24T12:00:00Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "tool_call",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_10",
+          sequence: 2,
+          replay: true,
+          role: "coder",
+          model: "anthropic/claude-sonnet-4-5",
+          tool_call_id: "call_read",
+          tool_name: "read_file",
+          input_preview: { path: "internal/agents/coder.go" },
+          occurred_at: "2026-03-24T12:00:01Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "approval_request",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_10",
+          role: "coder",
+          model: "anthropic/claude-sonnet-4-5",
+          tool_call_id: "call_write",
+          tool_name: "write_file",
+          request_kind: "file_write",
+          status: "proposed",
+          repository_root: "/tmp/project",
+          input_preview: { path: "README.md" },
+          diff_preview: {
+            target_path: "README.md",
+            original_content: "before\n",
+            proposed_content: "after\n",
+            base_content_hash: "sha256:abc",
+          },
+          message: "Relay needs approval before it can write files.",
+          occurred_at: "2026-03-24T12:00:02Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "approval_state_changed",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_10",
+          sequence: 4,
+          replay: true,
+          role: "coder",
+          model: "anthropic/claude-sonnet-4-5",
+          tool_call_id: "call_write",
+          tool_name: "write_file",
+          status: "applied",
+          message: "Relay applied the approved change.",
+          occurred_at: "2026-03-24T12:00:03Z",
+        },
+      } as never);
+    });
+
+    const state = workspaceStore.getSnapshot();
+    expect(
+      state.orchestrationDocuments.run_10?.nodes[0]?.details.readPaths,
+    ).toEqual(["internal/agents/coder.go"]);
+    expect(
+      state.orchestrationDocuments.run_10?.nodes[0]?.details.proposedChanges,
+    ).toEqual([
+      {
+        path: "README.md",
+        toolCallId: "call_write",
+        approvalState: "applied",
+      },
+    ]);
+
+    resetWorkspaceStore();
+  });
+
   it("deduplicates repeated run summaries from snapshot updates", () => {
     resetWorkspaceStore();
 
@@ -175,6 +268,291 @@ describe("workspaceStore", () => {
     const state = workspaceStore.getSnapshot();
     expect(state.runSummaries).toHaveLength(1);
     expect(state.runSummaries[0]?.id).toBe("run_1");
+
+    resetWorkspaceStore();
+  });
+
+  it("rehydrates pending approvals from bootstrap snapshots", () => {
+    resetWorkspaceStore();
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "workspace.bootstrap",
+        payload: buildWorkspaceSnapshot({
+          active_run_id: "run_1",
+          pending_approvals: [
+            {
+              session_id: "session_alpha",
+              run_id: "run_1",
+              role: "coder",
+              model: "anthropic/claude-sonnet-4-5",
+              tool_call_id: "call_1",
+              tool_name: "write_file",
+              input_preview: { path: "README.md" },
+              message:
+                "Relay needs approval before it can write files inside the configured project root.",
+              occurred_at: "2026-03-23T12:00:01Z",
+            },
+          ],
+        }),
+      } as never);
+    });
+
+    const state = workspaceStore.getSnapshot();
+    expect(state.pendingApprovals.call_1).toMatchObject({
+      runId: "run_1",
+      toolName: "write_file",
+      message:
+        "Relay needs approval before it can write files inside the configured project root.",
+    });
+
+    resetWorkspaceStore();
+  });
+
+  it("preserves diff and command approval previews from bootstrap snapshots", () => {
+    resetWorkspaceStore();
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "workspace.bootstrap",
+        payload: buildWorkspaceSnapshot({
+          active_run_id: "run_1",
+          pending_approvals: [
+            {
+              session_id: "session_alpha",
+              run_id: "run_1",
+              role: "coder",
+              model: "anthropic/claude-sonnet-4-5",
+              tool_call_id: "call_write",
+              tool_name: "write_file",
+              request_kind: "file_write",
+              status: "proposed",
+              repository_root: "/tmp/project",
+              input_preview: { path: "README.md" },
+              diff_preview: {
+                target_path: "README.md",
+                original_content: "before\n",
+                proposed_content: "after\n",
+                base_content_hash: "sha256:abc",
+              },
+              message:
+                "Relay needs approval before it can write files inside the configured project root.",
+              occurred_at: "2026-03-23T12:00:01Z",
+            },
+            {
+              session_id: "session_alpha",
+              run_id: "run_1",
+              role: "coder",
+              model: "anthropic/claude-sonnet-4-5",
+              tool_call_id: "call_command",
+              tool_name: "run_command",
+              request_kind: "command",
+              status: "proposed",
+              repository_root: "/tmp/project",
+              input_preview: { command: "go", args: ["test", "./..."] },
+              command_preview: {
+                command: "go",
+                args: ["test", "./..."],
+                effective_dir: "/tmp/project",
+              },
+              message:
+                "Relay needs approval before it can run a shell command from the configured project root.",
+              occurred_at: "2026-03-23T12:00:02Z",
+            },
+          ],
+        }),
+      } as never);
+    });
+
+    const state = workspaceStore.getSnapshot();
+    expect(state.pendingApprovals.call_write).toMatchObject({
+      requestKind: "file_write",
+      repositoryRoot: "/tmp/project",
+      diffPreview: {
+        targetPath: "README.md",
+        originalContent: "before\n",
+        proposedContent: "after\n",
+        baseContentHash: "sha256:abc",
+      },
+    });
+    expect(state.pendingApprovals.call_command).toMatchObject({
+      requestKind: "command",
+      commandPreview: {
+        command: "go",
+        args: ["test", "./..."],
+        effectiveDir: "/tmp/project",
+      },
+    });
+
+    resetWorkspaceStore();
+  });
+
+  it("hydrates connected repository state from the bootstrap snapshot", () => {
+    resetWorkspaceStore();
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "workspace.bootstrap",
+        payload: buildWorkspaceSnapshot({
+          preferences: {
+            preferred_port: 4747,
+            appearance_variant: "midnight",
+            has_credentials: true,
+            openrouter_configured: true,
+            project_root: "/tmp/project",
+            project_root_configured: true,
+            project_root_valid: true,
+            agent_models: {
+              planner: "anthropic/claude-opus-4",
+              coder: "anthropic/claude-sonnet-4-5",
+              reviewer: "anthropic/claude-sonnet-4-5",
+              tester: "deepseek/deepseek-chat",
+              explainer: "google/gemini-2.0-flash-001",
+            },
+            open_browser_on_start: true,
+          },
+        }),
+      } as never);
+    });
+
+    expect(workspaceStore.getSnapshot().connectedRepository).toMatchObject({
+      path: "/tmp/project",
+      status: "connected",
+    });
+
+    resetWorkspaceStore();
+  });
+
+  it("derives repository graph loading state from a connected repository and applies graph status events", () => {
+    resetWorkspaceStore();
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "workspace.bootstrap",
+        payload: buildWorkspaceSnapshot({
+          preferences: {
+            preferred_port: 4747,
+            appearance_variant: "midnight",
+            has_credentials: true,
+            openrouter_configured: true,
+            project_root: "/tmp/project",
+            project_root_configured: true,
+            project_root_valid: true,
+            agent_models: {
+              planner: "anthropic/claude-opus-4",
+              coder: "anthropic/claude-sonnet-4-5",
+              reviewer: "anthropic/claude-sonnet-4-5",
+              tester: "deepseek/deepseek-chat",
+              explainer: "google/gemini-2.0-flash-001",
+            },
+            open_browser_on_start: true,
+          },
+        }),
+      } as never);
+    });
+
+    expect(workspaceStore.getSnapshot().repositoryGraph.status).toBe("loading");
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "repository_graph_status",
+        payload: {
+          repository_root: "/tmp/project",
+          status: "ready",
+          message: "Repository graph ready.",
+          nodes: [
+            { id: "src/index.ts", label: "src/index.ts", kind: "file" },
+            { id: "src/lib/util.ts", label: "src/lib/util.ts", kind: "file" },
+          ],
+          edges: [
+            {
+              id: "src/index.ts->src/lib/util.ts",
+              source: "src/index.ts",
+              target: "src/lib/util.ts",
+            },
+          ],
+        },
+      } as never);
+    });
+
+    expect(workspaceStore.getSnapshot().repositoryGraph).toMatchObject({
+      status: "ready",
+      nodes: [
+        { id: "src/index.ts", label: "src/index.ts", kind: "file" },
+        { id: "src/lib/util.ts", label: "src/lib/util.ts", kind: "file" },
+      ],
+      edges: [
+        {
+          id: "src/index.ts->src/lib/util.ts",
+          source: "src/index.ts",
+          target: "src/lib/util.ts",
+        },
+      ],
+    });
+    expect(
+      workspaceStore.getSnapshot().repositoryGraph.errorMessage,
+    ).toBeUndefined();
+
+    resetWorkspaceStore();
+  });
+
+  it("clears pending approvals when approval lifecycle events arrive", () => {
+    resetWorkspaceStore();
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "workspace.bootstrap",
+        payload: buildWorkspaceSnapshot({
+          active_run_id: "run_1",
+          run_summaries: [
+            {
+              id: "run_1",
+              task_text_preview: "Update the README",
+              role: "coder",
+              model: "anthropic/claude-sonnet-4-5",
+              state: "approval_required",
+              started_at: "2026-03-23T12:00:00Z",
+              has_tool_activity: true,
+            },
+          ],
+          pending_approvals: [
+            {
+              session_id: "session_alpha",
+              run_id: "run_1",
+              role: "coder",
+              model: "anthropic/claude-sonnet-4-5",
+              tool_call_id: "call_1",
+              tool_name: "write_file",
+              input_preview: { path: "README.md" },
+              message:
+                "Relay needs approval before it can write files inside the configured project root.",
+              occurred_at: "2026-03-23T12:00:01Z",
+            },
+          ],
+        }),
+      } as never);
+    });
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "approval_state_changed",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          tool_call_id: "call_1",
+          status: "approved",
+          message: "Tool approved. Relay is resuming the run.",
+          occurred_at: "2026-03-23T12:00:02Z",
+        },
+      } as never);
+    });
+
+    const state = workspaceStore.getSnapshot();
+    expect(state.pendingApprovals).toEqual({});
+    expect(state.status).toMatchObject({
+      phase: "approval-approved",
+      message: "Tool approved. Relay is resuming the run.",
+    });
 
     resetWorkspaceStore();
   });

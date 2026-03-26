@@ -319,6 +319,22 @@ func (s *Service) emitToolResult(ctx context.Context, runID string, event agents
 	if err != nil {
 		return err
 	}
+	if event.ToolCallID != "" && event.Status != "rejected" {
+		approval, approvalErr := s.store.GetApprovalRequest(ctx, run.ID, event.ToolCallID)
+		if approvalErr == nil && approval.State == sqlite.ApprovalStateApproved {
+			appliedAt := time.Now().UTC()
+			if err := s.store.UpdateApprovalRequestState(ctx, run.ID, event.ToolCallID, sqlite.ApprovalStateApplied, approval.ReviewedAt, &appliedAt); err != nil {
+				return err
+			}
+			summary, err := approvalSummaryFromRecord(approval)
+			if err != nil {
+				return err
+			}
+			if err := s.emitApprovalStateChanged(ctx, summary, sqlite.ApprovalStateApplied, appliedAt, approvalStateChangeMessage(sqlite.ApprovalStateApplied)); err != nil {
+				return err
+			}
+		}
+	}
 	payload["sequence"] = storedEvent.Sequence
 	if err := s.dispatchRunEnvelope(run.ID, StreamEnvelope{Type: sqlite.EventTypeToolResult, Payload: payload}); err != nil {
 		return nil
@@ -335,6 +351,9 @@ func (s *Service) completeRun(ctx context.Context, runID string, finishReason st
 	run.State = sqlite.RunStateCompleted
 	run.CompletedAt = &now
 	if err := s.store.UpdateAgentRun(ctx, run); err != nil {
+		return err
+	}
+	if err := s.store.ResolvePendingApprovalRequestsForRun(ctx, run.ID, sqlite.ApprovalStateExpired, &now); err != nil {
 		return err
 	}
 	payload := map[string]any{
@@ -372,6 +391,9 @@ func (s *Service) failRun(ctx context.Context, runID string, code string, messag
 	run.ErrorCode = strings.TrimSpace(code)
 	run.ErrorMessage = strings.TrimSpace(message)
 	if err := s.store.UpdateAgentRun(ctx, run); err != nil {
+		return err
+	}
+	if err := s.store.ResolvePendingApprovalRequestsForRun(ctx, run.ID, sqlite.ApprovalStateBlocked, &now); err != nil {
 		return err
 	}
 	payload := map[string]any{

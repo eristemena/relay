@@ -2,6 +2,9 @@ package integration_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +13,8 @@ import (
 	workspaceorchestrator "github.com/erisristemena/relay/internal/orchestrator/workspace"
 	"github.com/erisristemena/relay/internal/storage/sqlite"
 	toolspkg "github.com/erisristemena/relay/internal/tools"
+	git "github.com/go-git/go-git/v5"
+	"nhooyr.io/websocket"
 )
 
 func TestToolCallOrdering_ApprovalRejectionReplayAndRedaction(t *testing.T) {
@@ -196,6 +201,8 @@ func TestToolCallOrdering_TesterApprovalAllowsRunToContinue(t *testing.T) {
 	runID := stateChange["payload"].(map[string]any)["run_id"].(string)
 	runner.runIDReady <- runID
 	_ = readUntilStreamingType(t, connection, "tool_call")
+	_ = readUntilStreamingType(t, connection, "tool_result")
+	_ = readUntilStreamingType(t, connection, "tool_call")
 	approvalRequest := readUntilStreamingType(t, connection, "approval_request")
 	approvalPayload := approvalRequest["payload"].(map[string]any)
 
@@ -243,11 +250,225 @@ func TestToolCallOrdering_TesterApprovalAllowsRunToContinue(t *testing.T) {
 	t.Fatal("timed out waiting for tester run completion after approval")
 }
 
+func TestToolCallOrdering_PendingApprovalRehydratesOnBootstrapReconnect(t *testing.T) {
+	service, store, paths := newStreamingTestService(t)
+	defer store.Close()
+
+	repoRoot := initIntegrationRepositoryRoot(t)
+	if err := os.WriteFile(filepath.Join(repoRoot, "README.md"), []byte("before\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg, _, err := config.Load(paths)
+	if err != nil {
+		t.Fatalf("config.Load() error = %v", err)
+	}
+	cfg.OpenRouter.APIKey = "or-test-key"
+	cfg.ProjectRoot = repoRoot
+	if err := config.Save(paths, cfg); err != nil {
+		t.Fatalf("config.Save() error = %v", err)
+	}
+
+	session, err := store.CreateSession(context.Background(), "Approval reconnect session")
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+
+	runner := &approvalFlowRunner{
+		service:    service,
+		sessionID:  session.ID,
+		runIDReady: make(chan string, 1),
+		profile: agents.Profile{
+			Role:  sqlite.RoleCoder,
+			Model: config.DefaultCoderModel,
+		},
+		repoRoot:     repoRoot,
+		writePath:    "README.md",
+		writeContent: "after\n",
+	}
+	service.SetRunnerFactory(func(config.Config, string) agents.Runner {
+		return runner
+	})
+
+	server := newStreamingTestServer(t, service)
+	connection := dialStreamingSocket(t, server.URL)
+
+	writeStreamingMessage(t, connection, map[string]any{
+		"type": "agent.run.submit",
+		"payload": map[string]any{
+			"session_id": session.ID,
+			"task":       "Prepare a file diff and wait for approval",
+		},
+	})
+
+	_ = readUntilStreamingType(t, connection, "workspace.bootstrap")
+	stateChange := readUntilStreamingType(t, connection, "state_change")
+	runID := stateChange["payload"].(map[string]any)["run_id"].(string)
+	runner.runIDReady <- runID
+	_ = readUntilStreamingType(t, connection, "tool_call")
+	_ = readUntilStreamingType(t, connection, "tool_result")
+	_ = readUntilStreamingType(t, connection, "tool_call")
+	approvalRequest := readUntilStreamingType(t, connection, "approval_request")
+	approvalPayload := approvalRequest["payload"].(map[string]any)
+	if approvalPayload["request_kind"] != toolspkg.RequestKindFileWrite {
+		t.Fatalf("approval request_kind = %v, want %q", approvalPayload["request_kind"], toolspkg.RequestKindFileWrite)
+	}
+	if approvalPayload["repository_root"] != repoRoot {
+		t.Fatalf("approval repository_root = %v, want %q", approvalPayload["repository_root"], repoRoot)
+	}
+	if _, ok := approvalPayload["diff_preview"].(map[string]any); !ok {
+		t.Fatalf("approval diff_preview = %#v, want diff preview map", approvalPayload["diff_preview"])
+	}
+
+	reconnected := dialStreamingSocket(t, server.URL)
+	writeStreamingMessage(t, reconnected, map[string]any{
+		"type": "workspace.bootstrap.request",
+		"payload": map[string]any{
+			"last_session_id": session.ID,
+		},
+	})
+
+	bootstrap := readUntilStreamingType(t, reconnected, "workspace.bootstrap")
+	bootstrapPayload := bootstrap["payload"].(map[string]any)
+	pendingApprovals := bootstrapPayload["pending_approvals"].([]any)
+	if len(pendingApprovals) != 1 {
+		t.Fatalf("len(pending_approvals) = %d, want 1", len(pendingApprovals))
+	}
+	restored := pendingApprovals[0].(map[string]any)
+	if restored["tool_call_id"] != "call_write" {
+		t.Fatalf("restored tool_call_id = %v, want call_write", restored["tool_call_id"])
+	}
+	if restored["request_kind"] != toolspkg.RequestKindFileWrite {
+		t.Fatalf("restored request_kind = %v, want %q", restored["request_kind"], toolspkg.RequestKindFileWrite)
+	}
+	if restored["repository_root"] != repoRoot {
+		t.Fatalf("restored repository_root = %v, want %q", restored["repository_root"], repoRoot)
+	}
+	diffPreview, ok := restored["diff_preview"].(map[string]any)
+	if !ok {
+		t.Fatalf("restored diff_preview = %#v, want diff preview map", restored["diff_preview"])
+	}
+	if diffPreview["proposed_content"] != "after\n" {
+		t.Fatalf("restored proposed_content = %#v, want updated content", diffPreview["proposed_content"])
+	}
+}
+
+func TestToolCallOrdering_StaleCommandApprovalIsBlockedAfterRepositoryChange(t *testing.T) {
+	service, store, paths := newStreamingTestService(t)
+	defer store.Close()
+
+	repoRoot := initIntegrationRepositoryRoot(t)
+	replacementRoot := initIntegrationRepositoryRoot(t)
+
+	cfg, _, err := config.Load(paths)
+	if err != nil {
+		t.Fatalf("config.Load() error = %v", err)
+	}
+	cfg.OpenRouter.APIKey = "or-test-key"
+	cfg.ProjectRoot = repoRoot
+	if err := config.Save(paths, cfg); err != nil {
+		t.Fatalf("config.Save() error = %v", err)
+	}
+
+	session, err := store.CreateSession(context.Background(), "Approval stale session")
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+
+	runner := &approvalFlowRunner{
+		service:    service,
+		sessionID:  session.ID,
+		runIDReady: make(chan string, 1),
+		profile: agents.Profile{
+			Role:  sqlite.RoleCoder,
+			Model: config.DefaultCoderModel,
+		},
+		repoRoot: repoRoot,
+		toolName: agents.ToolRunCommand,
+		command:  "pwd",
+	}
+	service.SetRunnerFactory(func(config.Config, string) agents.Runner {
+		return runner
+	})
+
+	server := newStreamingTestServer(t, service)
+	connection := dialStreamingSocket(t, server.URL)
+
+	writeStreamingMessage(t, connection, map[string]any{
+		"type": "agent.run.submit",
+		"payload": map[string]any{
+			"session_id": session.ID,
+			"task":       "Prepare a command and wait for approval",
+		},
+	})
+
+	_ = readUntilStreamingType(t, connection, "workspace.bootstrap")
+	stateChange := readUntilStreamingType(t, connection, "state_change")
+	runID := stateChange["payload"].(map[string]any)["run_id"].(string)
+	runner.runIDReady <- runID
+	_ = readUntilStreamingType(t, connection, "tool_call")
+	_ = readUntilStreamingType(t, connection, "tool_result")
+	_ = readUntilStreamingType(t, connection, "tool_call")
+	approvalRequest := readUntilStreamingType(t, connection, "approval_request")
+	approvalPayload := approvalRequest["payload"].(map[string]any)
+	if approvalPayload["request_kind"] != toolspkg.RequestKindCommand {
+		t.Fatalf("approval request_kind = %v, want %q", approvalPayload["request_kind"], toolspkg.RequestKindCommand)
+	}
+
+	cfg, _, err = config.Load(paths)
+	if err != nil {
+		t.Fatalf("config.Load() reload error = %v", err)
+	}
+	cfg.ProjectRoot = replacementRoot
+	if err := config.Save(paths, cfg); err != nil {
+		t.Fatalf("config.Save() replacement error = %v", err)
+	}
+
+	writeStreamingMessage(t, connection, map[string]any{
+		"type": "agent.run.approval.respond",
+		"payload": map[string]any{
+			"session_id":   session.ID,
+			"run_id":       runID,
+			"tool_call_id": "call_write",
+			"decision":     "approved",
+		},
+	})
+
+	approvalStateChanged := readUntilStreamingType(t, connection, "approval_state_changed")
+	approvalStatePayload := approvalStateChanged["payload"].(map[string]any)
+	if approvalStatePayload["status"] != sqlite.ApprovalStateBlocked {
+		t.Fatalf("approval state status = %v, want %q", approvalStatePayload["status"], sqlite.ApprovalStateBlocked)
+	}
+	if approvalStatePayload["message"] == "" {
+		t.Fatal("approval state message = empty, want plain-language blocking explanation")
+	}
+
+	toolResultPayload := readUntilStreamingToolResult(t, connection, "call_write")
+	if toolResultPayload["tool_call_id"] != "call_write" {
+		t.Fatalf("tool result tool_call_id = %v, want call_write", toolResultPayload["tool_call_id"])
+	}
+	if toolResultPayload["status"] != "rejected" {
+		t.Fatalf("tool result status = %v, want rejected", toolResultPayload["status"])
+	}
+
+	storedApproval, err := store.GetApprovalRequest(context.Background(), runID, "call_write")
+	if err != nil {
+		t.Fatalf("GetApprovalRequest() error = %v", err)
+	}
+	if storedApproval.State != sqlite.ApprovalStateBlocked {
+		t.Fatalf("storedApproval.State = %q, want %q", storedApproval.State, sqlite.ApprovalStateBlocked)
+	}
+}
+
 type approvalFlowRunner struct {
 	service      *workspaceorchestrator.Service
 	sessionID    string
 	runIDReady   chan string
 	profile      agents.Profile
+	repoRoot      string
+	toolName      agents.ToolName
+	command       string
+	commandArgs   []string
 	writePath    string
 	writeContent string
 }
@@ -286,12 +507,47 @@ func (r *approvalFlowRunner) Run(ctx context.Context, _ string, handlers agents.
 	if writeContent == "" {
 		writeContent = "api_key=super-secret"
 	}
-	writePreview := toolspkg.SafePreview("Tool call received.", map[string]any{"path": writePath, "content": writeContent})
+	toolName := r.toolName
+	if toolName == "" {
+		toolName = agents.ToolWriteFile
+	}
+	var inputPreview map[string]any
+	if strings.TrimSpace(r.repoRoot) != "" {
+		switch toolName {
+		case agents.ToolRunCommand:
+			commandName := r.command
+			if commandName == "" {
+				commandName = "pwd"
+			}
+			preview, err := toolspkg.BuildRunCommandPreview(r.repoRoot, toolspkg.RunCommandInput{Command: commandName, Args: r.commandArgs})
+			if err != nil {
+				return err
+			}
+			inputPreview = preview
+		default:
+			preview, err := toolspkg.BuildWriteFilePreview(r.repoRoot, toolspkg.WriteFileInput{Path: writePath, Content: writeContent})
+			if err != nil {
+				return err
+			}
+			inputPreview = preview
+		}
+	}
+	if inputPreview == nil {
+		if toolName == agents.ToolRunCommand {
+			commandName := r.command
+			if commandName == "" {
+				commandName = "pwd"
+			}
+			inputPreview = toolspkg.SafePreview("Tool call received.", map[string]any{"command": commandName, "args": r.commandArgs})
+		} else {
+			inputPreview = toolspkg.SafePreview("Tool call received.", map[string]any{"path": writePath, "content": writeContent})
+		}
+	}
 	if handlers.OnToolCall != nil {
 		handlers.OnToolCall(agents.ToolCallEvent{
 			ToolCallID:   "call_write",
-			ToolName:     agents.ToolWriteFile,
-			InputPreview: writePreview,
+			ToolName:     toolName,
+			InputPreview: inputPreview,
 		})
 	}
 	runID := <-r.runIDReady
@@ -300,11 +556,11 @@ func (r *approvalFlowRunner) Run(ctx context.Context, _ string, handlers agents.
 		SessionID:    r.sessionID,
 		RunID:        runID,
 		ToolCallID:   "call_write",
-		ToolName:     agents.ToolWriteFile,
+		ToolName:     toolName,
 		Role:         r.profile.Role,
 		Model:        r.profile.Model,
-		InputPreview: writePreview,
-		Message:      "Relay needs approval before it can write files inside the configured project root.",
+		InputPreview: inputPreview,
+		Message:      approvalFlowMessage(toolName),
 		OccurredAt:   time.Now().UTC(),
 	})
 	if err != nil {
@@ -314,7 +570,7 @@ func (r *approvalFlowRunner) Run(ctx context.Context, _ string, handlers agents.
 		if handlers.OnToolResult != nil {
 			handlers.OnToolResult(agents.ToolResultEvent{
 				ToolCallID:    "call_write",
-				ToolName:      agents.ToolWriteFile,
+				ToolName:      toolName,
 				Status:        "rejected",
 				ResultPreview: toolspkg.SafePreview("Tool blocked.", map[string]any{"message": workspaceorchestrator.ErrApprovalRejected.Error()}),
 			})
@@ -326,16 +582,54 @@ func (r *approvalFlowRunner) Run(ctx context.Context, _ string, handlers agents.
 	}
 
 	if handlers.OnToolResult != nil {
+		resultPreview := toolspkg.SafePreview("Wrote file content.", map[string]any{"path": writePath})
+		if toolName == agents.ToolRunCommand {
+			commandName := r.command
+			if commandName == "" {
+				commandName = "pwd"
+			}
+			resultPreview = toolspkg.SafePreview("Command completed.", map[string]any{"command": commandName})
+		}
 		handlers.OnToolResult(agents.ToolResultEvent{
 			ToolCallID:    "call_write",
-			ToolName:      agents.ToolWriteFile,
+			ToolName:      toolName,
 			Status:        "completed",
-			ResultPreview: toolspkg.SafePreview("Wrote file content.", map[string]any{"path": writePath}),
+			ResultPreview: resultPreview,
 		})
 	}
 
 	if handlers.OnComplete != nil {
 		handlers.OnComplete("stop")
 	}
+	return nil
+}
+
+func initIntegrationRepositoryRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if _, err := git.PlainInit(root, false); err != nil {
+		t.Fatalf("git.PlainInit() error = %v", err)
+	}
+	return root
+}
+
+func approvalFlowMessage(toolName agents.ToolName) string {
+	if toolName == agents.ToolRunCommand {
+		return "Relay needs approval before it can run a shell command from the configured project root."
+	}
+	return "Relay needs approval before it can write files inside the configured project root."
+}
+
+func readUntilStreamingToolResult(t *testing.T, connection *websocket.Conn, toolCallID string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(streamingIOTimeout)
+	for time.Now().Before(deadline) {
+		envelope := readUntilStreamingType(t, connection, "tool_result")
+		payload := envelope["payload"].(map[string]any)
+		if payload["tool_call_id"] == toolCallID {
+			return payload
+		}
+	}
+	t.Fatalf("timed out waiting for tool_result with tool_call_id %q", toolCallID)
 	return nil
 }

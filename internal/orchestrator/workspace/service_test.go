@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"github.com/erisristemena/relay/internal/agents"
 	"github.com/erisristemena/relay/internal/config"
 	"github.com/erisristemena/relay/internal/storage/sqlite"
+	toolspkg "github.com/erisristemena/relay/internal/tools"
 )
 
 func TestService_BootstrapUsesSavedSession(t *testing.T) {
@@ -187,19 +190,39 @@ func TestService_SetRunnerFactoryAndEnvelopeHelpers(t *testing.T) {
 		})
 	}
 
-	service.pendingApprovals[approvalKey("run_1", "call_1")] = pendingApproval{
-		RunID: "run_1",
-		Payload: map[string]any{
-			"tool_name": "write_file",
-		},
+	ctx := context.Background()
+	session, err := store.CreateSession(ctx, "Approval payload")
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
 	}
-	payload := service.pendingApprovalPayload("run_1")
-	if payload["tool_name"] != "write_file" {
-		t.Fatalf("pendingApprovalPayload() = %#v, want copied payload", payload)
+	run, err := store.CreateAgentRun(ctx, session.ID, "Review approval payload", sqlite.RoleCoder, config.DefaultCoderModel)
+	if err != nil {
+		t.Fatalf("CreateAgentRun() error = %v", err)
 	}
-	payload["tool_name"] = "mutated"
-	if service.pendingApprovals[approvalKey("run_1", "call_1")].Payload["tool_name"] != "write_file" {
-		t.Fatal("pendingApprovalPayload() returned aliased map, want defensive copy")
+	inputPreviewJSON, err := json.Marshal(map[string]any{"tool_name": "write_file"})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if _, err := store.CreateApprovalRequest(ctx, sqlite.ApprovalRequest{
+		SessionID:        session.ID,
+		RunID:            run.ID,
+		ToolCallID:       "call_1",
+		ToolName:         string(agents.ToolWriteFile),
+		Role:             sqlite.RoleCoder,
+		Model:            config.DefaultCoderModel,
+		InputPreviewJSON: string(inputPreviewJSON),
+		Message:          "Approve the change.",
+		State:            sqlite.ApprovalStateProposed,
+		OccurredAt:       time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("CreateApprovalRequest() error = %v", err)
+	}
+	payloads, err := service.pendingApprovalPayloads(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("pendingApprovalPayloads() error = %v", err)
+	}
+	if len(payloads) != 1 || payloads[0]["tool_name"] != string(agents.ToolWriteFile) {
+		t.Fatalf("pendingApprovalPayloads() = %#v, want one write_file payload", payloads)
 	}
 }
 
@@ -258,6 +281,201 @@ func TestService_EmitRunErrorLogsTerminalFailureDetails(t *testing.T) {
 	}
 	if !strings.Contains(logged, "level=ERROR") {
 		t.Fatalf("log output = %q, want error level", logged)
+	}
+}
+
+func TestService_BootstrapSchedulesRepositoryGraphBuildAndCachesResult(t *testing.T) {
+	paths, store := newTestServiceStore(t)
+	defer store.Close()
+
+	service := NewService(store, paths)
+	repositoryRoot := initWorkspaceRepositoryRoot(t)
+	service.repositoryGraphSignature = func(string) (string, error) {
+		return "sig-1", nil
+	}
+	builderStarted := make(chan struct{}, 1)
+	releaseBuild := make(chan struct{})
+	buildCount := 0
+	service.repositoryGraphBuilder = func(ctx context.Context, root string) (repositoryGraphSnapshot, error) {
+		buildCount++
+		builderStarted <- struct{}{}
+		<-releaseBuild
+		return repositoryGraphSnapshot{
+			RepositoryRoot: root,
+			Nodes:          []repositoryGraphNode{{ID: "README.md", Label: "README.md", Kind: "file"}},
+		}, nil
+	}
+
+	cfg, _, err := config.Load(paths)
+	if err != nil {
+		t.Fatalf("config.Load() error = %v", err)
+	}
+	cfg.ProjectRoot = repositoryRoot
+	if err := config.Save(paths, cfg); err != nil {
+		t.Fatalf("config.Save() error = %v", err)
+	}
+
+	if _, err := service.Bootstrap(context.Background(), ""); err != nil {
+		t.Fatalf("Bootstrap() error = %v", err)
+	}
+	<-builderStarted
+
+	entry := waitForRepositoryGraphEntry(t, service, repositoryRoot, repositoryGraphStatusLoading)
+	if entry.RepositorySignature != "sig-1" {
+		t.Fatalf("entry.RepositorySignature = %q, want sig-1", entry.RepositorySignature)
+	}
+
+	if _, err := service.Bootstrap(context.Background(), ""); err != nil {
+		t.Fatalf("second Bootstrap() error = %v", err)
+	}
+	if buildCount != 1 {
+		t.Fatalf("buildCount after cached bootstrap = %d, want 1", buildCount)
+	}
+
+	close(releaseBuild)
+	entry = waitForRepositoryGraphEntry(t, service, repositoryRoot, repositoryGraphStatusReady)
+	if len(entry.Snapshot.Nodes) != 1 || entry.Snapshot.Nodes[0].ID != "README.md" {
+		t.Fatalf("entry.Snapshot.Nodes = %#v, want cached README.md node", entry.Snapshot.Nodes)
+	}
+
+	if _, err := service.Bootstrap(context.Background(), ""); err != nil {
+		t.Fatalf("third Bootstrap() error = %v", err)
+	}
+	if buildCount != 1 {
+		t.Fatalf("buildCount after ready cache reuse = %d, want 1", buildCount)
+	}
+}
+
+func TestService_SavePreferencesInvalidatesRepositoryGraphWhenRepositoryChanges(t *testing.T) {
+	paths, store := newTestServiceStore(t)
+	defer store.Close()
+
+	service := NewService(store, paths)
+	firstRoot := initWorkspaceRepositoryRoot(t)
+	secondRoot := initWorkspaceRepositoryRoot(t)
+	service.repositoryGraphSignature = func(root string) (string, error) {
+		if root == firstRoot {
+			return "sig-first", nil
+		}
+		return "sig-second", nil
+	}
+	service.repositoryGraphBuilder = func(_ context.Context, root string) (repositoryGraphSnapshot, error) {
+		return repositoryGraphSnapshot{
+			RepositoryRoot: root,
+			Nodes:          []repositoryGraphNode{{ID: filepath.Base(root), Label: filepath.Base(root), Kind: "directory"}},
+		}, nil
+	}
+
+	if _, err := service.SavePreferences(context.Background(), PreferencesInput{ProjectRoot: &firstRoot}); err != nil {
+		t.Fatalf("SavePreferences(firstRoot) error = %v", err)
+	}
+	_ = waitForRepositoryGraphEntry(t, service, firstRoot, repositoryGraphStatusReady)
+
+	if _, err := service.SavePreferences(context.Background(), PreferencesInput{ProjectRoot: &secondRoot}); err != nil {
+		t.Fatalf("SavePreferences(secondRoot) error = %v", err)
+	}
+	_ = waitForRepositoryGraphEntry(t, service, secondRoot, repositoryGraphStatusReady)
+
+	service.mu.Lock()
+	_, firstExists := service.repositoryGraphs[firstRoot]
+	secondEntry, secondExists := service.repositoryGraphs[secondRoot]
+	service.mu.Unlock()
+	if firstExists {
+		t.Fatal("repositoryGraphs still contains the previous repository root")
+	}
+	if !secondExists {
+		t.Fatal("repositoryGraphs missing the new repository root")
+	}
+	if secondEntry.RepositorySignature != "sig-second" {
+		t.Fatalf("secondEntry.RepositorySignature = %q, want sig-second", secondEntry.RepositorySignature)
+	}
+}
+
+func TestService_BootstrapStoresRepositoryGraphErrorsWithoutFailingWorkspace(t *testing.T) {
+	paths, store := newTestServiceStore(t)
+	defer store.Close()
+
+	service := NewService(store, paths)
+	repositoryRoot := initWorkspaceRepositoryRoot(t)
+	service.repositoryGraphSignature = func(string) (string, error) {
+		return "sig-error", nil
+	}
+	service.repositoryGraphBuilder = func(context.Context, string) (repositoryGraphSnapshot, error) {
+		return repositoryGraphSnapshot{}, errors.New("builder failed")
+	}
+
+	cfg, _, err := config.Load(paths)
+	if err != nil {
+		t.Fatalf("config.Load() error = %v", err)
+	}
+	cfg.ProjectRoot = repositoryRoot
+	if err := config.Save(paths, cfg); err != nil {
+		t.Fatalf("config.Save() error = %v", err)
+	}
+
+	snapshot, err := service.Bootstrap(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Bootstrap() error = %v", err)
+	}
+	if snapshot.ConnectedRepository.Status != "connected" {
+		t.Fatalf("snapshot.ConnectedRepository.Status = %q, want connected", snapshot.ConnectedRepository.Status)
+	}
+
+	entry := waitForRepositoryGraphEntry(t, service, repositoryRoot, repositoryGraphStatusError)
+	if entry.ErrorMessage == "" {
+		t.Fatal("entry.ErrorMessage = empty, want plain-language graph error")
+	}
+	if entry.RepositorySignature != "sig-error" {
+		t.Fatalf("entry.RepositorySignature = %q, want sig-error", entry.RepositorySignature)
+	}
+}
+
+func TestService_BootstrapRebuildsRepositoryGraphWhenSignatureChanges(t *testing.T) {
+	paths, store := newTestServiceStore(t)
+	defer store.Close()
+
+	service := NewService(store, paths)
+	repositoryRoot := initWorkspaceRepositoryRoot(t)
+	currentSignature := "sig-1"
+	buildCount := 0
+	service.repositoryGraphSignature = func(string) (string, error) {
+		return currentSignature, nil
+	}
+	service.repositoryGraphBuilder = func(_ context.Context, root string) (repositoryGraphSnapshot, error) {
+		buildCount++
+		return repositoryGraphSnapshot{
+			RepositoryRoot: root,
+			Nodes:          []repositoryGraphNode{{ID: currentSignature, Label: currentSignature, Kind: "file"}},
+		}, nil
+	}
+
+	cfg, _, err := config.Load(paths)
+	if err != nil {
+		t.Fatalf("config.Load() error = %v", err)
+	}
+	cfg.ProjectRoot = repositoryRoot
+	if err := config.Save(paths, cfg); err != nil {
+		t.Fatalf("config.Save() error = %v", err)
+	}
+
+	if _, err := service.Bootstrap(context.Background(), ""); err != nil {
+		t.Fatalf("Bootstrap(sig-1) error = %v", err)
+	}
+	entry := waitForRepositoryGraphEntry(t, service, repositoryRoot, repositoryGraphStatusReady)
+	if entry.RepositorySignature != "sig-1" {
+		t.Fatalf("entry.RepositorySignature = %q, want sig-1", entry.RepositorySignature)
+	}
+
+	currentSignature = "sig-2"
+	if _, err := service.Bootstrap(context.Background(), ""); err != nil {
+		t.Fatalf("Bootstrap(sig-2) error = %v", err)
+	}
+	entry = waitForRepositoryGraphEntry(t, service, repositoryRoot, repositoryGraphStatusReady)
+	if entry.RepositorySignature != "sig-2" {
+		t.Fatalf("entry.RepositorySignature = %q, want sig-2", entry.RepositorySignature)
+	}
+	if buildCount != 2 {
+		t.Fatalf("buildCount = %d, want 2 after signature invalidation", buildCount)
 	}
 }
 
@@ -668,8 +886,14 @@ func TestNewServiceDefaultAgentFactoryUsesToolEnabledRoleProfiles(t *testing.T) 
 	if len(profile.AllowedTools) == 0 {
 		t.Fatal("profile.AllowedTools = empty, want tool-enabled orchestration planner")
 	}
-	if !slices.Equal(profile.AllowedTools, []agents.ToolName{agents.ToolReadFile, agents.ToolSearchCodebase}) {
-		t.Fatalf("profile.AllowedTools = %v, want planner read/search tools", profile.AllowedTools)
+	if !slices.Equal(profile.AllowedTools, []agents.ToolName{
+		agents.ToolReadFile,
+		agents.ToolListFiles,
+		agents.ToolSearchCodebase,
+		agents.ToolGitLog,
+		agents.ToolGitDiff,
+	}) {
+		t.Fatalf("profile.AllowedTools = %v, want planner repository read-only tools", profile.AllowedTools)
 	}
 }
 
@@ -1351,6 +1575,13 @@ func TestService_ResolveApprovalUnblocksPendingRequest(t *testing.T) {
 	if snapshot.ActiveSessionID != session.ID {
 		t.Fatalf("snapshot.ActiveSessionID = %q, want %q", snapshot.ActiveSessionID, session.ID)
 	}
+	storedApproval, err := store.GetApprovalRequest(ctx, run.ID, "call_1")
+	if err != nil {
+		t.Fatalf("GetApprovalRequest() error = %v", err)
+	}
+	if storedApproval.State != sqlite.ApprovalStateApproved {
+		t.Fatalf("storedApproval.State = %q, want %q", storedApproval.State, sqlite.ApprovalStateApproved)
+	}
 }
 
 func TestService_ResolveApprovalRejectsPendingRequest(t *testing.T) {
@@ -1429,6 +1660,161 @@ func TestService_ResolveApprovalRejectsPendingRequest(t *testing.T) {
 	service.mu.Unlock()
 	if ok {
 		t.Fatal("pending approval remained registered after rejection")
+	}
+	storedApproval, err := store.GetApprovalRequest(ctx, run.ID, "call_reject")
+	if err != nil {
+		t.Fatalf("GetApprovalRequest() error = %v", err)
+	}
+	if storedApproval.State != sqlite.ApprovalStateRejected {
+		t.Fatalf("storedApproval.State = %q, want %q", storedApproval.State, sqlite.ApprovalStateRejected)
+	}
+}
+
+func TestService_ResolveApprovalRevalidatesBeforeApply(t *testing.T) {
+	testCases := []struct {
+		name            string
+		toolName        agents.ToolName
+		buildPreview    func(t *testing.T, projectRoot string) map[string]any
+		mutateBeforeAck func(t *testing.T, paths config.Paths, projectRoot string)
+		wantApproved    bool
+		wantState       string
+	}{
+		{
+			name:     "expires stale write approvals when the file changes",
+			toolName: agents.ToolWriteFile,
+			buildPreview: func(t *testing.T, projectRoot string) map[string]any {
+				if err := os.WriteFile(filepath.Join(projectRoot, "README.md"), []byte("before\n"), 0o644); err != nil {
+					t.Fatalf("WriteFile() error = %v", err)
+				}
+				preview, err := toolspkg.BuildWriteFilePreview(projectRoot, toolspkg.WriteFileInput{Path: "README.md", Content: "after\n"})
+				if err != nil {
+					t.Fatalf("BuildWriteFilePreview() error = %v", err)
+				}
+				return preview
+			},
+			mutateBeforeAck: func(t *testing.T, _ config.Paths, projectRoot string) {
+				if err := os.WriteFile(filepath.Join(projectRoot, "README.md"), []byte("changed\n"), 0o644); err != nil {
+					t.Fatalf("WriteFile() error = %v", err)
+				}
+			},
+			wantApproved: false,
+			wantState:    sqlite.ApprovalStateExpired,
+		},
+		{
+			name:     "blocks command approvals when the repository changes",
+			toolName: agents.ToolRunCommand,
+			buildPreview: func(t *testing.T, projectRoot string) map[string]any {
+				preview, err := toolspkg.BuildRunCommandPreview(projectRoot, toolspkg.RunCommandInput{Command: "pwd"})
+				if err != nil {
+					t.Fatalf("BuildRunCommandPreview() error = %v", err)
+				}
+				return preview
+			},
+			mutateBeforeAck: func(t *testing.T, paths config.Paths, _ string) {
+				cfg, _, err := config.Load(paths)
+				if err != nil {
+					t.Fatalf("config.Load() error = %v", err)
+				}
+				cfg.ProjectRoot = t.TempDir()
+				if err := config.Save(paths, cfg); err != nil {
+					t.Fatalf("config.Save() error = %v", err)
+				}
+			},
+			wantApproved: false,
+			wantState:    sqlite.ApprovalStateBlocked,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			paths, store := newTestServiceStore(t)
+			defer store.Close()
+
+			projectRoot := initWorkspaceRepositoryRoot(t)
+			cfg, _, err := config.Load(paths)
+			if err != nil {
+				t.Fatalf("config.Load() error = %v", err)
+			}
+			cfg.ProjectRoot = projectRoot
+			if err := config.Save(paths, cfg); err != nil {
+				t.Fatalf("config.Save() error = %v", err)
+			}
+
+			service := NewService(store, paths)
+			ctx := context.Background()
+			session, err := store.CreateSession(ctx, "Approval revalidation")
+			if err != nil {
+				t.Fatalf("CreateSession() error = %v", err)
+			}
+			run, err := store.CreateAgentRun(ctx, session.ID, "Revalidate approval", sqlite.RoleCoder, config.DefaultCoderModel)
+			if err != nil {
+				t.Fatalf("CreateAgentRun() error = %v", err)
+			}
+
+			approvalCtx := withRunExecutionContext(context.Background(), runExecutionContext{
+				SessionID: session.ID,
+				RunID:     run.ID,
+				Emit:      func(StreamEnvelope) error { return nil },
+			})
+
+			var (
+				decision   ApprovalDecision
+				requestErr error
+				wait       sync.WaitGroup
+			)
+			wait.Add(1)
+			go func() {
+				defer wait.Done()
+				decision, requestErr = service.RequestApproval(approvalCtx, ApprovalRequest{
+					SessionID:    session.ID,
+					RunID:        run.ID,
+					Role:         run.Role,
+					Model:        run.Model,
+					ToolCallID:   "call_1",
+					ToolName:     testCase.toolName,
+					InputPreview: testCase.buildPreview(t, projectRoot),
+					Message:      approvalMessage(testCase.toolName),
+					OccurredAt:   time.Now().UTC(),
+				})
+			}()
+
+			deadline := time.Now().Add(2 * time.Second)
+			for time.Now().Before(deadline) {
+				service.mu.Lock()
+				_, ok := service.pendingApprovals[approvalKey(run.ID, "call_1")]
+				service.mu.Unlock()
+				if ok {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+
+			testCase.mutateBeforeAck(t, paths, projectRoot)
+
+			if _, err := service.ResolveApproval(ctx, ApprovalResponseInput{
+				SessionID:  session.ID,
+				RunID:      run.ID,
+				ToolCallID: "call_1",
+				Decision:   "approved",
+			}); err != nil {
+				t.Fatalf("ResolveApproval() error = %v", err)
+			}
+			wait.Wait()
+
+			if requestErr != nil {
+				t.Fatalf("RequestApproval() error = %v", requestErr)
+			}
+			if decision.Approved != testCase.wantApproved {
+				t.Fatalf("decision.Approved = %v, want %v", decision.Approved, testCase.wantApproved)
+			}
+			storedApproval, err := store.GetApprovalRequest(ctx, run.ID, "call_1")
+			if err != nil {
+				t.Fatalf("GetApprovalRequest() error = %v", err)
+			}
+			if storedApproval.State != testCase.wantState {
+				t.Fatalf("storedApproval.State = %q, want %q", storedApproval.State, testCase.wantState)
+			}
+		})
 	}
 }
 
@@ -2093,4 +2479,20 @@ func newTestServiceStore(t *testing.T) (config.Paths, *sqlite.Store) {
 	}
 
 	return paths, store
+}
+
+func waitForRepositoryGraphEntry(t *testing.T, service *Service, repositoryRoot string, status string) repositoryGraphCacheEntry {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		service.mu.Lock()
+		entry, ok := service.repositoryGraphs[repositoryRoot]
+		service.mu.Unlock()
+		if ok && entry.Status == status {
+			return entry
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for repository graph status %q for %q", status, repositoryRoot)
+	return repositoryGraphCacheEntry{}
 }

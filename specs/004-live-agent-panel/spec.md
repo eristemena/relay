@@ -5,6 +5,10 @@
 **Status**: Draft  
 **Input**: User description: "A live AI agent panel inside Relay where a developer types a task, a specialized AI agent picks it up, and the developer watches the agent's reasoning appear word by word in real time."
 
+## Historical Note
+
+The dedicated Live execution drawer panel described in this phase was later retired as Relay moved to canvas-first inspection. Task submission still lives in the command bar, while live and replayed execution details now live on canvas node detail surfaces, saved runs, and approval review instead of a separate workspace-menu panel.
+
 ## Clarifications
 
 ### Session 2026-03-23

@@ -1,20 +1,20 @@
 package tools
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/erisristemena/relay/internal/repository"
 )
 
 func resolveWithinRoot(projectRoot string, requestedPath string) (string, error) {
-	root := strings.TrimSpace(projectRoot)
-	if root == "" {
-		return "", fmt.Errorf("Repository-reading tools are unavailable until you set a valid project_root in Relay's local configuration.")
+	rootStatus := repository.ValidateRoot(projectRoot)
+	if !rootStatus.Valid {
+		return "", errors.New(strings.TrimSpace(rootStatus.Message))
 	}
-	absoluteRoot, err := filepath.Abs(root)
-	if err != nil {
-		return "", fmt.Errorf("resolve project_root: %w", err)
-	}
+	absoluteRoot := rootStatus.Root
 	target := requestedPath
 	if strings.TrimSpace(target) == "" || target == "." {
 		return absoluteRoot, nil

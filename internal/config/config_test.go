@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	git "github.com/go-git/go-git/v5"
 )
 
 func TestLoad_FieldLevelFallbackAndRedaction(t *testing.T) {
@@ -107,30 +109,84 @@ tester = 42
 	}
 }
 
-func TestProjectRootStateReportsMissingAndUnreadableRoots(t *testing.T) {
-	missing := DefaultConfig().ProjectRootState()
-	if missing.Configured || missing.Valid {
-		t.Fatalf("missing ProjectRootState() = %+v, want unconfigured invalid state", missing)
-	}
-	if !strings.Contains(missing.Message, "valid project_root") {
-		t.Fatalf("missing ProjectRootState().Message = %q, want setup guidance", missing.Message)
+func TestProjectRootStateValidation(t *testing.T) {
+	t.Parallel()
+
+	fileRoot := filepath.Join(t.TempDir(), "relay.txt")
+	if err := os.WriteFile(fileRoot, []byte("not a directory\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	unreadable := DefaultConfig()
-	unreadable.ProjectRoot = filepath.Join(t.TempDir(), "does-not-exist")
-	status := unreadable.ProjectRootState()
-	if !status.Configured || status.Valid {
-		t.Fatalf("unreadable ProjectRootState() = %+v, want configured invalid state", status)
-	}
-	if !strings.Contains(status.Message, "could not read") {
-		t.Fatalf("unreadable ProjectRootState().Message = %q, want unreadable guidance", status.Message)
+	testCases := []struct {
+		name           string
+		projectRoot    string
+		wantConfigured bool
+		wantValid      bool
+		wantMessage    string
+	}{
+		{
+			name:           "missing project root",
+			projectRoot:    "",
+			wantConfigured: false,
+			wantValid:      false,
+			wantMessage:    "valid project_root",
+		},
+		{
+			name:           "relative project root",
+			projectRoot:    "relative/path",
+			wantConfigured: true,
+			wantValid:      false,
+			wantMessage:    "absolute path",
+		},
+		{
+			name:           "missing directory",
+			projectRoot:    filepath.Join(t.TempDir(), "does-not-exist"),
+			wantConfigured: true,
+			wantValid:      false,
+			wantMessage:    "could not read",
+		},
+		{
+			name:           "file path",
+			projectRoot:    fileRoot,
+			wantConfigured: true,
+			wantValid:      false,
+			wantMessage:    "must point to a directory",
+		},
+		{
+			name:           "plain directory",
+			projectRoot:    t.TempDir(),
+			wantConfigured: true,
+			wantValid:      false,
+			wantMessage:    "local Git repository root",
+		},
+		{
+			name:           "git repository root",
+			projectRoot:    initGitRepository(t),
+			wantConfigured: true,
+			wantValid:      true,
+			wantMessage:    "",
+		},
 	}
 
-	valid := DefaultConfig()
-	valid.ProjectRoot = t.TempDir()
-	validStatus := valid.ProjectRootState()
-	if !validStatus.Configured || !validStatus.Valid {
-		t.Fatalf("valid ProjectRootState() = %+v, want configured valid state", validStatus)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.ProjectRoot = testCase.projectRoot
+
+			status := cfg.ProjectRootState()
+			if status.Configured != testCase.wantConfigured || status.Valid != testCase.wantValid {
+				t.Fatalf("ProjectRootState() = %+v, want configured=%t valid=%t", status, testCase.wantConfigured, testCase.wantValid)
+			}
+			if testCase.wantMessage == "" {
+				if status.Message != "" {
+					t.Fatalf("ProjectRootState().Message = %q, want empty", status.Message)
+				}
+				return
+			}
+			if !strings.Contains(status.Message, testCase.wantMessage) {
+				t.Fatalf("ProjectRootState().Message = %q, want substring %q", status.Message, testCase.wantMessage)
+			}
+		})
 	}
 }
 
@@ -140,7 +196,7 @@ func TestSaveAndLoadPreserveOpenRouterAndProjectRoot(t *testing.T) {
 		t.Fatalf("EnsurePaths() error = %v", err)
 	}
 
-	projectRoot := t.TempDir()
+	projectRoot := initGitRepository(t)
 	configToSave := DefaultConfig()
 	configToSave.ProjectRoot = projectRoot
 	configToSave.OpenRouter.APIKey = "or-test-key"
@@ -182,4 +238,13 @@ func containsWarning(warnings []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+func initGitRepository(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if _, err := git.PlainInit(root, false); err != nil {
+		t.Fatalf("PlainInit() error = %v", err)
+	}
+	return root
 }

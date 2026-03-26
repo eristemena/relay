@@ -14,8 +14,9 @@ import (
 )
 
 type catalogToolExecutor struct {
-	catalog   *toolspkg.Catalog
-	approvals interface {
+	projectRoot string
+	catalog     *toolspkg.Catalog
+	approvals   interface {
 		RequestApproval(ctx context.Context, request ApprovalRequest) (ApprovalDecision, error)
 	}
 }
@@ -23,7 +24,8 @@ type catalogToolExecutor struct {
 func newCatalogToolExecutor(projectRoot string, approvals interface {
 	RequestApproval(ctx context.Context, request ApprovalRequest) (ApprovalDecision, error)
 }) agents.ToolExecutor {
-	return &catalogToolExecutor{catalog: toolspkg.NewCatalog(projectRoot), approvals: approvals}
+	trimmedRoot := strings.TrimSpace(projectRoot)
+	return &catalogToolExecutor{projectRoot: trimmedRoot, catalog: toolspkg.NewCatalog(trimmedRoot), approvals: approvals}
 }
 
 func (e *catalogToolExecutor) Definitions(allowedTools []agents.ToolName) []agents.ToolDefinition {
@@ -46,7 +48,27 @@ func (e *catalogToolExecutor) Definitions(allowedTools []agents.ToolName) []agen
 	return definitions
 }
 
-func (e *catalogToolExecutor) PreviewToolCall(_ agents.ToolName, arguments json.RawMessage) map[string]any {
+func (e *catalogToolExecutor) PreviewToolCall(name agents.ToolName, arguments json.RawMessage) map[string]any {
+	return e.previewToolCallWithName(name, arguments)
+}
+
+func (e *catalogToolExecutor) previewToolCallWithName(name agents.ToolName, arguments json.RawMessage) map[string]any {
+	if name == agents.ToolWriteFile {
+		var input toolspkg.WriteFileInput
+		if err := json.Unmarshal(arguments, &input); err == nil {
+			if preview, previewErr := toolspkg.BuildWriteFilePreview(e.projectRoot, input); previewErr == nil {
+				return preview
+			}
+		}
+	}
+	if name == agents.ToolRunCommand {
+		var input toolspkg.RunCommandInput
+		if err := json.Unmarshal(arguments, &input); err == nil {
+			if preview, previewErr := toolspkg.BuildRunCommandPreview(e.projectRoot, input); previewErr == nil {
+				return preview
+			}
+		}
+	}
 	if len(arguments) == 0 {
 		return toolspkg.SafePreview("Tool call received.", map[string]any{})
 	}
@@ -117,7 +139,7 @@ func (e *catalogToolExecutor) ExecuteTool(ctx context.Context, toolCallID string
 			ToolName:     name,
 			Role:         runContext.Role,
 			Model:        runContext.Model,
-			InputPreview: e.PreviewToolCall(name, arguments),
+			InputPreview: e.previewToolCallWithName(name, arguments),
 			Message:      approvalMessage(name),
 			OccurredAt:   time.Now().UTC(),
 		})
@@ -286,6 +308,29 @@ func toolSchema(name agents.ToolName) jsonschema.Definition {
 				"max_results":     {Type: jsonschema.Number, Description: "Optional maximum number of matches to return."},
 			},
 			Required: []string{"query"},
+		}
+	case agents.ToolListFiles:
+		return jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"path":        {Type: jsonschema.String, Description: "Optional path relative to the configured project root."},
+				"recursive":   {Type: jsonschema.Boolean, Description: "Whether to walk directories recursively under the requested path."},
+				"max_results": {Type: jsonschema.Number, Description: "Optional maximum number of entries to return."},
+			},
+		}
+	case agents.ToolGitLog:
+		return jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"max_results": {Type: jsonschema.Number, Description: "Optional maximum number of commits to return from recent history."},
+			},
+		}
+	case agents.ToolGitDiff:
+		return jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"path": {Type: jsonschema.String, Description: "Optional file or directory path relative to the configured project root to scope the diff."},
+			},
 		}
 	case agents.ToolWriteFile:
 		return jsonschema.Definition{

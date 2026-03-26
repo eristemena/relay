@@ -19,6 +19,8 @@ import (
 
 type Service interface {
 	Bootstrap(ctx context.Context, lastSessionID string) (workspaceorchestrator.WorkspaceSnapshot, error)
+	AttachWorkspaceSubscriber(ctx context.Context, emit func(workspaceorchestrator.StreamEnvelope) error)
+	BrowseRepository(ctx context.Context, input workspaceorchestrator.RepositoryBrowseInput) (workspaceorchestrator.RepositoryBrowseResult, error)
 	CreateSession(ctx context.Context, displayName string) (workspaceorchestrator.WorkspaceSnapshot, error)
 	OpenSession(ctx context.Context, sessionID string) (workspaceorchestrator.WorkspaceSnapshot, error)
 	SavePreferences(ctx context.Context, input workspaceorchestrator.PreferencesInput) (workspaceorchestrator.WorkspaceSnapshot, error)
@@ -60,6 +62,9 @@ func (h *Handler) ServeHTTP(responseWriter http.ResponseWriter, request *http.Re
 		defer writeMu.Unlock()
 		return writeJSON(ctx, connection, messageType, requestID, payload)
 	}
+	h.service.AttachWorkspaceSubscriber(ctx, func(envelope workspaceorchestrator.StreamEnvelope) error {
+		return write(envelope.Type, "", envelope.Payload)
+	})
 	for {
 		var envelope Envelope
 		if err := wsjson.Read(ctx, connection, &envelope); err != nil {
@@ -95,8 +100,29 @@ func (h *Handler) handleMessage(ctx context.Context, envelope Envelope, write fu
 		if err := write(TypeWorkspaceBootstrap, envelope.RequestID, toPayload(snapshot)); err != nil {
 			return err
 		}
+		if err := write(TypeRepositoryGraphStatus, envelope.RequestID, repositoryGraphStatusPayload(snapshot)); err != nil {
+			return err
+		}
 
 		return h.sendRuntimeEvents(envelope.RequestID, write)
+	case TypeRepositoryBrowseRequest:
+		var payload RepositoryBrowseRequestPayload
+		if err := decodePayload(envelope.Payload, &payload); err != nil {
+			return err
+		}
+
+		result, err := h.service.BrowseRepository(ctx, workspaceorchestrator.RepositoryBrowseInput{
+			Path:       payload.Path,
+			ShowHidden: payload.ShowHidden,
+		})
+		if err != nil {
+			return write(TypeError, envelope.RequestID, ErrorPayload{
+				Code:    "repository_browse_failed",
+				Message: err.Error(),
+			})
+		}
+
+		return write(TypeRepositoryBrowseResult, envelope.RequestID, toRepositoryBrowsePayload(result))
 	case TypeSessionCreate:
 		var payload SessionCreatePayload
 		if err := decodePayload(envelope.Payload, &payload); err != nil {
@@ -108,7 +134,10 @@ func (h *Handler) handleMessage(ctx context.Context, envelope Envelope, write fu
 			return err
 		}
 
-		return write(TypeSessionCreated, envelope.RequestID, toPayload(snapshot))
+		if err := write(TypeSessionCreated, envelope.RequestID, toPayload(snapshot)); err != nil {
+			return err
+		}
+		return write(TypeRepositoryGraphStatus, envelope.RequestID, repositoryGraphStatusPayload(snapshot))
 	case TypeSessionOpen:
 		var payload SessionOpenPayload
 		if err := decodePayload(envelope.Payload, &payload); err != nil {
@@ -126,7 +155,10 @@ func (h *Handler) handleMessage(ctx context.Context, envelope Envelope, write fu
 			return err
 		}
 
-		return write(TypeSessionOpened, envelope.RequestID, toPayload(snapshot))
+		if err := write(TypeSessionOpened, envelope.RequestID, toPayload(snapshot)); err != nil {
+			return err
+		}
+		return write(TypeRepositoryGraphStatus, envelope.RequestID, repositoryGraphStatusPayload(snapshot))
 	case TypePreferencesSave:
 		var payload PreferencesSavePayload
 		if err := decodePayload(envelope.Payload, &payload); err != nil {
@@ -161,7 +193,10 @@ func (h *Handler) handleMessage(ctx context.Context, envelope Envelope, write fu
 			return err
 		}
 
-		return write(TypePreferencesSaved, envelope.RequestID, toPayload(snapshot))
+		if err := write(TypePreferencesSaved, envelope.RequestID, toPayload(snapshot)); err != nil {
+			return err
+		}
+		return write(TypeRepositoryGraphStatus, envelope.RequestID, repositoryGraphStatusPayload(snapshot))
 	case TypeAgentRunSubmit:
 		var payload AgentRunSubmitPayload
 		if err := decodePayload(envelope.Payload, &payload); err != nil {
@@ -181,7 +216,10 @@ func (h *Handler) handleMessage(ctx context.Context, envelope Envelope, write fu
 			})
 		}
 
-		return write(TypeWorkspaceBootstrap, envelope.RequestID, toPayload(snapshot))
+		if err := write(TypeWorkspaceBootstrap, envelope.RequestID, toPayload(snapshot)); err != nil {
+			return err
+		}
+		return write(TypeRepositoryGraphStatus, envelope.RequestID, repositoryGraphStatusPayload(snapshot))
 	case TypeAgentRunOpen:
 		var payload AgentRunOpenPayload
 		if err := decodePayload(envelope.Payload, &payload); err != nil {
@@ -201,7 +239,10 @@ func (h *Handler) handleMessage(ctx context.Context, envelope Envelope, write fu
 			})
 		}
 
-		return write(TypeWorkspaceBootstrap, envelope.RequestID, toPayload(snapshot))
+		if err := write(TypeWorkspaceBootstrap, envelope.RequestID, toPayload(snapshot)); err != nil {
+			return err
+		}
+		return write(TypeRepositoryGraphStatus, envelope.RequestID, repositoryGraphStatusPayload(snapshot))
 	case TypeAgentRunCancel:
 		var payload AgentRunCancelPayload
 		if err := decodePayload(envelope.Payload, &payload); err != nil {
@@ -221,7 +262,10 @@ func (h *Handler) handleMessage(ctx context.Context, envelope Envelope, write fu
 			})
 		}
 
-		return write(TypeWorkspaceBootstrap, envelope.RequestID, toPayload(snapshot))
+		if err := write(TypeWorkspaceBootstrap, envelope.RequestID, toPayload(snapshot)); err != nil {
+			return err
+		}
+		return write(TypeRepositoryGraphStatus, envelope.RequestID, repositoryGraphStatusPayload(snapshot))
 	case TypeAgentRunApprovalRespond:
 		var payload AgentRunApprovalRespondPayload
 		if err := decodePayload(envelope.Payload, &payload); err != nil {
@@ -248,6 +292,68 @@ func (h *Handler) handleMessage(ctx context.Context, envelope Envelope, write fu
 			Message: "Relay did not recognize that workspace message type.",
 		})
 	}
+}
+
+func toRepositoryBrowsePayload(result workspaceorchestrator.RepositoryBrowseResult) RepositoryBrowseResultPayload {
+	directories := make([]RepositoryDirectoryPayload, 0, len(result.Directories))
+	for _, directory := range result.Directories {
+		directories = append(directories, RepositoryDirectoryPayload{
+			Name:            directory.Name,
+			Path:            directory.Path,
+			IsGitRepository: directory.IsGitRepository,
+		})
+	}
+	return RepositoryBrowseResultPayload{Path: result.Path, Directories: directories}
+}
+
+func repositoryGraphStatusPayload(snapshot workspaceorchestrator.WorkspaceSnapshot) RepositoryGraphStatusPayload {
+	graph := snapshot.RepositoryGraph
+	if strings.TrimSpace(graph.Status) == "" {
+		connected := snapshot.ConnectedRepository
+		switch connected.Status {
+		case "connected":
+			return RepositoryGraphStatusPayload{
+				RepositoryRoot: connected.Path,
+				Status:         "loading",
+				Message:        "Building repository graph in the background.",
+			}
+		case "invalid":
+			message := strings.TrimSpace(connected.Message)
+			if message == "" {
+				message = "Relay could not build the repository graph yet. The rest of the workspace remains available."
+			}
+			return RepositoryGraphStatusPayload{RepositoryRoot: connected.Path, Status: "error", Message: message}
+		default:
+			return RepositoryGraphStatusPayload{Status: "idle", Message: "Connect a repository to load the background-built codebase graph."}
+		}
+	}
+
+	payload := RepositoryGraphStatusPayload{
+		RepositoryRoot: graph.RepositoryRoot,
+		Status:         graph.Status,
+		Message:        graph.Message,
+	}
+	if graph.Status != "ready" {
+		return payload
+	}
+	payload.Nodes = make([]RepositoryGraphNodePayload, 0, len(graph.Nodes))
+	for _, node := range graph.Nodes {
+		payload.Nodes = append(payload.Nodes, RepositoryGraphNodePayload{
+			ID:    node.ID,
+			Label: node.Label,
+			Kind:  node.Kind,
+		})
+	}
+	payload.Edges = make([]RepositoryGraphEdgePayload, 0, len(graph.Edges))
+	for _, edge := range graph.Edges {
+		payload.Edges = append(payload.Edges, RepositoryGraphEdgePayload{
+			ID:     edge.ID,
+			Source: edge.Source,
+			Target: edge.Target,
+			Kind:   edge.Kind,
+		})
+	}
+	return payload
 }
 
 func (h *Handler) sendRuntimeEvents(requestID string, write func(messageType string, requestID string, payload any) error) error {
@@ -304,11 +410,11 @@ func toPayload(snapshot workspaceorchestrator.WorkspaceSnapshot) WorkspaceSnapsh
 		ActiveSessionID: snapshot.ActiveSessionID,
 		Sessions:        sessions,
 		Preferences: PreferencesView{
-			PreferredPort:        snapshot.Preferences.PreferredPort,
-			AppearanceVariant:    snapshot.Preferences.AppearanceVariant,
-			HasCredentials:       snapshot.Preferences.HasCredentials,
-			OpenRouterConfigured: snapshot.Preferences.OpenRouterConfigured,
-			ProjectRoot:          snapshot.Preferences.ProjectRoot,
+			PreferredPort:         snapshot.Preferences.PreferredPort,
+			AppearanceVariant:     snapshot.Preferences.AppearanceVariant,
+			HasCredentials:        snapshot.Preferences.HasCredentials,
+			OpenRouterConfigured:  snapshot.Preferences.OpenRouterConfigured,
+			ProjectRoot:           snapshot.Preferences.ProjectRoot,
 			ProjectRootConfigured: snapshot.Preferences.ProjectRootConfigured,
 			ProjectRootValid:      snapshot.Preferences.ProjectRootValid,
 			ProjectRootMessage:    snapshot.Preferences.ProjectRootMessage,
@@ -321,15 +427,21 @@ func toPayload(snapshot workspaceorchestrator.WorkspaceSnapshot) WorkspaceSnapsh
 			},
 			OpenBrowserOnStart: snapshot.Preferences.OpenBrowserOnStart,
 		},
+		ConnectedRepository: ConnectedRepositoryView{
+			Path:    snapshot.ConnectedRepository.Path,
+			Status:  snapshot.ConnectedRepository.Status,
+			Message: snapshot.ConnectedRepository.Message,
+		},
 		UIState: UIState{
 			HistoryState: snapshot.UIState.HistoryState,
 			CanvasState:  snapshot.UIState.CanvasState,
 			SaveState:    snapshot.UIState.SaveState,
 		},
-		ActiveRunID: snapshot.ActiveRunID,
-		RunSummaries: summarizeRunPayload(snapshot.RunSummaries),
+		ActiveRunID:      snapshot.ActiveRunID,
+		RunSummaries:     summarizeRunPayload(snapshot.RunSummaries),
+		PendingApprovals: summarizeApprovalPayload(snapshot.PendingApprovals),
 		CredentialStatus: CredentialStatusView{Configured: snapshot.CredentialStatus.Configured},
-		Warnings: snapshot.Warnings,
+		Warnings:         snapshot.Warnings,
 	}
 }
 
@@ -352,5 +464,28 @@ func summarizeRunPayload(runs []workspaceorchestrator.RunSummary) []AgentRunSumm
 		items = append(items, item)
 	}
 
+	return items
+}
+
+func summarizeApprovalPayload(approvals []workspaceorchestrator.ApprovalSummary) []ApprovalRequestPayload {
+	items := make([]ApprovalRequestPayload, 0, len(approvals))
+	for _, approval := range approvals {
+		items = append(items, ApprovalRequestPayload{
+			SessionID:      approval.SessionID,
+			RunID:          approval.RunID,
+			Role:           string(approval.Role),
+			Model:          approval.Model,
+			ToolCallID:     approval.ToolCallID,
+			ToolName:       approval.ToolName,
+			RequestKind:    approval.RequestKind,
+			Status:         approval.Status,
+			RepositoryRoot: approval.RepositoryRoot,
+			InputPreview:   approval.InputPreview,
+			DiffPreview:    approval.DiffPreview,
+			CommandPreview: approval.CommandPreview,
+			Message:        approval.Message,
+			OccurredAt:     approval.OccurredAt.Format(time.RFC3339),
+		})
+	}
 	return items
 }

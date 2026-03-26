@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,7 +12,9 @@ import (
 
 	"github.com/erisristemena/relay/internal/agents"
 	"github.com/erisristemena/relay/internal/config"
+	"github.com/erisristemena/relay/internal/repository"
 	"github.com/erisristemena/relay/internal/storage/sqlite"
+	toolspkg "github.com/erisristemena/relay/internal/tools"
 )
 
 type Store interface {
@@ -27,20 +30,31 @@ type Store interface {
 	ListRunSummaries(ctx context.Context, sessionID string) ([]sqlite.RunSummary, error)
 	AppendRunEvent(ctx context.Context, runID string, eventType string, role sqlite.AgentRole, model string, payloadJSON string) (sqlite.AgentRunEvent, error)
 	ListRunEvents(ctx context.Context, runID string) ([]sqlite.AgentRunEvent, error)
+	CreateApprovalRequest(ctx context.Context, approval sqlite.ApprovalRequest) (sqlite.ApprovalRequest, error)
+	GetApprovalRequest(ctx context.Context, runID string, toolCallID string) (sqlite.ApprovalRequest, error)
+	ListPendingApprovalRequests(ctx context.Context, sessionID string) ([]sqlite.ApprovalRequest, error)
+	ListPendingApprovalRequestsForRun(ctx context.Context, runID string) ([]sqlite.ApprovalRequest, error)
+	UpdateApprovalRequestState(ctx context.Context, runID string, toolCallID string, state string, reviewedAt *time.Time, appliedAt *time.Time) error
+	ResolvePendingApprovalRequestsForRun(ctx context.Context, runID string, state string, reviewedAt *time.Time) error
 	UpdateAgentRun(ctx context.Context, run sqlite.AgentRun) error
 	UpdateAgentExecution(ctx context.Context, execution sqlite.AgentExecution) error
 }
 
 type Service struct {
-	store                 Store
-	paths                 config.Paths
-	logger                *slog.Logger
-	mu                    sync.Mutex
-	runnerFactory         func(cfg config.Config, task string) agents.Runner
-	agentFactory          func(cfg config.Config, role sqlite.AgentRole) agents.Agent
-	forceLegacyRunnerPath bool
-	activeRuns            map[string]activeRunRegistration
-	pendingApprovals      map[string]pendingApproval
+	store                    Store
+	paths                    config.Paths
+	logger                   *slog.Logger
+	mu                       sync.Mutex
+	runnerFactory            func(cfg config.Config, task string) agents.Runner
+	agentFactory             func(cfg config.Config, role sqlite.AgentRole) agents.Agent
+	forceLegacyRunnerPath    bool
+	activeRuns               map[string]activeRunRegistration
+	pendingApprovals         map[string]pendingApproval
+	repositoryGraphs         map[string]repositoryGraphCacheEntry
+	repositoryGraphBuilds    map[string]context.CancelFunc
+	repositoryGraphBuilder   repositoryGraphBuilder
+	repositoryGraphSignature repositoryGraphSignatureFunc
+	workspaceSubscribers     map[string]func(StreamEnvelope) error
 }
 
 type activeRunRegistration struct {
@@ -78,11 +92,9 @@ type ApprovalDecision struct {
 }
 
 type pendingApproval struct {
-	SessionID  string
 	RunID      string
 	ToolCallID string
 	Respond    chan ApprovalDecision
-	Payload    map[string]any
 }
 
 var ErrApprovalRejected = errors.New("Relay blocked the tool call because approval was rejected")
@@ -103,14 +115,40 @@ type UIState struct {
 }
 
 type WorkspaceSnapshot struct {
-	ActiveSessionID  string                 `json:"active_session_id"`
-	Sessions         []SessionSummary       `json:"sessions"`
-	Preferences      config.SafePreferences `json:"preferences"`
-	UIState          UIState                `json:"ui_state"`
-	ActiveRunID      string                 `json:"active_run_id,omitempty"`
-	RunSummaries     []RunSummary           `json:"run_summaries,omitempty"`
-	CredentialStatus CredentialStatus       `json:"credential_status"`
-	Warnings         []string               `json:"warnings,omitempty"`
+	ActiveSessionID     string                     `json:"active_session_id"`
+	Sessions            []SessionSummary           `json:"sessions"`
+	Preferences         config.SafePreferences     `json:"preferences"`
+	ConnectedRepository ConnectedRepositorySummary `json:"connected_repository"`
+	RepositoryGraph     RepositoryGraphState       `json:"repository_graph"`
+	UIState             UIState                    `json:"ui_state"`
+	ActiveRunID         string                     `json:"active_run_id,omitempty"`
+	RunSummaries        []RunSummary               `json:"run_summaries,omitempty"`
+	PendingApprovals    []ApprovalSummary          `json:"pending_approvals,omitempty"`
+	CredentialStatus    CredentialStatus           `json:"credential_status"`
+	Warnings            []string                   `json:"warnings,omitempty"`
+}
+
+type ConnectedRepositorySummary struct {
+	Path    string `json:"path,omitempty"`
+	Status  string `json:"status"`
+	Message string `json:"message,omitempty"`
+}
+
+type ApprovalSummary struct {
+	SessionID      string           `json:"session_id"`
+	RunID          string           `json:"run_id"`
+	Role           sqlite.AgentRole `json:"role,omitempty"`
+	Model          string           `json:"model,omitempty"`
+	ToolCallID     string           `json:"tool_call_id"`
+	ToolName       string           `json:"tool_name"`
+	RequestKind    string           `json:"request_kind,omitempty"`
+	Status         string           `json:"status,omitempty"`
+	RepositoryRoot string           `json:"repository_root,omitempty"`
+	InputPreview   map[string]any   `json:"input_preview"`
+	DiffPreview    map[string]any   `json:"diff_preview,omitempty"`
+	CommandPreview map[string]any   `json:"command_preview,omitempty"`
+	Message        string           `json:"message"`
+	OccurredAt     time.Time        `json:"occurred_at"`
 }
 
 type CredentialStatus struct {
@@ -167,12 +205,17 @@ type PreferencesInput struct {
 
 func NewService(store Store, paths config.Paths) *Service {
 	service := &Service{
-		store:            store,
-		paths:            paths,
-		logger:           slog.Default(),
-		activeRuns:       make(map[string]activeRunRegistration),
-		pendingApprovals: make(map[string]pendingApproval),
+		store:                 store,
+		paths:                 paths,
+		logger:                slog.Default(),
+		activeRuns:            make(map[string]activeRunRegistration),
+		pendingApprovals:      make(map[string]pendingApproval),
+		repositoryGraphs:      make(map[string]repositoryGraphCacheEntry),
+		repositoryGraphBuilds: make(map[string]context.CancelFunc),
+		workspaceSubscribers:  make(map[string]func(StreamEnvelope) error),
 	}
+	service.repositoryGraphBuilder = defaultRepositoryGraphBuilder
+	service.repositoryGraphSignature = defaultRepositoryGraphSignature
 	service.runnerFactory = func(cfg config.Config, task string) agents.Runner {
 		registry := agents.NewRegistry(cfg.Agents.WithDefaults())
 		return registry.NewRunner(cfg.OpenRouter.APIKey, task, newCatalogToolExecutor(cfg.ProjectRoot, service))
@@ -315,6 +358,46 @@ func (s *Service) dispatchRunEnvelope(runID string, envelope StreamEnvelope) err
 	return nil
 }
 
+func (s *Service) AttachWorkspaceSubscriber(ctx context.Context, emit func(StreamEnvelope) error) {
+	subscriberID, ok := streamSubscriberFromContext(ctx)
+	if !ok || strings.TrimSpace(subscriberID) == "" || emit == nil {
+		return
+	}
+
+	s.mu.Lock()
+	s.workspaceSubscribers[subscriberID] = emit
+	s.mu.Unlock()
+
+	go func() {
+		<-ctx.Done()
+		s.mu.Lock()
+		delete(s.workspaceSubscribers, subscriberID)
+		s.mu.Unlock()
+	}()
+}
+
+func (s *Service) dispatchWorkspaceEnvelope(envelope StreamEnvelope) {
+	type delivery struct {
+		subscriberID string
+		emit         func(StreamEnvelope) error
+	}
+
+	deliveries := make([]delivery, 0)
+	s.mu.Lock()
+	for subscriberID, emit := range s.workspaceSubscribers {
+		deliveries = append(deliveries, delivery{subscriberID: subscriberID, emit: emit})
+	}
+	s.mu.Unlock()
+
+	for _, delivery := range deliveries {
+		if err := delivery.emit(envelope); err != nil {
+			s.mu.Lock()
+			delete(s.workspaceSubscribers, delivery.subscriberID)
+			s.mu.Unlock()
+		}
+	}
+}
+
 func (s *Service) finishReplay(runID string, subscriberID string, replayMaxSequence int64) error {
 	type delivery struct {
 		emit     func(StreamEnvelope) error
@@ -376,23 +459,156 @@ func sequenceFromEnvelope(envelope StreamEnvelope) (int64, bool) {
 	}
 }
 
-func (s *Service) pendingApprovalPayload(runID string) map[string]any {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, pending := range s.pendingApprovals {
-		if pending.RunID == runID {
-			payload := make(map[string]any, len(pending.Payload))
-			for key, value := range pending.Payload {
-				payload[key] = value
-			}
-			return payload
-		}
+func approvalPayload(summary ApprovalSummary) map[string]any {
+	payload := map[string]any{
+		"session_id":    summary.SessionID,
+		"run_id":        summary.RunID,
+		"tool_call_id":  summary.ToolCallID,
+		"tool_name":     summary.ToolName,
+		"status":        sqlite.ApprovalStateProposed,
+		"input_preview": summary.InputPreview,
+		"message":       summary.Message,
+		"occurred_at":   summary.OccurredAt.UTC().Format(time.RFC3339),
+	}
+	if requestKind, ok := summary.InputPreview["request_kind"].(string); ok && strings.TrimSpace(requestKind) != "" {
+		payload["request_kind"] = requestKind
+	}
+	if repositoryRoot, ok := summary.InputPreview["repository_root"].(string); ok && strings.TrimSpace(repositoryRoot) != "" {
+		payload["repository_root"] = repositoryRoot
+	}
+	if diffPreview, ok := summary.InputPreview["diff_preview"].(map[string]any); ok {
+		payload["diff_preview"] = diffPreview
+	}
+	if commandPreview, ok := summary.InputPreview["command_preview"].(map[string]any); ok {
+		payload["command_preview"] = commandPreview
+	}
+	if summary.Role != "" {
+		payload["role"] = summary.Role
+	}
+	if strings.TrimSpace(summary.Model) != "" {
+		payload["model"] = summary.Model
+	}
+	return payload
+}
+
+func approvalStateChangedPayload(summary ApprovalSummary, state string, occurredAt time.Time, message string) map[string]any {
+	payload := approvalPayload(summary)
+	payload["status"] = state
+	payload["message"] = strings.TrimSpace(message)
+	payload["occurred_at"] = occurredAt.UTC().Format(time.RFC3339)
+	return payload
+}
+
+func approvalStateChangeMessage(state string) string {
+	switch state {
+	case sqlite.ApprovalStateApproved:
+		return "Relay recorded approval and is revalidating before apply."
+	case sqlite.ApprovalStateApplied:
+		return "Relay applied the approved tool call successfully."
+	case sqlite.ApprovalStateRejected:
+		return "Relay recorded the rejection and blocked the tool call."
+	case sqlite.ApprovalStateBlocked:
+		return "Relay blocked the tool call because the approval was no longer safe to continue."
+	case sqlite.ApprovalStateExpired:
+		return "Relay expired the approval because the request was no longer actionable."
+	default:
+		return "Relay updated the approval state."
+	}
+}
+
+func (s *Service) emitApprovalStateChanged(ctx context.Context, summary ApprovalSummary, state string, occurredAt time.Time, message string) error {
+	run, err := s.store.GetAgentRun(ctx, summary.RunID)
+	if err != nil {
+		return err
+	}
+	role := run.Role
+	model := run.Model
+	if summary.Role != "" {
+		role = summary.Role
+	}
+	if strings.TrimSpace(summary.Model) != "" {
+		model = summary.Model
+	}
+	payload := approvalStateChangedPayload(ApprovalSummary{
+		SessionID:    summary.SessionID,
+		RunID:        summary.RunID,
+		Role:         role,
+		Model:        model,
+		ToolCallID:   summary.ToolCallID,
+		ToolName:     summary.ToolName,
+		InputPreview: summary.InputPreview,
+		Message:      summary.Message,
+		OccurredAt:   summary.OccurredAt,
+	}, state, occurredAt, message)
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal approval state payload: %w", err)
+	}
+	storedEvent, err := s.store.AppendRunEvent(ctx, summary.RunID, sqlite.EventTypeApprovalStateChanged, role, model, string(encoded))
+	if err != nil {
+		return err
+	}
+	payload["sequence"] = storedEvent.Sequence
+	if err := s.dispatchRunEnvelope(summary.RunID, StreamEnvelope{Type: sqlite.EventTypeApprovalStateChanged, Payload: payload}); err != nil {
+		return nil
 	}
 	return nil
 }
 
+func (s *Service) pendingApprovalPayloads(ctx context.Context, runID string) ([]map[string]any, error) {
+	approvals, err := s.store.ListPendingApprovalRequestsForRun(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	payloads := make([]map[string]any, 0, len(approvals))
+	for _, approval := range approvals {
+		summary, err := approvalSummaryFromRecord(approval)
+		if err != nil {
+			return nil, err
+		}
+		payloads = append(payloads, approvalPayload(summary))
+	}
+	return payloads, nil
+}
+
 func approvalKey(runID string, toolCallID string) string {
 	return strings.TrimSpace(runID) + ":" + strings.TrimSpace(toolCallID)
+}
+
+func approvalSummaryFromRecord(record sqlite.ApprovalRequest) (ApprovalSummary, error) {
+	inputPreview := make(map[string]any)
+	if strings.TrimSpace(record.InputPreviewJSON) != "" {
+		if err := json.Unmarshal([]byte(record.InputPreviewJSON), &inputPreview); err != nil {
+			return ApprovalSummary{}, fmt.Errorf("decode approval input preview: %w", err)
+		}
+	}
+
+	return ApprovalSummary{
+		SessionID:      record.SessionID,
+		RunID:          record.RunID,
+		Role:           record.Role,
+		Model:          record.Model,
+		ToolCallID:     record.ToolCallID,
+		ToolName:       record.ToolName,
+		RequestKind:    stringValueFromPreview(inputPreview, "request_kind"),
+		Status:         record.State,
+		RepositoryRoot: stringValueFromPreview(inputPreview, "repository_root"),
+		InputPreview:   inputPreview,
+		DiffPreview:    mapValueFromPreview(inputPreview, "diff_preview"),
+		CommandPreview: mapValueFromPreview(inputPreview, "command_preview"),
+		Message:        record.Message,
+		OccurredAt:     record.OccurredAt,
+	}, nil
+}
+
+func stringValueFromPreview(preview map[string]any, key string) string {
+	value, _ := preview[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func mapValueFromPreview(preview map[string]any, key string) map[string]any {
+	value, _ := preview[key].(map[string]any)
+	return value
 }
 
 func (s *Service) RequestApproval(ctx context.Context, request ApprovalRequest) (ApprovalDecision, error) {
@@ -402,22 +618,33 @@ func (s *Service) RequestApproval(ctx context.Context, request ApprovalRequest) 
 	}
 
 	key := approvalKey(request.RunID, request.ToolCallID)
+	inputPreviewJSON, err := json.Marshal(request.InputPreview)
+	if err != nil {
+		return ApprovalDecision{}, fmt.Errorf("marshal approval input preview: %w", err)
+	}
+	record, err := s.store.CreateApprovalRequest(ctx, sqlite.ApprovalRequest{
+		SessionID:        request.SessionID,
+		RunID:            request.RunID,
+		ToolCallID:       request.ToolCallID,
+		ToolName:         string(request.ToolName),
+		Role:             request.Role,
+		Model:            request.Model,
+		InputPreviewJSON: string(inputPreviewJSON),
+		Message:          request.Message,
+		State:            sqlite.ApprovalStateProposed,
+		OccurredAt:       request.OccurredAt.UTC(),
+	})
+	if err != nil {
+		return ApprovalDecision{}, err
+	}
+	summary, err := approvalSummaryFromRecord(record)
+	if err != nil {
+		return ApprovalDecision{}, err
+	}
 	pending := pendingApproval{
-		SessionID:  request.SessionID,
 		RunID:      request.RunID,
 		ToolCallID: request.ToolCallID,
 		Respond:    make(chan ApprovalDecision, 1),
-		Payload: map[string]any{
-			"session_id":    request.SessionID,
-			"run_id":        request.RunID,
-			"role":          request.Role,
-			"model":         request.Model,
-			"tool_call_id":  request.ToolCallID,
-			"tool_name":     string(request.ToolName),
-			"input_preview": request.InputPreview,
-			"message":       request.Message,
-			"occurred_at":   request.OccurredAt.UTC().Format(time.RFC3339),
-		},
 	}
 
 	s.mu.Lock()
@@ -436,8 +663,11 @@ func (s *Service) RequestApproval(ctx context.Context, request ApprovalRequest) 
 
 	if err := runContext.Emit(StreamEnvelope{
 		Type:    "approval_request",
-		Payload: pending.Payload,
+		Payload: approvalPayload(summary),
 	}); err != nil {
+		now := time.Now().UTC()
+		_ = s.store.UpdateApprovalRequestState(context.WithoutCancel(ctx), request.RunID, request.ToolCallID, sqlite.ApprovalStateBlocked, &now, nil)
+		_ = s.emitApprovalStateChanged(context.WithoutCancel(ctx), summary, sqlite.ApprovalStateBlocked, now, approvalStateChangeMessage(sqlite.ApprovalStateBlocked))
 		return ApprovalDecision{}, err
 	}
 
@@ -445,6 +675,9 @@ func (s *Service) RequestApproval(ctx context.Context, request ApprovalRequest) 
 	case decision := <-pending.Respond:
 		return decision, nil
 	case <-ctx.Done():
+		now := time.Now().UTC()
+		_ = s.store.UpdateApprovalRequestState(context.WithoutCancel(ctx), request.RunID, request.ToolCallID, sqlite.ApprovalStateBlocked, &now, nil)
+		_ = s.emitApprovalStateChanged(context.WithoutCancel(ctx), summary, sqlite.ApprovalStateBlocked, now, approvalStateChangeMessage(sqlite.ApprovalStateBlocked))
 		return ApprovalDecision{}, ctx.Err()
 	}
 }
@@ -468,16 +701,117 @@ func (s *Service) ResolveApproval(ctx context.Context, input ApprovalResponseInp
 	pending, ok := s.pendingApprovals[key]
 	s.mu.Unlock()
 	if !ok {
-		return WorkspaceSnapshot{}, fmt.Errorf("approval request %s is no longer pending", input.ToolCallID)
+		approval, approvalErr := s.store.GetApprovalRequest(ctx, input.RunID, input.ToolCallID)
+		if approvalErr != nil || approval.State != sqlite.ApprovalStateProposed {
+			return WorkspaceSnapshot{}, fmt.Errorf("approval request %s is no longer pending", input.ToolCallID)
+		}
+		pending = pendingApproval{RunID: input.RunID, ToolCallID: input.ToolCallID}
+	}
+	reviewedAt := time.Now().UTC()
+	nextState := sqlite.ApprovalStateRejected
+	if decision == "approved" {
+		approval, approvalErr := s.store.GetApprovalRequest(ctx, input.RunID, input.ToolCallID)
+		if approvalErr != nil {
+			return WorkspaceSnapshot{}, approvalErr
+		}
+		validatedState, validatedMessage, stale, validationErr := s.revalidateApprovalRequest(ctx, approval)
+		if validationErr != nil {
+			return WorkspaceSnapshot{}, validationErr
+		}
+		if stale {
+			nextState = validatedState
+			if err := s.store.UpdateApprovalRequestState(ctx, input.RunID, input.ToolCallID, nextState, &reviewedAt, nil); err != nil {
+				return WorkspaceSnapshot{}, err
+			}
+			summary, err := approvalSummaryFromRecord(approval)
+			if err != nil {
+				return WorkspaceSnapshot{}, err
+			}
+			if err := s.emitApprovalStateChanged(ctx, summary, nextState, reviewedAt, validatedMessage); err != nil {
+				return WorkspaceSnapshot{}, err
+			}
+			if ok {
+				select {
+				case pending.Respond <- ApprovalDecision{Approved: false}:
+				default:
+					return WorkspaceSnapshot{}, fmt.Errorf("approval request %s could not accept another decision", input.ToolCallID)
+				}
+			}
+			return s.Bootstrap(ctx, input.SessionID)
+		}
+		_ = validatedMessage
+		nextState = sqlite.ApprovalStateApproved
+	}
+	if err := s.store.UpdateApprovalRequestState(ctx, input.RunID, input.ToolCallID, nextState, &reviewedAt, nil); err != nil {
+		return WorkspaceSnapshot{}, err
+	}
+	approval, err := s.store.GetApprovalRequest(ctx, input.RunID, input.ToolCallID)
+	if err != nil {
+		return WorkspaceSnapshot{}, err
+	}
+	summary, err := approvalSummaryFromRecord(approval)
+	if err != nil {
+		return WorkspaceSnapshot{}, err
+	}
+	if err := s.emitApprovalStateChanged(ctx, summary, nextState, reviewedAt, approvalStateChangeMessage(nextState)); err != nil {
+		return WorkspaceSnapshot{}, err
 	}
 
-	select {
-	case pending.Respond <- ApprovalDecision{Approved: decision == "approved"}:
-	default:
-		return WorkspaceSnapshot{}, fmt.Errorf("approval request %s could not accept another decision", input.ToolCallID)
+	if ok {
+		select {
+		case pending.Respond <- ApprovalDecision{Approved: decision == "approved"}:
+		default:
+			return WorkspaceSnapshot{}, fmt.Errorf("approval request %s could not accept another decision", input.ToolCallID)
+		}
 	}
 
 	return s.Bootstrap(ctx, input.SessionID)
+}
+
+func (s *Service) revalidateApprovalRequest(_ context.Context, approval sqlite.ApprovalRequest) (string, string, bool, error) {
+	inputPreview := make(map[string]any)
+	if strings.TrimSpace(approval.InputPreviewJSON) != "" {
+		if err := json.Unmarshal([]byte(approval.InputPreviewJSON), &inputPreview); err != nil {
+			return "", "", false, fmt.Errorf("decode approval input preview: %w", err)
+		}
+	}
+
+	repositoryRoot, _ := inputPreview["repository_root"].(string)
+	if strings.TrimSpace(repositoryRoot) == "" {
+		return "", "", false, nil
+	}
+
+	cfg, _, err := config.Load(s.paths)
+	if err != nil {
+		return "", "", false, err
+	}
+	rootStatus := repository.ValidateRoot(cfg.ProjectRoot)
+	if !rootStatus.Valid || rootStatus.Root != repositoryRoot {
+		return sqlite.ApprovalStateBlocked, "Relay blocked the approval because the connected repository changed or is no longer valid.", true, nil
+	}
+
+	requestKind, _ := inputPreview["request_kind"].(string)
+	if requestKind != toolspkg.RequestKindFileWrite {
+		return "", "", false, nil
+	}
+
+	diffPreview, ok := inputPreview["diff_preview"].(map[string]any)
+	if !ok {
+		return "", "", false, nil
+	}
+	targetPath, _ := diffPreview["target_path"].(string)
+	expectedHash, _ := diffPreview["base_content_hash"].(string)
+	if strings.TrimSpace(targetPath) == "" || strings.TrimSpace(expectedHash) == "" {
+		return "", "", false, nil
+	}
+	currentHash, err := toolspkg.CurrentWriteFileBaseHash(rootStatus.Root, targetPath)
+	if err != nil {
+		return sqlite.ApprovalStateBlocked, "Relay blocked the approval because it could not revalidate the file before apply.", true, nil
+	}
+	if currentHash != expectedHash {
+		return sqlite.ApprovalStateExpired, "Relay expired the approval because the file changed after the diff was prepared.", true, nil
+	}
+	return "", "", false, nil
 }
 
 func (s *Service) Bootstrap(ctx context.Context, lastSessionID string) (WorkspaceSnapshot, error) {
@@ -485,6 +819,7 @@ func (s *Service) Bootstrap(ctx context.Context, lastSessionID string) (Workspac
 	if err != nil {
 		return WorkspaceSnapshot{}, err
 	}
+	s.syncRepositoryGraph(ctx, cfg)
 
 	sessions, err := s.store.ListSessions(ctx)
 	if err != nil {
@@ -509,6 +844,7 @@ func (s *Service) Bootstrap(ctx context.Context, lastSessionID string) (Workspac
 
 	runSummaries := make([]RunSummary, 0)
 	activeRunID := ""
+	pendingApprovals := make([]ApprovalSummary, 0)
 	if activeSessionID != "" {
 		activeRun, hasActiveRun, err := s.reconcileActiveRun(ctx)
 		if err != nil {
@@ -523,12 +859,30 @@ func (s *Service) Bootstrap(ctx context.Context, lastSessionID string) (Workspac
 		if hasActiveRun && activeRun.SessionID == activeSessionID {
 			activeRunID = activeRun.ID
 		}
+
+		storedApprovals, err := s.store.ListPendingApprovalRequests(ctx, activeSessionID)
+		if err != nil {
+			return WorkspaceSnapshot{}, fmt.Errorf("load pending approvals: %w", err)
+		}
+		pendingApprovals = make([]ApprovalSummary, 0, len(storedApprovals))
+		for _, approval := range storedApprovals {
+			summary, err := approvalSummaryFromRecord(approval)
+			if err != nil {
+				return WorkspaceSnapshot{}, err
+			}
+			pendingApprovals = append(pendingApprovals, summary)
+		}
 	}
 
+	connectedRepository := connectedRepositorySummary(cfg.SafePreferences())
+	graphState := s.currentRepositoryGraph(connectedRepository)
+
 	return WorkspaceSnapshot{
-		ActiveSessionID: activeSessionID,
-		Sessions:        summarizeSessions(sessions),
-		Preferences:     cfg.SafePreferences(),
+		ActiveSessionID:     activeSessionID,
+		Sessions:            summarizeSessions(sessions),
+		Preferences:         cfg.SafePreferences(),
+		ConnectedRepository: connectedRepository,
+		RepositoryGraph:     graphState,
 		UIState: UIState{
 			HistoryState: "ready",
 			CanvasState:  canvasStateForSessions(sessions, activeSessionID),
@@ -536,9 +890,48 @@ func (s *Service) Bootstrap(ctx context.Context, lastSessionID string) (Workspac
 		},
 		ActiveRunID:      activeRunID,
 		RunSummaries:     runSummaries,
+		PendingApprovals: pendingApprovals,
 		CredentialStatus: CredentialStatus{Configured: cfg.HasOpenRouterKey()},
 		Warnings:         warnings,
 	}, nil
+}
+
+func (s *Service) currentRepositoryGraph(connected ConnectedRepositorySummary) RepositoryGraphState {
+	if strings.TrimSpace(connected.Path) == "" {
+		return repositoryGraphStateFromConnection(connected, repositoryGraphCacheEntry{}, false)
+	}
+
+	s.mu.Lock()
+	entry, ok := s.repositoryGraphs[connected.Path]
+	s.mu.Unlock()
+	return repositoryGraphStateFromConnection(connected, entry, ok)
+}
+
+func connectedRepositorySummary(preferences config.SafePreferences) ConnectedRepositorySummary {
+	if preferences.ProjectRootValid && strings.TrimSpace(preferences.ProjectRoot) != "" {
+		return ConnectedRepositorySummary{
+			Path:    preferences.ProjectRoot,
+			Status:  "connected",
+			Message: "Repository-aware reads stay inside this local Git worktree.",
+		}
+	}
+
+	if preferences.ProjectRootConfigured {
+		message := strings.TrimSpace(preferences.ProjectRootMessage)
+		if message == "" {
+			message = "Relay could not use the saved project root. Choose a valid local Git repository."
+		}
+		return ConnectedRepositorySummary{
+			Path:    preferences.ProjectRoot,
+			Status:  "invalid",
+			Message: message,
+		}
+	}
+
+	return ConnectedRepositorySummary{
+		Status:  "not_configured",
+		Message: "Choose a local Git repository to enable repository-aware tools.",
+	}
 }
 
 func (s *Service) reconcileActiveRun(ctx context.Context) (sqlite.AgentRun, bool, error) {

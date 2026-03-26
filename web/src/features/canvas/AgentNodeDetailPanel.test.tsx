@@ -14,6 +14,8 @@ function buildSelectedNode(overrides: Partial<SelectedCanvasNodeView> = {}): Sel
       currentStateLabel: "Thinking",
       incomingFrom: [],
       outgoingTo: ["Coder"],
+      proposedChanges: [],
+      readPaths: [],
       summary: "Planner is sequencing the work.",
       taskText: "Break the goal into stages.",
       transcript: "Planner transcript.",
@@ -96,6 +98,8 @@ describe("AgentNodeDetailPanel", () => {
             errorMessage: "Coder needs a missing file path.",
             incomingFrom: ["Planner"],
             outgoingTo: ["Reviewer"],
+            proposedChanges: [],
+            readPaths: [],
             summary: "Coder is writing the change.",
             taskText: "Implement the requested patch.",
             transcript: "Coder transcript.",
@@ -109,5 +113,41 @@ describe("AgentNodeDetailPanel", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/coder transcript\./i)).toBeInTheDocument();
     expect(screen.getByText(/coder needs a missing file path/i)).toBeInTheDocument();
+  });
+
+  it("renders read files and proposal approval outcomes for the selected node", () => {
+    render(
+      <AgentNodeDetailPanel
+        haltAgentId={null}
+        haltCode={null}
+        haltMessage=""
+        haltRole={null}
+        selectedNode={buildSelectedNode({
+          details: {
+            currentStateLabel: "Thinking",
+            incomingFrom: ["Planner"],
+            outgoingTo: ["Reviewer"],
+            proposedChanges: [
+              {
+                path: "web/src/features/canvas/canvasModel.ts",
+                toolCallId: "call_write",
+                approvalState: "applied",
+              },
+            ],
+            readPaths: ["internal/agents/coder.go", "web/src/app/page.tsx"],
+            summary: "Coder finished the change.",
+            taskText: "Implement the requested patch.",
+            transcript: "Coder transcript.",
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByText("internal/agents/coder.go")).toBeInTheDocument();
+    expect(screen.getByText("web/src/app/page.tsx")).toBeInTheDocument();
+    expect(
+      screen.getByText("web/src/features/canvas/canvasModel.ts"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/applied to the repository/i)).toBeInTheDocument();
   });
 });

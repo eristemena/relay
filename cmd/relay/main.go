@@ -41,6 +41,7 @@ func newServeCommand(logger *slog.Logger) *cobra.Command {
 	var preferredPort int
 	var devMode bool
 	var noBrowser bool
+	var projectRoot string
 
 	command := &cobra.Command{
 		Use:   "serve",
@@ -53,6 +54,7 @@ func newServeCommand(logger *slog.Logger) *cobra.Command {
 				PreferredPort: preferredPort,
 				DevMode:       devMode,
 				NoBrowser:     noBrowser,
+				ProjectRoot:   projectRoot,
 				Version:       version,
 				Logger:        logger,
 			})
@@ -62,6 +64,7 @@ func newServeCommand(logger *slog.Logger) *cobra.Command {
 	command.Flags().IntVar(&preferredPort, "port", 4747, "Preferred Relay port for this run")
 	command.Flags().BoolVar(&devMode, "dev", false, "Proxy browser routes to a local Next.js dev server")
 	command.Flags().BoolVar(&noBrowser, "no-browser", false, "Start Relay without opening the browser automatically")
+	command.Flags().StringVar(&projectRoot, "project-root", "", "Absolute path to the local Git repository Relay should connect on startup")
 
 	return command
 }

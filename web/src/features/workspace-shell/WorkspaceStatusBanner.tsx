@@ -7,6 +7,7 @@ interface WorkspaceStatusBannerProps {
   connectionState: "connecting" | "connected" | "closed";
   status: WorkspaceStatusPayload | null;
   error: ErrorPayload | null;
+  projectRootConfigured?: boolean;
   projectRootMessage?: string;
   projectRootValid?: boolean;
   warnings: string[];
@@ -14,20 +15,43 @@ interface WorkspaceStatusBannerProps {
   embedded?: boolean;
 }
 
+function getProjectRootStatusMessage(params: {
+  projectRootConfigured?: boolean;
+  projectRootMessage?: string;
+  projectRootValid?: boolean;
+}) {
+  if (params.projectRootValid ?? true) {
+    return null;
+  }
+
+  if (params.projectRootMessage) {
+    return params.projectRootMessage;
+  }
+
+  if (params.projectRootConfigured) {
+    return "Relay could not use the saved project root. Choose a valid local Git repository.";
+  }
+
+  return "Choose a local Git repository to enable repository-aware tools.";
+}
+
 export function hasWorkspaceStatusBanner(params: {
   connectionState: "connecting" | "connected" | "closed";
   status: WorkspaceStatusPayload | null;
   error: ErrorPayload | null;
+  projectRootConfigured?: boolean;
   projectRootMessage?: string;
   projectRootValid?: boolean;
   warnings: string[];
 }) {
+  const projectRootStatusMessage = getProjectRootStatusMessage(params);
+
   return !(
     !params.error &&
     !params.status &&
     params.warnings.length === 0 &&
     params.connectionState === "connected" &&
-    (params.projectRootValid ?? true)
+    !projectRootStatusMessage
   );
 }
 
@@ -35,6 +59,7 @@ export function WorkspaceStatusBanner({
   connectionState,
   status,
   error,
+  projectRootConfigured = false,
   projectRootMessage,
   projectRootValid = true,
   warnings,
@@ -46,6 +71,7 @@ export function WorkspaceStatusBanner({
       connectionState,
       status,
       error,
+      projectRootConfigured,
       projectRootMessage,
       projectRootValid,
       warnings,
@@ -54,25 +80,30 @@ export function WorkspaceStatusBanner({
     return null;
   }
 
-  const hasProjectRootWarning =
-    !projectRootValid && Boolean(projectRootMessage);
+  const projectRootStatusMessage = getProjectRootStatusMessage({
+    projectRootConfigured,
+    projectRootMessage,
+    projectRootValid,
+  });
   const tone = error
     ? "error"
-    : connectionState !== "connected" || hasProjectRootWarning
+    : connectionState !== "connected" || projectRootStatusMessage
       ? "warning"
       : "info";
   const message =
     error?.message ??
     status?.message ??
-    projectRootMessage ??
+    projectRootStatusMessage ??
     warnings[0] ??
     "Connecting to the Relay workspace.";
   const title = error
     ? "Recoverable issue"
     : connectionState !== "connected"
       ? "Connection status"
-      : hasProjectRootWarning
-        ? "Project root needs attention"
+      : projectRootStatusMessage
+        ? projectRootConfigured
+          ? "Project root needs attention"
+          : "Repository not connected"
         : "Workspace status";
 
   return (

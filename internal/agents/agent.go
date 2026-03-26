@@ -11,7 +11,10 @@ type ToolName string
 
 const (
 	ToolReadFile       ToolName = "read_file"
+	ToolListFiles      ToolName = "list_files"
 	ToolSearchCodebase ToolName = "search_codebase"
+	ToolGitLog         ToolName = "git_log"
+	ToolGitDiff        ToolName = "git_diff"
 	ToolWriteFile      ToolName = "write_file"
 	ToolRunCommand     ToolName = "run_command"
 )
