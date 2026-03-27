@@ -48,6 +48,12 @@ func (s *Service) OpenRun(ctx context.Context, input OpenRunInput, emit func(Str
 		}
 		payload["sequence"] = event.Sequence
 		payload["replay"] = true
+		if event.TokensUsed != nil {
+			payload["tokens_used"] = *event.TokensUsed
+		}
+		if event.ContextLimit != nil {
+			payload["context_limit"] = *event.ContextLimit
+		}
 		if event.Sequence > maxSequence {
 			maxSequence = event.Sequence
 		}

@@ -309,7 +309,7 @@ func (f *fakeStreamClient) Stream(ctx context.Context, request openrouter.Stream
 	}
 	f.toolResult = result
 	if handlers.OnComplete != nil {
-		handlers.OnComplete("stop")
+		handlers.OnComplete(openrouter.CompletionMetadata{FinishReason: "stop"})
 	}
 	return nil
 }

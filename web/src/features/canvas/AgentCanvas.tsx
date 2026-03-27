@@ -25,6 +25,7 @@ import {
   type AgentCanvasEdgePulseState,
   getRoleLabel,
   getSelectedCanvasNode,
+  type AgentNodeTokenUsage,
   type AgentCanvasDocument,
 } from "@/features/canvas/canvasModel";
 import {
@@ -138,6 +139,7 @@ function AgentCanvasSurface({
           readCount: node.details.readPaths.length,
           proposalCount: node.details.proposedChanges.length,
           summary: node.details.summary,
+          tokenUsage: node.details.tokenUsage as AgentNodeTokenUsage,
         },
         selected: node.id === canvasDocument?.selectedNodeId,
         draggable: false,

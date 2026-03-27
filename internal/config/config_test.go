@@ -218,7 +218,6 @@ func TestSaveAndLoadPreserveOpenRouterAndProjectRoot(t *testing.T) {
 	if loaded.OpenRouter.APIKey != "or-test-key" {
 		t.Fatalf("loaded.OpenRouter.APIKey = %q, want saved key", loaded.OpenRouter.APIKey)
 	}
-
 	preferences := loaded.SafePreferences()
 	if !preferences.OpenRouterConfigured {
 		t.Fatal("preferences.OpenRouterConfigured = false, want true")
@@ -229,6 +228,65 @@ func TestSaveAndLoadPreserveOpenRouterAndProjectRoot(t *testing.T) {
 	if preferences.ProjectRoot != projectRoot {
 		t.Fatalf("preferences.ProjectRoot = %q, want %q", preferences.ProjectRoot, projectRoot)
 	}
+}
+
+
+func TestModelContextLimitHint(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name  string
+		model string
+		want  *int
+	}{
+		{
+			name:  "parses k suffix",
+			model: "anthropic/claude-3.7-sonnet-32k",
+			want:  intPtr(32000),
+		},
+		{
+			name:  "parses m suffix",
+			model: "google/gemini-2.0-flash-1m",
+			want:  intPtr(1000000),
+		},
+		{
+			name:  "ignores invalid hints",
+			model: "anthropic/claude-sonnet-latest",
+			want:  nil,
+		},
+		{
+			name:  "ignores zero values",
+			model: "custom/model-0k",
+			want:  nil,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := ModelContextLimitHint(testCase.model)
+			if !equalIntPtr(got, testCase.want) {
+				t.Fatalf("ModelContextLimitHint(%q) = %v, want %v", testCase.model, valueOfIntPtr(got), valueOfIntPtr(testCase.want))
+			}
+		})
+	}
+}
+
+func intPtr(value int) *int {
+	return &value
+}
+
+func equalIntPtr(left, right *int) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return *left == *right
+}
+
+func valueOfIntPtr(value *int) any {
+	if value == nil {
+		return nil
+	}
+	return *value
 }
 
 func containsWarning(warnings []string, needle string) bool {

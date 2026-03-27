@@ -163,6 +163,7 @@ func TestClientStreamStreamsTokensToCompletion(t *testing.T) {
 
 	var tokens []string
 	finishReason := ""
+	var tokensUsed *int
 	err := client.Stream(context.Background(), StreamRequest{
 		Model:      "test-model",
 		UserPrompt: "Say hello",
@@ -170,8 +171,9 @@ func TestClientStreamStreamsTokensToCompletion(t *testing.T) {
 		OnToken: func(text string) {
 			tokens = append(tokens, text)
 		},
-		OnComplete: func(reason string) {
-			finishReason = reason
+		OnComplete: func(metadata CompletionMetadata) {
+			finishReason = metadata.FinishReason
+			tokensUsed = metadata.TokensUsed
 		},
 	})
 	if err != nil {
@@ -185,6 +187,9 @@ func TestClientStreamStreamsTokensToCompletion(t *testing.T) {
 	}
 	if finishReason != "stop" {
 		t.Fatalf("finishReason = %q, want stop", finishReason)
+	}
+	if tokensUsed != nil {
+		t.Fatalf("tokensUsed = %v, want nil when usage chunk is absent", *tokensUsed)
 	}
 }
 
@@ -227,6 +232,7 @@ func TestClientStreamExecutesToolCallsAndContinues(t *testing.T) {
 
 	var executed []ToolCall
 	finishReason := ""
+	var tokensUsed *int
 	err := client.Stream(context.Background(), StreamRequest{
 		Model:      "test-model",
 		UserPrompt: "Read the README",
@@ -242,8 +248,9 @@ func TestClientStreamExecutesToolCallsAndContinues(t *testing.T) {
 			executed = append(executed, call)
 			return ToolResult{ToolCallID: call.ID, Name: call.Name, Content: "README content"}, nil
 		},
-		OnComplete: func(reason string) {
-			finishReason = reason
+		OnComplete: func(metadata CompletionMetadata) {
+			finishReason = metadata.FinishReason
+			tokensUsed = metadata.TokensUsed
 		},
 	})
 	if err != nil {
@@ -261,6 +268,42 @@ func TestClientStreamExecutesToolCallsAndContinues(t *testing.T) {
 	}
 	if finishReason != "stop" {
 		t.Fatalf("finishReason = %q, want stop", finishReason)
+	}
+	if tokensUsed != nil {
+		t.Fatalf("tokensUsed = %v, want nil when usage chunk is absent", *tokensUsed)
+	}
+}
+
+func TestClientStreamCapturesFinalChunkUsage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"id\":\"cmpl_usage\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Done\"},\"finish_reason\":\"stop\"}] }\n\n"))
+		_, _ = w.Write([]byte("data: {\"id\":\"cmpl_usage\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"test-model\",\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":8,\"total_tokens\":20}}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	config := openai.DefaultConfig("test-key")
+	config.BaseURL = server.URL
+	client := &Client{client: openai.NewClientWithConfig(config)}
+
+	var completion CompletionMetadata
+	err := client.Stream(context.Background(), StreamRequest{
+		Model:      "test-model",
+		UserPrompt: "Summarize usage",
+	}, StreamHandlers{
+		OnComplete: func(metadata CompletionMetadata) {
+			completion = metadata
+		},
+	})
+	if err != nil {
+		t.Fatalf("Stream() error = %v", err)
+	}
+	if completion.FinishReason != "stop" {
+		t.Fatalf("completion.FinishReason = %q, want stop", completion.FinishReason)
+	}
+	if completion.TokensUsed == nil || *completion.TokensUsed != 20 {
+		t.Fatalf("completion.TokensUsed = %#v, want 20", completion.TokensUsed)
 	}
 }
 

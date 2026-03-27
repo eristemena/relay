@@ -1,6 +1,6 @@
 # relay Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-03-25
+Auto-generated from all feature plans. Last updated: 2026-03-27
 
 ## Active Technologies
 - SQLite database at `~/.relay/relay.db` for session records and minimal workspace state; TOML config at `~/.relay/config.toml` for preferences and stored credentials (003-local-relay-workspace)
@@ -16,6 +16,8 @@ Auto-generated from all feature plans. Last updated: 2026-03-25
 - SQLite only for existing run persistence; no new persisted animation state (007-canvas-animation-layer)
 - Go 1.26 backend; TypeScript 5.8 in strict mode; React 19.1; Next.js 16.2 App Router frontend + Go standard library first, including `os/exec`, `context`, `filepath`, and `sync`; new backend dependency `github.com/go-git/go-git/v5` for repository validation, tree traversal, commit log access, and working-tree diffs without a system Git dependency; new frontend dependency `monaco-editor` for side-by-side diff review; existing `@xyflow/react`, `framer-motion`, and workspace protocol/store layers remain in use (008-codebase-awareness)
 - SQLite only, with new persisted approval-request state and possible repository-analysis metadata; existing config file remains the source of truth for `project_root` (008-codebase-awareness)
+- Go 1.26 backend; TypeScript 5.8 in strict mode; React 19.1; Next.js 16.2 App Router frontend + Go standard library first, including `net/http`, `context`, `sync`, and `time`; existing `github.com/sashabaranov/go-openai` OpenRouter client remains in use for streaming responses; existing `modernc.org/sqlite`, React Flow, Framer Motion, Tailwind, and workspace protocol/store layers remain in use; no new third-party dependency is required if model metadata fetching uses the standard library (009-agent-token-usage)
+- SQLite only, using the existing `agent_run_events` table plus two new nullable integer columns for `tokens_used` and `context_limit`; payload JSON remains stored for replay compatibility (009-agent-token-usage)
 
 - Go 1.26 backend; TypeScript (strict) with Next.js 16.2 App Router frontend + Go standard library (`net/http`, `net/http/httputil`, `embed`, `context`, `os`, `os/exec`, `database/sql`), Cobra for CLI entrypoints, `nhooyr.io/websocket` for Relay WebSocket transport, SQLite via `modernc.org/sqlite` or equivalent driver plus sqlc query generation and goose migrations, `github.com/pelletier/go-toml/v2` for `~/.relay/config.toml`, Next.js 16.2, Tailwind CSS, shadcn/ui, React Flow, Framer Motion (003-local-relay-workspace)
 
@@ -36,9 +38,9 @@ npm test && npm run lint
 Go 1.26 backend; TypeScript (strict) with Next.js 16.2 App Router frontend: Follow standard conventions
 
 ## Recent Changes
+- 009-agent-token-usage: Added Go 1.26 backend; TypeScript 5.8 in strict mode; React 19.1; Next.js 16.2 App Router frontend + Go standard library first, including `net/http`, `context`, `sync`, and `time`; existing `github.com/sashabaranov/go-openai` OpenRouter client remains in use for streaming responses; existing `modernc.org/sqlite`, React Flow, Framer Motion, Tailwind, and workspace protocol/store layers remain in use; no new third-party dependency is required if model metadata fetching uses the standard library
 - 008-codebase-awareness: Added Go 1.26 backend; TypeScript 5.8 in strict mode; React 19.1; Next.js 16.2 App Router frontend + Go standard library first, including `os/exec`, `context`, `filepath`, and `sync`; new backend dependency `github.com/go-git/go-git/v5` for repository validation, tree traversal, commit log access, and working-tree diffs without a system Git dependency; new frontend dependency `monaco-editor` for side-by-side diff review; existing `@xyflow/react`, `framer-motion`, and workspace protocol/store layers remain in use
 - 007-canvas-animation-layer: Added Go 1.26 backend; TypeScript 5.8 in strict mode; React 19.1; Next.js 16.2 App Router frontend + Go standard library and existing backend packages remain unchanged by default; existing frontend dependencies `@xyflow/react` for the canvas and existing `framer-motion` for node and panel animation; existing global CSS for state glow styling; no new third-party dependency is required
-- 006-live-agent-orchestration: Added Go 1.26 backend; TypeScript in strict mode with Next.js 16.2 App Router frontend + Go standard library (`context`, `sync`, `errors`, `time`, `encoding/json`), existing `nhooyr.io/websocket` transport, existing SQLite store and sqlc models, existing Relay agent and OpenRouter integration packages, existing React Flow and dagre frontend stack; no new third-party dependency is required for orchestration itself
 
 
 <!-- MANUAL ADDITIONS START -->

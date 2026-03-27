@@ -25,6 +25,7 @@ func (s *Service) SubmitRun(ctx context.Context, input SubmitRunInput, emit func
 	if err != nil {
 		return WorkspaceSnapshot{}, err
 	}
+	s.warmModelContextLimits(ctx, cfg)
 	if !cfg.HasOpenRouterKey() {
 		return WorkspaceSnapshot{}, fmt.Errorf("OpenRouter is not configured yet. Save an API key in preferences before starting a run")
 	}
@@ -89,7 +90,7 @@ func (s *Service) executeRun(runCtx context.Context, run sqlite.AgentRun, task s
 		Model: run.Model,
 	})
 	if s.forceLegacyRunnerPath {
-		s.executeLegacyRun(runCtx, run, task, s.runnerFactory(cfg, task))
+		s.executeLegacyRun(runCtx, run, task, cfg, s.runnerFactory(cfg, task))
 		return
 	}
 	if err := s.executeOrchestrationRun(runCtx, run, task, cfg); err == nil {
@@ -102,7 +103,7 @@ func (s *Service) executeRun(runCtx context.Context, run sqlite.AgentRun, task s
 	}
 }
 
-func (s *Service) executeLegacyRun(runCtx context.Context, run sqlite.AgentRun, task string, runner agents.Runner) {
+func (s *Service) executeLegacyRun(runCtx context.Context, run sqlite.AgentRun, task string, cfg config.Config, runner agents.Runner) {
 	profile := runner.Profile()
 	runCtx = withRunExecutionContext(runCtx, runExecutionContext{
 		SessionID: run.SessionID,
@@ -132,9 +133,12 @@ func (s *Service) executeLegacyRun(runCtx context.Context, run sqlite.AgentRun, 
 		OnToolResult: func(event agents.ToolResultEvent) {
 			_ = s.emitToolResult(runCtx, run.ID, event, nil)
 		},
-		OnComplete: func(finishReason string) {
+		OnComplete: func(metadata agents.CompletionMetadata) {
 			markTerminal()
-			_ = s.completeRun(runCtx, run.ID, finishReason, nil)
+			if metadata.ContextLimit == nil {
+				metadata.ContextLimit = s.resolveModelContextLimit(context.WithoutCancel(runCtx), cfg, run.Model)
+			}
+			_ = s.completeRun(runCtx, run.ID, metadata, nil)
 		},
 		OnError: func(code string, message string) {
 			markTerminal()
@@ -180,7 +184,7 @@ func (s *Service) emitStateChange(ctx context.Context, run sqlite.AgentRun, stat
 	if err != nil {
 		return fmt.Errorf("marshal state payload: %w", err)
 	}
-	event, err := s.store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeStateChange, run.Role, run.Model, string(encoded))
+	event, err := s.store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeStateChange, run.Role, run.Model, string(encoded), nil, nil)
 	if err != nil {
 		return err
 	}
@@ -226,7 +230,7 @@ func (s *Service) emitToken(ctx context.Context, runID string, text string, emit
 	if err != nil {
 		return fmt.Errorf("marshal token payload: %w", err)
 	}
-	event, err := s.store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeToken, run.Role, run.Model, string(encoded))
+	event, err := s.store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeToken, run.Role, run.Model, string(encoded), nil, nil)
 	if err != nil {
 		return err
 	}
@@ -272,7 +276,7 @@ func (s *Service) emitToolCall(ctx context.Context, runID string, event agents.T
 	if err != nil {
 		return fmt.Errorf("marshal tool call payload: %w", err)
 	}
-	storedEvent, err := s.store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeToolCall, role, model, string(encoded))
+	storedEvent, err := s.store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeToolCall, role, model, string(encoded), nil, nil)
 	if err != nil {
 		return err
 	}
@@ -315,7 +319,7 @@ func (s *Service) emitToolResult(ctx context.Context, runID string, event agents
 	if err != nil {
 		return fmt.Errorf("marshal tool result payload: %w", err)
 	}
-	storedEvent, err := s.store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeToolResult, role, model, string(encoded))
+	storedEvent, err := s.store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeToolResult, role, model, string(encoded), nil, nil)
 	if err != nil {
 		return err
 	}
@@ -342,7 +346,7 @@ func (s *Service) emitToolResult(ctx context.Context, runID string, event agents
 	return nil
 }
 
-func (s *Service) completeRun(ctx context.Context, runID string, finishReason string, emit func(StreamEnvelope) error) error {
+func (s *Service) completeRun(ctx context.Context, runID string, metadata agents.CompletionMetadata, emit func(StreamEnvelope) error) error {
 	run, err := s.store.GetAgentRun(ctx, runID)
 	if err != nil {
 		return err
@@ -362,14 +366,20 @@ func (s *Service) completeRun(ctx context.Context, runID string, finishReason st
 		"replay":        false,
 		"role":          run.Role,
 		"model":         run.Model,
-		"finish_reason": finishReason,
+		"finish_reason": metadata.FinishReason,
 		"occurred_at":   now.Format(time.RFC3339),
+	}
+	if metadata.TokensUsed != nil {
+		payload["tokens_used"] = *metadata.TokensUsed
+	}
+	if metadata.ContextLimit != nil {
+		payload["context_limit"] = *metadata.ContextLimit
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal complete payload: %w", err)
 	}
-	event, err := s.store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeComplete, run.Role, run.Model, string(encoded))
+	event, err := s.store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeComplete, run.Role, run.Model, string(encoded), metadata.TokensUsed, metadata.ContextLimit)
 	if err != nil {
 		return err
 	}
@@ -411,7 +421,7 @@ func (s *Service) failRun(ctx context.Context, runID string, code string, messag
 	if err != nil {
 		return fmt.Errorf("marshal error payload: %w", err)
 	}
-	event, err := s.store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeError, run.Role, run.Model, string(encoded))
+	event, err := s.store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeError, run.Role, run.Model, string(encoded), nil, nil)
 	if err != nil {
 		return err
 	}

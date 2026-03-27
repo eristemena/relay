@@ -71,10 +71,10 @@ func TestStore_ListRunSummariesAndReplayEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateAgentRun() first error = %v", err)
 	}
-	if _, err := store.AppendRunEvent(ctx, firstRun.ID, EventTypeToolCall, firstRun.Role, firstRun.Model, `{"tool_name":"read_file"}`); err != nil {
+	if _, err := store.AppendRunEvent(ctx, firstRun.ID, EventTypeToolCall, firstRun.Role, firstRun.Model, `{"tool_name":"read_file"}`, nil, nil); err != nil {
 		t.Fatalf("AppendRunEvent() tool call error = %v", err)
 	}
-	secondEvent, err := store.AppendRunEvent(ctx, firstRun.ID, EventTypeToolResult, firstRun.Role, firstRun.Model, `{"status":"completed"}`)
+	secondEvent, err := store.AppendRunEvent(ctx, firstRun.ID, EventTypeToolResult, firstRun.Role, firstRun.Model, `{"status":"completed"}`, nil, nil)
 	if err != nil {
 		t.Fatalf("AppendRunEvent() tool result error = %v", err)
 	}
@@ -195,13 +195,13 @@ func TestStore_ListAgentExecutionsAndOrchestrationReplayData(t *testing.T) {
 		t.Fatalf("UpdateAgentExecution() coder error = %v", err)
 	}
 
-	if _, err := store.AppendRunEvent(ctx, run.ID, EventTypeTaskAssigned, RolePlanner, planner.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_planner_1","task_text":"Break the goal into stages.","occurred_at":"2026-03-24T12:00:00Z"}`); err != nil {
+	if _, err := store.AppendRunEvent(ctx, run.ID, EventTypeTaskAssigned, RolePlanner, planner.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_planner_1","task_text":"Break the goal into stages.","occurred_at":"2026-03-24T12:00:00Z"}`, nil, nil); err != nil {
 		t.Fatalf("AppendRunEvent() task_assigned error = %v", err)
 	}
-	if _, err := store.AppendRunEvent(ctx, run.ID, EventTypeToken, RolePlanner, planner.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_planner_1","text":"planner transcript","occurred_at":"2026-03-24T12:00:01Z"}`); err != nil {
+	if _, err := store.AppendRunEvent(ctx, run.ID, EventTypeToken, RolePlanner, planner.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_planner_1","text":"planner transcript","occurred_at":"2026-03-24T12:00:01Z"}`, nil, nil); err != nil {
 		t.Fatalf("AppendRunEvent() token error = %v", err)
 	}
-	if _, err := store.AppendRunEvent(ctx, run.ID, EventTypeAgentError, RoleCoder, coder.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_coder_2","code":"agent_generation_failed","message":"Coder could not finish the draft.","terminal":true,"occurred_at":"2026-03-24T12:00:02Z"}`); err != nil {
+	if _, err := store.AppendRunEvent(ctx, run.ID, EventTypeAgentError, RoleCoder, coder.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_coder_2","code":"agent_generation_failed","message":"Coder could not finish the draft.","terminal":true,"occurred_at":"2026-03-24T12:00:02Z"}`, nil, nil); err != nil {
 		t.Fatalf("AppendRunEvent() agent_error error = %v", err)
 	}
 

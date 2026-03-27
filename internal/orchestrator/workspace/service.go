@@ -28,7 +28,7 @@ type Store interface {
 	GetAgentRun(ctx context.Context, runID string) (sqlite.AgentRun, error)
 	ListAgentExecutions(ctx context.Context, runID string) ([]sqlite.AgentExecution, error)
 	ListRunSummaries(ctx context.Context, sessionID string) ([]sqlite.RunSummary, error)
-	AppendRunEvent(ctx context.Context, runID string, eventType string, role sqlite.AgentRole, model string, payloadJSON string) (sqlite.AgentRunEvent, error)
+	AppendRunEvent(ctx context.Context, runID string, eventType string, role sqlite.AgentRole, model string, payloadJSON string, tokensUsed *int, contextLimit *int) (sqlite.AgentRunEvent, error)
 	ListRunEvents(ctx context.Context, runID string) ([]sqlite.AgentRunEvent, error)
 	CreateApprovalRequest(ctx context.Context, approval sqlite.ApprovalRequest) (sqlite.ApprovalRequest, error)
 	GetApprovalRequest(ctx context.Context, runID string, toolCallID string) (sqlite.ApprovalRequest, error)
@@ -55,6 +55,7 @@ type Service struct {
 	repositoryGraphBuilder   repositoryGraphBuilder
 	repositoryGraphSignature repositoryGraphSignatureFunc
 	workspaceSubscribers     map[string]func(StreamEnvelope) error
+	modelContextLimits       *modelContextLimitResolver
 }
 
 type activeRunRegistration struct {
@@ -213,6 +214,7 @@ func NewService(store Store, paths config.Paths) *Service {
 		repositoryGraphs:      make(map[string]repositoryGraphCacheEntry),
 		repositoryGraphBuilds: make(map[string]context.CancelFunc),
 		workspaceSubscribers:  make(map[string]func(StreamEnvelope) error),
+		modelContextLimits:    newModelContextLimitResolver(),
 	}
 	service.repositoryGraphBuilder = defaultRepositoryGraphBuilder
 	service.repositoryGraphSignature = defaultRepositoryGraphSignature
@@ -225,6 +227,30 @@ func NewService(store Store, paths config.Paths) *Service {
 		return registry.NewAgent(cfg.OpenRouter.APIKey, role, newCatalogToolExecutor(cfg.ProjectRoot, service))
 	}
 	return service
+}
+
+func (s *Service) warmModelContextLimits(ctx context.Context, cfg config.Config) {
+	if s.modelContextLimits == nil {
+		return
+	}
+
+	warmCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	if err := s.modelContextLimits.warm(warmCtx, cfg); err != nil && s.logger != nil {
+		s.logger.Debug("model context limit warmup failed", "error", err)
+	}
+}
+
+func (s *Service) resolveModelContextLimit(ctx context.Context, cfg config.Config, model string) *int {
+	if s.modelContextLimits == nil {
+		return config.ModelContextLimitHint(model)
+	}
+
+	limit, err := s.modelContextLimits.resolve(ctx, cfg, model, false)
+	if err != nil && s.logger != nil {
+		s.logger.Debug("model context limit lookup failed", "model", model, "error", err)
+	}
+	return limit
 }
 
 func (s *Service) SetLogger(logger *slog.Logger) {
@@ -544,7 +570,7 @@ func (s *Service) emitApprovalStateChanged(ctx context.Context, summary Approval
 	if err != nil {
 		return fmt.Errorf("marshal approval state payload: %w", err)
 	}
-	storedEvent, err := s.store.AppendRunEvent(ctx, summary.RunID, sqlite.EventTypeApprovalStateChanged, role, model, string(encoded))
+	storedEvent, err := s.store.AppendRunEvent(ctx, summary.RunID, sqlite.EventTypeApprovalStateChanged, role, model, string(encoded), nil, nil)
 	if err != nil {
 		return err
 	}
@@ -819,6 +845,7 @@ func (s *Service) Bootstrap(ctx context.Context, lastSessionID string) (Workspac
 	if err != nil {
 		return WorkspaceSnapshot{}, err
 	}
+	s.warmModelContextLimits(ctx, cfg)
 	s.syncRepositoryGraph(ctx, cfg)
 
 	sessions, err := s.store.ListSessions(ctx)

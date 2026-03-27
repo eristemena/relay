@@ -243,6 +243,11 @@ export interface RunEventBase {
   agent_id?: string;
 }
 
+export interface TokenUsagePayload {
+  tokens_used?: number;
+  context_limit?: number;
+}
+
 export interface StateChangePayload extends RunEventBase {
   state: AgentRunSummary["state"];
   message: string;
@@ -310,7 +315,7 @@ export interface ApprovalStateChangedPayload {
   replay?: boolean;
 }
 
-export interface CompletePayload extends RunEventBase {
+export interface CompletePayload extends RunEventBase, TokenUsagePayload {
   finish_reason: string;
 }
 
@@ -320,7 +325,8 @@ export interface AgentSpawnedPayload extends RunEventBase {
   spawn_order: number;
 }
 
-export interface AgentStateChangedPayload extends RunEventBase {
+export interface AgentStateChangedPayload
+  extends RunEventBase, TokenUsagePayload {
   agent_id: string;
   state:
     | "queued"
@@ -346,7 +352,7 @@ export interface HandoffPayload extends RunEventBase {
   reason: string;
 }
 
-export interface RunCompletePayload extends RunEventBase {
+export interface RunCompletePayload extends RunEventBase, TokenUsagePayload {
   summary: string;
 }
 

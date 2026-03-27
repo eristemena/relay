@@ -260,6 +260,44 @@ func (cfg Config) HasOpenRouterKey() bool {
 	return strings.TrimSpace(cfg.OpenRouter.APIKey) != ""
 }
 
+func ModelContextLimitHint(model string) *int {
+	for _, token := range strings.FieldsFunc(strings.ToLower(strings.TrimSpace(model)), func(r rune) bool {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return false
+		case r >= '0' && r <= '9':
+			return false
+		default:
+			return true
+		}
+	}) {
+		if len(token) < 2 {
+			continue
+		}
+
+		suffix := token[len(token)-1]
+		multiplier := 0
+		switch suffix {
+		case 'k':
+			multiplier = 1000
+		case 'm':
+			multiplier = 1000000
+		default:
+			continue
+		}
+
+		value, err := strconv.Atoi(token[:len(token)-1])
+		if err != nil || value <= 0 {
+			continue
+		}
+
+		contextLimit := value * multiplier
+		return &contextLimit
+	}
+
+	return nil
+}
+
 func (cfg Config) ProjectRootState() ProjectRootStatus {
 	status := repository.ValidateRoot(cfg.ProjectRoot)
 	return ProjectRootStatus{Configured: status.Configured, Valid: status.Valid, Message: status.Message}

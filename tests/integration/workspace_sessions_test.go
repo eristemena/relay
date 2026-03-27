@@ -142,31 +142,31 @@ func TestWorkspaceSessions_RestartOpenRunReplaysRepositoryAwareActivity(t *testi
 		store.Close()
 		t.Fatalf("UpdateAgentRun() error = %v", err)
 	}
-	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeToolCall, run.Role, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","role":"coder","model":"`+run.Model+`","tool_call_id":"call_read","tool_name":"read_file","input_preview":{"path":"README.md"},"occurred_at":"2026-03-24T12:00:00Z"}`); err != nil {
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeToolCall, run.Role, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","role":"coder","model":"`+run.Model+`","tool_call_id":"call_read","tool_name":"read_file","input_preview":{"path":"README.md"},"occurred_at":"2026-03-24T12:00:00Z"}`, nil, nil); err != nil {
 		store.Close()
 		t.Fatalf("AppendRunEvent() read tool_call error = %v", err)
 	}
-	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeToolResult, run.Role, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","role":"coder","model":"`+run.Model+`","tool_call_id":"call_read","tool_name":"read_file","status":"completed","result_preview":{"summary":"Loaded file content."},"occurred_at":"2026-03-24T12:00:01Z"}`); err != nil {
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeToolResult, run.Role, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","role":"coder","model":"`+run.Model+`","tool_call_id":"call_read","tool_name":"read_file","status":"completed","result_preview":{"summary":"Loaded file content."},"occurred_at":"2026-03-24T12:00:01Z"}`, nil, nil); err != nil {
 		store.Close()
 		t.Fatalf("AppendRunEvent() read tool_result error = %v", err)
 	}
-	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeToolCall, run.Role, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","role":"coder","model":"`+run.Model+`","tool_call_id":"call_write","tool_name":"write_file","input_preview":{"path":"README.md","request_kind":"file_write","repository_root":"`+repoDir+`","diff_preview":{"target_path":"README.md","original_content":"before\n","proposed_content":"after\n","base_content_hash":"sha256:abc"}},"occurred_at":"2026-03-24T12:00:02Z"}`); err != nil {
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeToolCall, run.Role, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","role":"coder","model":"`+run.Model+`","tool_call_id":"call_write","tool_name":"write_file","input_preview":{"path":"README.md","request_kind":"file_write","repository_root":"`+repoDir+`","diff_preview":{"target_path":"README.md","original_content":"before\n","proposed_content":"after\n","base_content_hash":"sha256:abc"}},"occurred_at":"2026-03-24T12:00:02Z"}`, nil, nil); err != nil {
 		store.Close()
 		t.Fatalf("AppendRunEvent() write tool_call error = %v", err)
 	}
-	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeApprovalStateChanged, run.Role, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","role":"coder","model":"`+run.Model+`","tool_call_id":"call_write","tool_name":"write_file","status":"approved","message":"Tool approved. Relay is resuming the run.","occurred_at":"2026-03-24T12:00:03Z"}`); err != nil {
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeApprovalStateChanged, run.Role, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","role":"coder","model":"`+run.Model+`","tool_call_id":"call_write","tool_name":"write_file","status":"approved","message":"Tool approved. Relay is resuming the run.","occurred_at":"2026-03-24T12:00:03Z"}`, nil, nil); err != nil {
 		store.Close()
 		t.Fatalf("AppendRunEvent() approval approved error = %v", err)
 	}
-	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeApprovalStateChanged, run.Role, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","role":"coder","model":"`+run.Model+`","tool_call_id":"call_write","tool_name":"write_file","status":"applied","message":"Relay applied the approved change.","occurred_at":"2026-03-24T12:00:04Z"}`); err != nil {
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeApprovalStateChanged, run.Role, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","role":"coder","model":"`+run.Model+`","tool_call_id":"call_write","tool_name":"write_file","status":"applied","message":"Relay applied the approved change.","occurred_at":"2026-03-24T12:00:04Z"}`, nil, nil); err != nil {
 		store.Close()
 		t.Fatalf("AppendRunEvent() approval applied error = %v", err)
 	}
-	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeToolResult, run.Role, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","role":"coder","model":"`+run.Model+`","tool_call_id":"call_write","tool_name":"write_file","status":"completed","result_preview":{"summary":"Wrote file content."},"occurred_at":"2026-03-24T12:00:05Z"}`); err != nil {
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeToolResult, run.Role, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","role":"coder","model":"`+run.Model+`","tool_call_id":"call_write","tool_name":"write_file","status":"completed","result_preview":{"summary":"Wrote file content."},"occurred_at":"2026-03-24T12:00:05Z"}`, nil, nil); err != nil {
 		store.Close()
 		t.Fatalf("AppendRunEvent() write tool_result error = %v", err)
 	}
-	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeComplete, run.Role, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","finish_reason":"stop","occurred_at":"2026-03-24T12:00:06Z"}`); err != nil {
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeComplete, run.Role, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","finish_reason":"stop","occurred_at":"2026-03-24T12:00:06Z"}`, nil, nil); err != nil {
 		store.Close()
 		t.Fatalf("AppendRunEvent() complete error = %v", err)
 	}

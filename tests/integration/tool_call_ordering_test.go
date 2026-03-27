@@ -599,7 +599,7 @@ func (r *approvalFlowRunner) Run(ctx context.Context, _ string, handlers agents.
 	}
 
 	if handlers.OnComplete != nil {
-		handlers.OnComplete("stop")
+		handlers.OnComplete(agents.CompletionMetadata{FinishReason: "stop"})
 	}
 	return nil
 }

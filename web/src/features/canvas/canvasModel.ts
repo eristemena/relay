@@ -37,6 +37,12 @@ export const agentCanvasStates = [
 export type AgentCanvasRole = (typeof agentCanvasRoles)[number];
 export type AgentCanvasState = (typeof agentCanvasStates)[number];
 export type AgentCanvasEdgePulseState = "idle" | "active" | "settling";
+export type AgentTokenUsageTone =
+  | "unavailable"
+  | "count_only"
+  | "neutral"
+  | "warning"
+  | "critical";
 export type AgentProposalApprovalState =
   | "proposed"
   | "approved"
@@ -57,9 +63,19 @@ export interface AgentNodeProposedChange {
   approvalState: AgentProposalApprovalState;
 }
 
+export interface AgentNodeTokenUsage {
+  tokensUsed: number | null;
+  contextLimit: number | null;
+  usagePercent: number | null;
+  tone: AgentTokenUsageTone;
+  summary: string;
+  detail: string;
+}
+
 export interface AgentNodeDetails {
   summary: string;
   currentStateLabel: string;
+  tokenUsage: AgentNodeTokenUsage;
   incomingFrom: string[];
   outgoingTo: string[];
   readPaths: string[];
@@ -119,7 +135,7 @@ export interface SelectedCanvasNodeView {
   details: AgentNodeDetails;
 }
 
-const defaultNodeSize = { height: 188, width: 336 };
+const defaultNodeSize = { height: 308, width: 336 };
 
 const roleCopy: Record<AgentCanvasRole, { label: string; summary: string }> = {
   planner: {
@@ -194,6 +210,7 @@ export function addSpawnedNode(
     details: {
       summary: roleCopy[role].summary,
       currentStateLabel: stateLabels.queued,
+      tokenUsage: defaultTokenUsage(),
       incomingFrom: [],
       outgoingTo: [],
       readPaths: [],
@@ -221,6 +238,11 @@ export function patchAgentState(
   document: AgentCanvasDocument,
   payload: AgentStateChangedPayload,
 ): AgentCanvasDocument {
+  const tokenUsage = buildTokenUsage(
+    payload.tokens_used,
+    payload.context_limit,
+  );
+
   return {
     ...document,
     nodes: syncNodeDetails(
@@ -232,6 +254,11 @@ export function patchAgentState(
                 ...node.details,
                 summary: payload.message || node.details.summary,
                 currentStateLabel: stateLabels[payload.state],
+                tokenUsage:
+                  payload.tokens_used !== undefined ||
+                  payload.context_limit !== undefined
+                    ? tokenUsage
+                    : node.details.tokenUsage,
               },
             })
           : node,
@@ -292,6 +319,7 @@ export function patchAgentToken(
                 summary: summarizeTranscript(
                   `${node.details.transcript}${payload.text}`,
                 ),
+                tokenUsage: node.details.tokenUsage,
               },
             })
           : node,
@@ -513,9 +541,27 @@ export function patchRunComplete(
   document: AgentCanvasDocument,
   payload: RunCompletePayload,
 ): AgentCanvasDocument {
+  const tokenUsage = buildTokenUsage(
+    payload.tokens_used,
+    payload.context_limit,
+  );
+
   return {
     ...document,
     edges: settleCanvasEdges(document.edges),
+    nodes: syncNodeDetails(
+      document.nodes.map((node) =>
+        payload.agent_id && node.id === payload.agent_id
+          ? updateNodePresentation(node, payload.occurred_at, {
+              details: {
+                ...node.details,
+                tokenUsage,
+              },
+            })
+          : node,
+      ),
+      document.edges,
+    ),
     runState: "completed",
     runSummary: payload.summary,
   };
@@ -619,6 +665,72 @@ function updateNodePresentation(
     stateRevision: node.stateRevision + 1,
     lastUpdatedAt: occurredAt,
   };
+}
+
+function defaultTokenUsage(): AgentNodeTokenUsage {
+  return {
+    tokensUsed: null,
+    contextLimit: null,
+    usagePercent: null,
+    tone: "unavailable",
+    summary: "Usage unavailable",
+    detail: "Relay did not receive authoritative token usage for this agent.",
+  };
+}
+
+function buildTokenUsage(
+  tokensUsed?: number,
+  contextLimit?: number,
+): AgentNodeTokenUsage {
+  const safeTokensUsed =
+    typeof tokensUsed === "number" &&
+    Number.isFinite(tokensUsed) &&
+    tokensUsed > 0
+      ? Math.round(tokensUsed)
+      : null;
+  const safeContextLimit =
+    typeof contextLimit === "number" &&
+    Number.isFinite(contextLimit) &&
+    contextLimit > 0
+      ? Math.round(contextLimit)
+      : null;
+
+  if (safeTokensUsed === null) {
+    return defaultTokenUsage();
+  }
+
+  if (safeContextLimit === null) {
+    return {
+      tokensUsed: safeTokensUsed,
+      contextLimit: null,
+      usagePercent: null,
+      tone: "count_only",
+      summary: `${formatTokenCount(safeTokensUsed)} used`,
+      detail: "Context window unavailable for this model.",
+    };
+  }
+
+  const rawPercent = safeTokensUsed / safeContextLimit;
+  const usagePercent = Math.min(rawPercent, 1);
+  const roundedPercent = Math.round(usagePercent * 100);
+  const tone =
+    rawPercent >= 0.9 ? "critical" : rawPercent >= 0.75 ? "warning" : "neutral";
+
+  return {
+    tokensUsed: safeTokensUsed,
+    contextLimit: safeContextLimit,
+    usagePercent,
+    tone,
+    summary: `${formatTokenCount(safeTokensUsed)} / ${formatTokenCount(safeContextLimit)}`,
+    detail:
+      rawPercent > 1
+        ? `Usage exceeded the known context window and is capped at 100%.`
+        : `${roundedPercent}% of the known context window used.`,
+  };
+}
+
+function formatTokenCount(value: number) {
+  return new Intl.NumberFormat("en-US").format(value);
 }
 
 function patchRoleState(

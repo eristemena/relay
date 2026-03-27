@@ -752,4 +752,59 @@ describe("workspaceStore", () => {
 
     resetWorkspaceStore();
   });
+
+  it("applies replayed token usage fields to orchestration node details", () => {
+    resetWorkspaceStore();
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({ active_run_id: "run_token_replay" }),
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_token_replay",
+          sequence: 1,
+          replay: true,
+          role: "reviewer",
+          model: "anthropic/claude-sonnet-4-5",
+          agent_id: "agent_reviewer_4",
+          label: "Reviewer",
+          spawn_order: 4,
+          occurred_at: "2026-03-24T12:00:00Z",
+        },
+      } as never);
+
+      workspaceStore.handleEnvelope({
+        type: "run_complete",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_token_replay",
+          sequence: 2,
+          replay: true,
+          role: "reviewer",
+          model: "anthropic/claude-sonnet-4-5",
+          agent_id: "agent_reviewer_4",
+          summary: "Reviewer completed the audit.",
+          tokens_used: 800,
+          context_limit: 1000,
+          occurred_at: "2026-03-24T12:00:01Z",
+        },
+      } as never);
+    });
+
+    expect(
+      workspaceStore.getSnapshot().orchestrationDocuments.run_token_replay
+        ?.nodes[0]?.details.tokenUsage,
+    ).toMatchObject({
+      tokensUsed: 800,
+      contextLimit: 1000,
+      usagePercent: 0.8,
+      tone: "warning",
+      summary: "800 / 1,000",
+    });
+
+    resetWorkspaceStore();
+  });
 });

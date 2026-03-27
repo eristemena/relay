@@ -224,6 +224,79 @@ func TestAgentStreaming_OpenRunReattachesActiveStreamAfterReconnect(t *testing.T
 	}
 }
 
+func TestAgentStreaming_CompletePreservesTokenCountWithoutContextLimit(t *testing.T) {
+	service, store, paths := newStreamingTestService(t)
+	defer store.Close()
+
+	cfg, _, err := config.Load(paths)
+	if err != nil {
+		t.Fatalf("config.Load() error = %v", err)
+	}
+	cfg.OpenRouter.APIKey = "or-test-key"
+	if err := config.Save(paths, cfg); err != nil {
+		t.Fatalf("config.Save() error = %v", err)
+	}
+
+	runner := &scriptedRunner{
+		profile: agents.Profile{
+			Role:         sqlite.RoleCoder,
+			Model:        "custom/local-model",
+			SystemPrompt: "test prompt",
+			AllowedTools: []agents.ToolName{agents.ToolReadFile},
+		},
+		ready:   make(chan struct{}),
+		release: make(chan struct{}),
+		onComplete: func(handlers agents.StreamEventHandlers) {
+			if handlers.OnComplete == nil {
+				return
+			}
+			tokensUsed := 4812
+			handlers.OnComplete(agents.CompletionMetadata{
+				FinishReason: "stop",
+				TokensUsed:   &tokensUsed,
+			})
+		},
+	}
+	service.SetRunnerFactory(func(config.Config, string) agents.Runner {
+		return runner
+	})
+
+	session, err := store.CreateSession(context.Background(), "Streaming token count only")
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+
+	server := newStreamingTestServer(t, service)
+	connection := dialStreamingSocket(t, server.URL)
+
+	writeStreamingMessage(t, connection, map[string]any{
+		"type": "agent.run.submit",
+		"payload": map[string]any{
+			"session_id": session.ID,
+			"task":       "Stream a run without a context limit",
+		},
+	})
+
+	_ = readStreamingEnvelope(t, connection)
+	<-runner.ready
+	close(runner.release)
+
+	_ = readUntilStreamingType(t, connection, "state_change")
+	_ = readUntilStreamingType(t, connection, "token")
+	_ = readUntilStreamingType(t, connection, "token")
+	complete := readUntilStreamingType(t, connection, "complete")
+	completePayload := complete["payload"].(map[string]any)
+	if completePayload["tokens_used"] != float64(4812) {
+		t.Fatalf("tokens_used = %v, want 4812", completePayload["tokens_used"])
+	}
+	if _, ok := completePayload["context_limit"]; ok {
+		t.Fatalf("context_limit = %v, want omitted when unavailable", completePayload["context_limit"])
+	}
+	if completePayload["finish_reason"] != "stop" {
+		t.Fatalf("finish_reason = %v, want stop", completePayload["finish_reason"])
+	}
+}
+
 func TestAgentStreaming_SubmitDeliversOrderedOrchestrationEvents(t *testing.T) {
 	service, store, paths := newStreamingTestService(t)
 	defer store.Close()
@@ -251,9 +324,7 @@ func TestAgentStreaming_SubmitDeliversOrderedOrchestrationEvents(t *testing.T) {
 				if handlers.OnToken != nil {
 					handlers.OnToken("planner")
 				}
-				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
-				}
+				completeStreamingRun(handlers)
 				return nil
 			}}
 		case sqlite.RoleCoder:
@@ -263,9 +334,7 @@ func TestAgentStreaming_SubmitDeliversOrderedOrchestrationEvents(t *testing.T) {
 				if handlers.OnToken != nil {
 					handlers.OnToken("coder")
 				}
-				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
-				}
+				completeStreamingRun(handlers)
 				return nil
 			}}
 		case sqlite.RoleTester:
@@ -275,9 +344,7 @@ func TestAgentStreaming_SubmitDeliversOrderedOrchestrationEvents(t *testing.T) {
 				if handlers.OnToken != nil {
 					handlers.OnToken("tester")
 				}
-				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
-				}
+				completeStreamingRun(handlers)
 				return nil
 			}}
 		default:
@@ -285,9 +352,7 @@ func TestAgentStreaming_SubmitDeliversOrderedOrchestrationEvents(t *testing.T) {
 				if handlers.OnToken != nil && role == sqlite.RoleExplainer {
 					handlers.OnToken("explainer")
 				}
-				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
-				}
+				completeStreamingRun(handlers)
 				return nil
 			}}
 		}
@@ -390,9 +455,7 @@ func TestAgentStreaming_OrchestrationAgentErrorContinuesToRunComplete(t *testing
 		switch role {
 		case sqlite.RolePlanner:
 			return scriptedPromptOnlyAgent{profile: orchestrationIntegrationProfile(role), run: func(_ context.Context, _ string, handlers agents.StreamEventHandlers) error {
-				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
-				}
+				completeStreamingRun(handlers)
 				return nil
 			}}
 		case sqlite.RoleCoder:
@@ -407,16 +470,12 @@ func TestAgentStreaming_OrchestrationAgentErrorContinuesToRunComplete(t *testing
 			}}
 		case sqlite.RoleTester:
 			return scriptedPromptOnlyAgent{profile: orchestrationIntegrationProfile(role), run: func(_ context.Context, _ string, handlers agents.StreamEventHandlers) error {
-				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
-				}
+				completeStreamingRun(handlers)
 				return nil
 			}}
 		default:
 			return scriptedPromptOnlyAgent{profile: orchestrationIntegrationProfile(role), run: func(_ context.Context, _ string, handlers agents.StreamEventHandlers) error {
-				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
-				}
+				completeStreamingRun(handlers)
 				return nil
 			}}
 		}
@@ -498,9 +557,7 @@ func TestAgentStreaming_OrchestrationCoderClarificationHaltsBeforeReviewerAndExp
 				if handlers.OnToken != nil {
 					handlers.OnToken("planner output")
 				}
-				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
-				}
+				completeStreamingRun(handlers)
 				return nil
 			}}
 		case sqlite.RoleCoder:
@@ -508,16 +565,12 @@ func TestAgentStreaming_OrchestrationCoderClarificationHaltsBeforeReviewerAndExp
 				if handlers.OnToken != nil {
 					handlers.OnToken("Would you like me to review your specific .env.example file and add appropriate comments?")
 				}
-				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
-				}
+				completeStreamingRun(handlers)
 				return nil
 			}}
 		default:
 			return scriptedPromptOnlyAgent{profile: orchestrationIntegrationProfile(role), run: func(_ context.Context, _ string, handlers agents.StreamEventHandlers) error {
-				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
-				}
+				completeStreamingRun(handlers)
 				return nil
 			}}
 		}
@@ -597,9 +650,7 @@ func TestAgentStreaming_OrchestrationPlannerFailureHaltsBeforeDownstreamSpawn(t 
 				}
 				return nil
 			}
-			if handlers.OnComplete != nil {
-				handlers.OnComplete("stop")
-			}
+			completeStreamingRun(handlers)
 			return nil
 		}}
 	})
@@ -674,14 +725,10 @@ func TestAgentStreaming_OrchestrationPlannerClarificationHaltsBeforeDownstreamSp
 				if handlers.OnToken != nil {
 					handlers.OnToken("Would you like me to review your specific .env.example file and add appropriate comments?")
 				}
-				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
-				}
+				completeStreamingRun(handlers)
 				return nil
 			}
-			if handlers.OnComplete != nil {
-				handlers.OnComplete("stop")
-			}
+			completeStreamingRun(handlers)
 			return nil
 		}}
 	})
@@ -743,6 +790,7 @@ type scriptedRunner struct {
 	profile agents.Profile
 	ready   chan struct{}
 	release chan struct{}
+	onComplete func(handlers agents.StreamEventHandlers)
 }
 
 type scriptedPromptOnlyAgent struct {
@@ -759,12 +807,16 @@ func (a scriptedPromptOnlyAgent) Run(ctx context.Context, task string, handlers 
 		handlers.OnStateChange(sqlite.AgentExecutionStateThinking)
 	}
 	if a.run == nil {
-		if handlers.OnComplete != nil {
-			handlers.OnComplete("stop")
-		}
+		completeStreamingRun(handlers)
 		return nil
 	}
 	return a.run(ctx, task, handlers)
+}
+
+func completeStreamingRun(handlers agents.StreamEventHandlers) {
+	if handlers.OnComplete != nil {
+		handlers.OnComplete(agents.CompletionMetadata{FinishReason: "stop"})
+	}
 }
 
 func orchestrationIntegrationProfile(role sqlite.AgentRole) agents.Profile {
@@ -812,9 +864,7 @@ func (r *scriptedReconnectRunner) Run(_ context.Context, _ string, handlers agen
 	if handlers.OnToken != nil {
 		handlers.OnToken("after-reconnect")
 	}
-	if handlers.OnComplete != nil {
-		handlers.OnComplete("stop")
-	}
+	completeStreamingRun(handlers)
 	return nil
 }
 
@@ -832,8 +882,10 @@ func (r *scriptedRunner) Run(_ context.Context, _ string, handlers agents.Stream
 		handlers.OnToken("alpha")
 		handlers.OnToken("beta")
 	}
-	if handlers.OnComplete != nil {
-		handlers.OnComplete("stop")
+	if r.onComplete != nil {
+		r.onComplete(handlers)
+	} else {
+		completeStreamingRun(handlers)
 	}
 	return nil
 }

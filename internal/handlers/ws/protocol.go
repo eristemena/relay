@@ -275,8 +275,10 @@ type AgentSpawnedPayload struct {
 
 type AgentStateChangedPayload struct {
 	OrchestrationEventBase
-	State   string `json:"state"`
-	Message string `json:"message"`
+	State        string `json:"state"`
+	Message      string `json:"message"`
+	TokensUsed   *int   `json:"tokens_used,omitempty"`
+	ContextLimit *int   `json:"context_limit,omitempty"`
 }
 
 type TaskAssignedPayload struct {
@@ -293,5 +295,14 @@ type HandoffPayload struct {
 
 type RunCompletePayload struct {
 	OrchestrationEventBase
-	Summary string `json:"summary"`
+	Summary      string `json:"summary"`
+	TokensUsed   *int   `json:"tokens_used,omitempty"`
+	ContextLimit *int   `json:"context_limit,omitempty"`
+}
+
+type CompletePayload struct {
+	OrchestrationEventBase
+	FinishReason string `json:"finish_reason"`
+	TokensUsed   *int   `json:"tokens_used,omitempty"`
+	ContextLimit *int   `json:"context_limit,omitempty"`
 }

@@ -369,7 +369,7 @@ func (s *Store) ListRunSummaries(ctx context.Context, sessionID string) ([]RunSu
 	return summaries, nil
 }
 
-func (s *Store) AppendRunEvent(ctx context.Context, runID string, eventType string, role AgentRole, model string, payloadJSON string) (AgentRunEvent, error) {
+func (s *Store) AppendRunEvent(ctx context.Context, runID string, eventType string, role AgentRole, model string, payloadJSON string, tokensUsed *int, contextLimit *int) (AgentRunEvent, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
@@ -390,9 +390,9 @@ func (s *Store) AppendRunEvent(ctx context.Context, runID string, eventType stri
 
 	now := time.Now().UTC()
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO agent_run_events (run_id, sequence, event_type, role, model, payload_json, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, runID, nextSequence, eventType, string(role), strings.TrimSpace(model), payloadJSON, now.Format(time.RFC3339)); err != nil {
+		INSERT INTO agent_run_events (run_id, sequence, event_type, role, model, payload_json, tokens_used, context_limit, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, runID, nextSequence, eventType, string(role), strings.TrimSpace(model), payloadJSON, nullableInt(tokensUsed), nullableInt(contextLimit), now.Format(time.RFC3339)); err != nil {
 		return AgentRunEvent{}, fmt.Errorf("insert run event: %w", err)
 	}
 
@@ -407,13 +407,15 @@ func (s *Store) AppendRunEvent(ctx context.Context, runID string, eventType stri
 		Role:        role,
 		Model:       strings.TrimSpace(model),
 		PayloadJSON: payloadJSON,
+		TokensUsed:  cloneIntPtr(tokensUsed),
+		ContextLimit: cloneIntPtr(contextLimit),
 		CreatedAt:   now,
 	}, nil
 }
 
 func (s *Store) ListRunEvents(ctx context.Context, runID string) ([]AgentRunEvent, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT run_id, sequence, event_type, role, model, payload_json, created_at
+		SELECT run_id, sequence, event_type, role, model, payload_json, tokens_used, context_limit, created_at
 		FROM agent_run_events
 		WHERE run_id = ?
 		ORDER BY sequence ASC
@@ -428,9 +430,11 @@ func (s *Store) ListRunEvents(ctx context.Context, runID string) ([]AgentRunEven
 		var (
 			event     AgentRunEvent
 			role      string
+			tokensUsed sql.NullInt64
+			contextLimit sql.NullInt64
 			createdAt string
 		)
-		if err := rows.Scan(&event.RunID, &event.Sequence, &event.EventType, &role, &event.Model, &event.PayloadJSON, &createdAt); err != nil {
+		if err := rows.Scan(&event.RunID, &event.Sequence, &event.EventType, &role, &event.Model, &event.PayloadJSON, &tokensUsed, &contextLimit, &createdAt); err != nil {
 			return nil, fmt.Errorf("scan run event: %w", err)
 		}
 		parsedCreatedAt, err := time.Parse(time.RFC3339, createdAt)
@@ -438,6 +442,8 @@ func (s *Store) ListRunEvents(ctx context.Context, runID string) ([]AgentRunEven
 			return nil, fmt.Errorf("parse run event created_at: %w", err)
 		}
 		event.Role = AgentRole(role)
+		event.TokensUsed = intPointerFromNull(tokensUsed)
+		event.ContextLimit = intPointerFromNull(contextLimit)
 		event.CreatedAt = parsedCreatedAt
 		events = append(events, event)
 	}
@@ -447,6 +453,29 @@ func (s *Store) ListRunEvents(ctx context.Context, runID string) ([]AgentRunEven
 	}
 
 	return events, nil
+}
+
+func nullableInt(value *int) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func intPointerFromNull(value sql.NullInt64) *int {
+	if !value.Valid {
+		return nil
+	}
+	converted := int(value.Int64)
+	return &converted
+}
+
+func cloneIntPtr(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func (s *Store) CreateApprovalRequest(ctx context.Context, approval ApprovalRequest) (ApprovalRequest, error) {
@@ -753,8 +782,18 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("read migration %s: %w", entry.Name(), err)
 		}
 
-		if _, err := s.db.ExecContext(ctx, string(body)); err != nil {
-			return fmt.Errorf("apply migration %s: %w", entry.Name(), err)
+		for _, statement := range strings.Split(string(body), ";") {
+			statement = strings.TrimSpace(statement)
+			if statement == "" {
+				continue
+			}
+
+			if _, err := s.db.ExecContext(ctx, statement); err != nil {
+				if strings.Contains(err.Error(), "duplicate column name") {
+					continue
+				}
+				return fmt.Errorf("apply migration %s: %w", entry.Name(), err)
+			}
 		}
 	}
 

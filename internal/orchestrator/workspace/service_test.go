@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -150,6 +152,62 @@ func TestService_CreateSessionAndOpenSessionPersistSelection(t *testing.T) {
 	if cfg.LastSessionID != archived.ID {
 		t.Fatalf("cfg.LastSessionID = %q, want %q", cfg.LastSessionID, archived.ID)
 	}
+}
+
+func TestModelContextLimitResolverResolveFallsBackToModelHint(t *testing.T) {
+	t.Parallel()
+
+	resolver := newModelContextLimitResolver()
+	resolver.client = &http.Client{Timeout: 50 * time.Millisecond}
+	resolver.baseURL = "http://127.0.0.1:1"
+
+	cfg := config.DefaultConfig()
+	limit, err := resolver.resolve(context.Background(), cfg, "google/gemini-2.0-flash-1m", false)
+	if err != nil {
+		t.Fatalf("resolve() error = %v", err)
+	}
+	if limit == nil || *limit != 1000000 {
+		t.Fatalf("resolve() limit = %v, want 1000000", valueOfLimit(limit))
+	}
+}
+
+func TestModelContextLimitResolverWarmLoadsRemoteMetadata(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer or-test-key" {
+			t.Fatalf("Authorization header = %q, want Bearer or-test-key", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"anthropic/claude-sonnet-4-5","context_length":200000}]}`))
+	}))
+	defer server.Close()
+
+	resolver := newModelContextLimitResolver()
+	resolver.baseURL = server.URL
+	resolver.client = server.Client()
+
+	cfg := config.DefaultConfig()
+	cfg.OpenRouter.APIKey = "or-test-key"
+
+	if err := resolver.warm(context.Background(), cfg); err != nil {
+		t.Fatalf("warm() error = %v", err)
+	}
+
+	limit, err := resolver.resolve(context.Background(), cfg, "anthropic/claude-sonnet-4-5", false)
+	if err != nil {
+		t.Fatalf("resolve() error = %v", err)
+	}
+	if limit == nil || *limit != 200000 {
+		t.Fatalf("resolve() limit = %v, want 200000", valueOfLimit(limit))
+	}
+}
+
+func valueOfLimit(limit *int) any {
+	if limit == nil {
+		return nil
+	}
+	return *limit
 }
 
 func TestService_SetRunnerFactoryAndEnvelopeHelpers(t *testing.T) {
@@ -601,7 +659,7 @@ func TestService_SubmitRunRejectsSecondActiveOrchestrationRun(t *testing.T) {
 					close(plannerStarted)
 					<-plannerRelease
 					if handlers.OnComplete != nil {
-						handlers.OnComplete("stop")
+						completeTestRun(handlers)
 					}
 					return nil
 				},
@@ -611,7 +669,7 @@ func TestService_SubmitRunRejectsSecondActiveOrchestrationRun(t *testing.T) {
 				profile: orchestrationProfile(role),
 				run: func(_ context.Context, _ string, handlers agents.StreamEventHandlers) error {
 					if handlers.OnComplete != nil {
-						handlers.OnComplete("stop")
+						completeTestRun(handlers)
 					}
 					return nil
 				},
@@ -719,7 +777,7 @@ func TestService_ExecuteOrchestrationRunOrchestratesPlannerParallelReviewerAndEx
 					handlers.OnToken("planner output")
 				}
 				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
+					completeTestRun(handlers)
 				}
 				return nil
 			}}
@@ -732,7 +790,7 @@ func TestService_ExecuteOrchestrationRunOrchestratesPlannerParallelReviewerAndEx
 					handlers.OnToken("coder output")
 				}
 				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
+					completeTestRun(handlers)
 				}
 				return nil
 			}}
@@ -745,7 +803,7 @@ func TestService_ExecuteOrchestrationRunOrchestratesPlannerParallelReviewerAndEx
 					handlers.OnToken("tester output")
 				}
 				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
+					completeTestRun(handlers)
 				}
 				return nil
 			}}
@@ -753,7 +811,7 @@ func TestService_ExecuteOrchestrationRunOrchestratesPlannerParallelReviewerAndEx
 			return scriptedPromptOnlyAgent{profile: orchestrationProfile(role), run: func(_ context.Context, _ string, handlers agents.StreamEventHandlers) error {
 				recordStart(role)
 				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
+					completeTestRun(handlers)
 				}
 				return nil
 			}}
@@ -764,7 +822,7 @@ func TestService_ExecuteOrchestrationRunOrchestratesPlannerParallelReviewerAndEx
 					handlers.OnToken("explainer output")
 				}
 				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
+					completeTestRun(handlers)
 				}
 				close(runComplete)
 				return nil
@@ -992,7 +1050,7 @@ func TestService_ExecuteOrchestrationRunAllowsConsecutiveRunsWithoutExecutionIDC
 				handlers.OnToken(string(role) + " output")
 			}
 			if handlers.OnComplete != nil {
-				handlers.OnComplete("stop")
+				completeTestRun(handlers)
 			}
 			return nil
 		}}
@@ -1092,7 +1150,7 @@ func TestService_ExecuteOrchestrationRunContinuesAfterCoderAgentError(t *testing
 					handlers.OnToken("planner output")
 				}
 				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
+					completeTestRun(handlers)
 				}
 				return nil
 			}}
@@ -1114,7 +1172,7 @@ func TestService_ExecuteOrchestrationRunContinuesAfterCoderAgentError(t *testing
 					handlers.OnToken("tester output")
 				}
 				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
+					completeTestRun(handlers)
 				}
 				return nil
 			}}
@@ -1122,7 +1180,7 @@ func TestService_ExecuteOrchestrationRunContinuesAfterCoderAgentError(t *testing
 			return scriptedPromptOnlyAgent{profile: orchestrationProfile(role), run: func(_ context.Context, _ string, handlers agents.StreamEventHandlers) error {
 				recordStart(role)
 				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
+					completeTestRun(handlers)
 				}
 				return nil
 			}}
@@ -1133,7 +1191,7 @@ func TestService_ExecuteOrchestrationRunContinuesAfterCoderAgentError(t *testing
 					handlers.OnToken("explainer output")
 				}
 				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
+					completeTestRun(handlers)
 				}
 				return nil
 			}}
@@ -1243,7 +1301,7 @@ func TestService_ExecuteOrchestrationRunHaltsAfterCoderClarificationRequest(t *t
 					handlers.OnToken("planner output")
 				}
 				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
+					completeTestRun(handlers)
 				}
 				return nil
 			}}
@@ -1254,7 +1312,7 @@ func TestService_ExecuteOrchestrationRunHaltsAfterCoderClarificationRequest(t *t
 					handlers.OnToken("Would you like me to review your specific .env.example file and add appropriate comments?")
 				}
 				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
+					completeTestRun(handlers)
 				}
 				return nil
 			}}
@@ -1262,7 +1320,7 @@ func TestService_ExecuteOrchestrationRunHaltsAfterCoderClarificationRequest(t *t
 			return scriptedPromptOnlyAgent{profile: orchestrationProfile(role), run: func(_ context.Context, _ string, handlers agents.StreamEventHandlers) error {
 				startedRoles = append(startedRoles, role)
 				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
+					completeTestRun(handlers)
 				}
 				return nil
 			}}
@@ -1270,7 +1328,7 @@ func TestService_ExecuteOrchestrationRunHaltsAfterCoderClarificationRequest(t *t
 			return scriptedPromptOnlyAgent{profile: orchestrationProfile(role), run: func(_ context.Context, _ string, handlers agents.StreamEventHandlers) error {
 				startedRoles = append(startedRoles, role)
 				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
+					completeTestRun(handlers)
 				}
 				return nil
 			}}
@@ -1347,7 +1405,7 @@ func TestService_ExecuteOrchestrationRunHaltsAfterPlannerFailure(t *testing.T) {
 				return nil
 			}
 			if handlers.OnComplete != nil {
-				handlers.OnComplete("stop")
+				completeTestRun(handlers)
 			}
 			return nil
 		}}
@@ -1432,12 +1490,12 @@ func TestService_ExecuteOrchestrationRunHaltsAfterPlannerClarificationQuestion(t
 					handlers.OnToken("Would you like me to search for any related configuration files or documentation that might need updating to match these comments?")
 				}
 				if handlers.OnComplete != nil {
-					handlers.OnComplete("stop")
+					completeTestRun(handlers)
 				}
 				return nil
 			}
 			if handlers.OnComplete != nil {
-				handlers.OnComplete("stop")
+				completeTestRun(handlers)
 			}
 			return nil
 		}}
@@ -1939,16 +1997,16 @@ func TestService_OpenRunReplaysStoredOrchestrationEvents(t *testing.T) {
 	if err := store.UpdateAgentRun(ctx, run); err != nil {
 		t.Fatalf("UpdateAgentRun() error = %v", err)
 	}
-	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeAgentSpawned, sqlite.RolePlanner, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_planner_1","role":"planner","model":"`+run.Model+`","label":"Planner","spawn_order":1,"occurred_at":"2026-03-24T12:00:00Z"}`); err != nil {
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeAgentSpawned, sqlite.RolePlanner, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_planner_1","role":"planner","model":"`+run.Model+`","label":"Planner","spawn_order":1,"occurred_at":"2026-03-24T12:00:00Z"}`, nil, nil); err != nil {
 		t.Fatalf("AppendRunEvent() agent_spawned error = %v", err)
 	}
-	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeTaskAssigned, sqlite.RolePlanner, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_planner_1","role":"planner","model":"`+run.Model+`","task_text":"Break the goal into stages.","occurred_at":"2026-03-24T12:00:01Z"}`); err != nil {
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeTaskAssigned, sqlite.RolePlanner, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_planner_1","role":"planner","model":"`+run.Model+`","task_text":"Break the goal into stages.","occurred_at":"2026-03-24T12:00:01Z"}`, nil, nil); err != nil {
 		t.Fatalf("AppendRunEvent() task_assigned error = %v", err)
 	}
-	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeToken, sqlite.RolePlanner, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_planner_1","role":"planner","model":"`+run.Model+`","text":"planner transcript","occurred_at":"2026-03-24T12:00:02Z"}`); err != nil {
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeToken, sqlite.RolePlanner, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_planner_1","role":"planner","model":"`+run.Model+`","text":"planner transcript","occurred_at":"2026-03-24T12:00:02Z"}`, nil, nil); err != nil {
 		t.Fatalf("AppendRunEvent() token error = %v", err)
 	}
-	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeRunComplete, sqlite.RoleExplainer, config.DefaultExplainerModel, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_explainer_5","summary":"Finished orchestration.","occurred_at":"2026-03-24T12:00:03Z"}`); err != nil {
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeRunComplete, sqlite.RoleExplainer, config.DefaultExplainerModel, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_explainer_5","summary":"Finished orchestration.","occurred_at":"2026-03-24T12:00:03Z"}`, nil, nil); err != nil {
 		t.Fatalf("AppendRunEvent() run_complete error = %v", err)
 	}
 
@@ -2339,7 +2397,7 @@ func TestExecuteStageEmitsToolEventsForOrchestrationAgents(t *testing.T) {
 				})
 			}
 			if handlers.OnComplete != nil {
-				handlers.OnComplete("stop")
+				completeTestRun(handlers)
 			}
 			return nil
 		}}
@@ -2401,7 +2459,7 @@ func (a scriptedPromptOnlyAgent) Run(ctx context.Context, task string, handlers 
 	}
 	if a.run == nil {
 		if handlers.OnComplete != nil {
-			handlers.OnComplete("stop")
+			completeTestRun(handlers)
 		}
 		return nil
 	}
@@ -2447,9 +2505,16 @@ func (r *reconnectRunner) Run(_ context.Context, _ string, handlers agents.Strea
 		handlers.OnToken("reconnected")
 	}
 	if handlers.OnComplete != nil {
-		handlers.OnComplete("stop")
+		completeTestRun(handlers)
 	}
 	return nil
+}
+
+func completeTestRun(handlers agents.StreamEventHandlers) {
+	if handlers.OnComplete == nil {
+		return
+	}
+	handlers.OnComplete(agents.CompletionMetadata{FinishReason: "stop"})
 }
 
 func waitForRegisteredActiveRun(service *Service) (string, error) {

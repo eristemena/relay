@@ -122,6 +122,8 @@ type AgentRunEvent struct {
 	Role        AgentRole `json:"role"`
 	Model       string    `json:"model"`
 	PayloadJSON string    `json:"payload_json"`
+	TokensUsed  *int      `json:"tokens_used,omitempty"`
+	ContextLimit *int     `json:"context_limit,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 

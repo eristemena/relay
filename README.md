@@ -75,6 +75,8 @@ Relay now includes a live orchestration canvas inside the workspace shell.
 - Submit one goal and Relay starts a prompt-only run with Planner first, then Coder and Tester in parallel, then Reviewer, then Explainer.
 - Nodes are appended only when an agent is spawned, then patched in place as state, transcript, handoff, and failure events arrive.
 - The live canvas adds presentation-only motion: spawned nodes fade and scale in, active handoffs pulse on the connecting edge, and streaming borders clear within 300ms after token silence.
+- Terminal node updates now include authoritative token usage when OpenRouter returns it, plus the known model context window when Relay can resolve it.
+- Each node shows a context-usage bar with explicit unavailable, raw-count-only, neutral, warning, and critical states, and the same data replays for runs recorded after the feature shipped.
 - Selecting a node opens that agent's current or preserved output in the side panel without interrupting the run.
 - The selected-node panel keeps explicit empty, loading, and plain-language error states while selection changes animate in place.
 - Opening a saved run replays the stored orchestration timeline into the same canvas surface.
@@ -112,6 +114,8 @@ This orchestration mode is intentionally prompt-only. It does not read the repos
 - `go test ./tests/integration/run_history_replay_test.go`: run the replay-focused integration file directly
 - `npm --prefix web test -- src/features/canvas/AgentCanvas.test.tsx src/features/workspace-shell/WorkspaceShell.test.tsx`: run the current canvas and workspace-shell regression suite
 - `npm --prefix web test -- src/features/canvas/AgentCanvas.test.tsx src/features/canvas/AnimatedHandoffEdge.test.tsx src/features/canvas/AgentNodeDetailPanel.test.tsx src/features/canvas/AgentCanvasNode.test.tsx src/features/canvas/canvasModel.test.ts src/features/canvas/layoutGraph.test.ts src/shared/lib/workspace-store.test.ts`: run the canvas animation layer regressions and store derivation checks
+- `go test ./internal/agents/openrouter ./internal/orchestrator/workspace -run 'Test.*(Usage|ContextLimit|Complete)'`: run focused provider-usage and context-limit resolution coverage
+- `go test ./internal/storage/sqlite ./internal/handlers/ws ./tests/integration -run 'Test.*(RunEvent|Replay|TokenUsage)'`: run focused persistence, replay, and token-usage regressions
 - `npm --prefix web test -- src/features/canvas/layoutGraph.test.ts src/features/canvas/AgentCanvas.test.tsx src/features/workspace-shell/WorkspaceShell.test.tsx`: run the canvas model, layout, and shell regression suite together
 - `make build && ./bin/relay serve --help`: verify the packaged frontend assets and built `relay serve` entrypoint
 - `env -u RELAY_DEV ./bin/relay serve --no-browser --port 4851`: smoke-test the packaged server path against the embedded frontend; if `RELAY_DEV=true` is still set, Relay will intentionally switch to the dev-proxy frontend mode instead

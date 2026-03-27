@@ -39,6 +39,8 @@ export function AgentNodeDetailPanel({
 }: AgentNodeDetailPanelProps) {
   const prefersReducedMotion = useReducedMotion() ?? false;
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const dialogRef = useRef<HTMLElement | null>(null);
+  const previousActiveElementRef = useRef<HTMLElement | null>(null);
   const [portalReady, setPortalReady] = useState(false);
   const panelMode = selectedNode
     ? "selected"
@@ -53,6 +55,75 @@ export function AgentNodeDetailPanel({
     setPortalReady(true);
     return () => setPortalReady(false);
   }, []);
+
+  useEffect(() => {
+    if (!selectedNode) {
+      if (previousActiveElementRef.current?.isConnected) {
+        previousActiveElementRef.current.focus();
+      }
+      previousActiveElementRef.current = null;
+      return;
+    }
+
+    if (
+      previousActiveElementRef.current === null &&
+      document.activeElement instanceof HTMLElement
+    ) {
+      previousActiveElementRef.current = document.activeElement;
+    }
+
+    closeButtonRef.current?.focus();
+  }, [selectedNode]);
+
+  useEffect(() => {
+    if (!selectedNode) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose?.();
+        return;
+      }
+
+      if (event.key !== "Tab") {
+        return;
+      }
+
+      const dialog = dialogRef.current;
+      if (!dialog) {
+        return;
+      }
+
+      const focusableElements = getFocusableElements(dialog);
+      if (focusableElements.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements[focusableElements.length - 1];
+      const activeElement = document.activeElement;
+
+      if (event.shiftKey) {
+        if (activeElement === firstElement || activeElement === dialog) {
+          event.preventDefault();
+          lastElement.focus();
+        }
+        return;
+      }
+
+      if (activeElement === lastElement) {
+        event.preventDefault();
+        firstElement.focus();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose, selectedNode]);
 
   if (!selectedNode) {
     return (
@@ -129,23 +200,23 @@ export function AgentNodeDetailPanel({
       ? "Clarification required"
       : "Failure";
 
-  useEffect(() => {
-    closeButtonRef.current?.focus();
-  }, [selectedNode]);
-
   const selectedPanel = (
     <div className="agent-canvas-detail-lightbox-shell">
       <button
         aria-label="Dismiss agent detail overlay"
+        aria-hidden="true"
         className="agent-canvas-detail-lightbox-backdrop"
         onClick={onClose}
+        tabIndex={-1}
         type="button"
       />
       <aside
         aria-labelledby="agent-canvas-detail-heading"
         aria-modal="true"
         className="agent-canvas-detail-panel agent-canvas-detail-popup panel-surface rounded-[1.5rem] p-5 shadow-idle"
+        ref={dialogRef}
         role="dialog"
+        tabIndex={-1}
       >
         <AnimatePresence initial={false} mode="sync">
           <motion.div
@@ -200,6 +271,34 @@ export function AgentNodeDetailPanel({
               <div>
                 <p className="eyebrow">Role</p>
                 <p className="mt-2 text-text">{selectedNode.role}</p>
+              </div>
+              <div>
+                <p className="eyebrow">Context usage</p>
+                <div className="mt-2 rounded-2xl border border-border bg-raised/80 p-4">
+                  <div className="flex items-center justify-between gap-3 text-xs uppercase tracking-[0.22em] text-text-muted">
+                    <span>Context usage</span>
+                    <span>{selectedNode.details.tokenUsage.summary}</span>
+                  </div>
+                  <div
+                    aria-hidden="true"
+                    className="agent-canvas-token-bar mt-3"
+                    data-token-tone={selectedNode.details.tokenUsage.tone}
+                  >
+                    <span
+                      className="agent-canvas-token-bar-fill"
+                      style={{
+                        width:
+                          typeof selectedNode.details.tokenUsage
+                            .usagePercent === "number"
+                            ? `${Math.round(selectedNode.details.tokenUsage.usagePercent * 100)}%`
+                            : "0%",
+                      }}
+                    />
+                  </div>
+                  <p className="mt-3 text-sm leading-6 text-text">
+                    {selectedNode.details.tokenUsage.detail}
+                  </p>
+                </div>
               </div>
               <div>
                 <p className="eyebrow">Task</p>
@@ -314,6 +413,14 @@ export function AgentNodeDetailPanel({
   );
 
   return portalReady ? createPortal(selectedPanel, document.body) : null;
+}
+
+function getFocusableElements(container: HTMLElement) {
+  return Array.from(
+    container.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  ).filter((element) => !element.hasAttribute("hidden") && !element.ariaHidden);
 }
 
 function formatProposalStatus(change: AgentNodeProposedChange) {

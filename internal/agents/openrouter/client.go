@@ -37,11 +37,16 @@ type ToolResult struct {
 	Content    string
 }
 
+type CompletionMetadata struct {
+	FinishReason string
+	TokensUsed   *int
+}
+
 type StreamHandlers struct {
-	OnToken    func(text string)
+	OnToken     func(text string)
 	ExecuteTool func(ctx context.Context, call ToolCall) (ToolResult, error)
-	OnComplete func(finishReason string)
-	OnError    func(code string, message string)
+	OnComplete  func(metadata CompletionMetadata)
+	OnError     func(code string, message string)
 }
 
 type StreamClient interface {
@@ -71,10 +76,11 @@ func (c *Client) Stream(ctx context.Context, request StreamRequest, handlers Str
 
 	for {
 		stream, err := c.client.CreateChatCompletionStream(ctx, openai.ChatCompletionRequest{
-			Model:    request.Model,
-			Messages: messages,
-			Tools:    tools,
-			Stream:   true,
+			Model:         request.Model,
+			Messages:      messages,
+			Tools:         tools,
+			Stream:        true,
+			StreamOptions: &openai.StreamOptions{IncludeUsage: true},
 		})
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -87,6 +93,7 @@ func (c *Client) Stream(ctx context.Context, request StreamRequest, handlers Str
 		}
 
 		finishReason := string(openai.FinishReasonStop)
+		var tokensUsed *int
 		var assistantContent strings.Builder
 		toolCalls := make(map[int]ToolCall)
 		toolCallOrder := make([]int, 0)
@@ -105,6 +112,10 @@ func (c *Client) Stream(ctx context.Context, request StreamRequest, handlers Str
 					handlers.OnError("provider_error", displaySafeProviderError(err))
 				}
 				return fmt.Errorf("receive openrouter stream: %w", err)
+			}
+			if response.Usage != nil {
+				totalTokens := response.Usage.TotalTokens
+				tokensUsed = &totalTokens
 			}
 
 			var responseText strings.Builder
@@ -140,7 +151,10 @@ func (c *Client) Stream(ctx context.Context, request StreamRequest, handlers Str
 
 		if finishReason != string(openai.FinishReasonToolCalls) {
 			if handlers.OnComplete != nil {
-				handlers.OnComplete(finishReason)
+				handlers.OnComplete(CompletionMetadata{
+					FinishReason: finishReason,
+					TokensUsed:   tokensUsed,
+				})
 			}
 			return nil
 		}

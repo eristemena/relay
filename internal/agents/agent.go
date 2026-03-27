@@ -53,6 +53,12 @@ type ToolExecutionResult struct {
 	ResultPreview map[string]any
 }
 
+type CompletionMetadata struct {
+	FinishReason string
+	TokensUsed   *int
+	ContextLimit *int
+}
+
 type ToolExecutor interface {
 	Definitions(allowedTools []ToolName) []ToolDefinition
 	PreviewToolCall(name ToolName, arguments json.RawMessage) map[string]any
@@ -64,7 +70,7 @@ type StreamEventHandlers struct {
 	OnToken       func(text string)
 	OnToolCall    func(event ToolCallEvent)
 	OnToolResult  func(event ToolResultEvent)
-	OnComplete    func(finishReason string)
+	OnComplete    func(metadata CompletionMetadata)
 	OnError       func(code string, message string)
 }
 

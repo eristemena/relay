@@ -17,6 +17,7 @@ import (
 type stageResult struct {
 	execution  sqlite.AgentExecution
 	transcript string
+	completion agents.CompletionMetadata
 	failed     bool
 	errCode    string
 	errMessage string
@@ -157,7 +158,7 @@ func (s *Service) executeOrchestrationRun(ctx context.Context, run sqlite.AgentR
 		return err
 	}
 
-	return s.emitRunComplete(ctx, run, buildRunSummary(transcripts, results), executionRef(explainer.execution))
+	return s.emitRunComplete(ctx, run, buildRunSummary(transcripts, results), executionRef(explainer.execution), &explainer.completion)
 }
 
 func (s *Service) executeStage(ctx context.Context, run sqlite.AgentRun, cfg config.Config, spawnOrder int, role sqlite.AgentRole, task string) (stageResult, error) {
@@ -209,7 +210,7 @@ func (s *Service) executeStage(ctx context.Context, run sqlite.AgentRun, cfg con
 			}
 			storedExecution.State = sqlite.AgentExecutionStateThinking
 			_ = s.store.UpdateAgentExecution(stageCtx, storedExecution)
-			_ = s.emitAgentStateChanged(stageCtx, run, storedExecution, sqlite.AgentExecutionStateThinking, roleProgressMessage(role, message))
+			_ = s.emitAgentStateChanged(stageCtx, run, storedExecution, sqlite.AgentExecutionStateThinking, roleProgressMessage(role, message), nil)
 		},
 		OnToken: func(text string) {
 			result.transcript += text
@@ -217,7 +218,7 @@ func (s *Service) executeStage(ctx context.Context, run sqlite.AgentRun, cfg con
 				firstToken = false
 				storedExecution.State = sqlite.AgentExecutionStateStreaming
 				_ = s.store.UpdateAgentExecution(stageCtx, storedExecution)
-				_ = s.emitAgentStateChanged(stageCtx, run, storedExecution, sqlite.AgentExecutionStateStreaming, roleStreamingMessage(role))
+				_ = s.emitAgentStateChanged(stageCtx, run, storedExecution, sqlite.AgentExecutionStateStreaming, roleStreamingMessage(role), nil)
 			}
 			_ = s.emitAgentToken(stageCtx, run, storedExecution, text)
 		},
@@ -227,8 +228,12 @@ func (s *Service) executeStage(ctx context.Context, run sqlite.AgentRun, cfg con
 		OnToolResult: func(event agents.ToolResultEvent) {
 			_ = s.emitToolResult(stageCtx, run.ID, event, nil)
 		},
-		OnComplete: func(_ string) {
+		OnComplete: func(metadata agents.CompletionMetadata) {
 			completed = true
+			if metadata.ContextLimit == nil {
+				metadata.ContextLimit = s.resolveModelContextLimit(context.WithoutCancel(stageCtx), cfg, model)
+			}
+			result.completion = metadata
 		},
 		OnError: func(code string, message string) {
 			completedAt := time.Now().UTC()
@@ -263,7 +268,7 @@ func (s *Service) executeStage(ctx context.Context, run sqlite.AgentRun, cfg con
 			storedExecution.State = sqlite.AgentExecutionStateCompleted
 			storedExecution.CompletedAt = &completedAt
 			_ = s.store.UpdateAgentExecution(ctx, storedExecution)
-			_ = s.emitAgentStateChanged(ctx, run, storedExecution, sqlite.AgentExecutionStateCompleted, roleCompletedMessage(role))
+			_ = s.emitAgentStateChanged(ctx, run, storedExecution, sqlite.AgentExecutionStateCompleted, roleCompletedMessage(role), &result.completion)
 		}
 	}
 	if result.failed && result.errCode == "agent_generation_failed" && stageNeedsClarification(role, result.transcript, result.errMessage) {
@@ -462,10 +467,10 @@ func (s *Service) emitAgentSpawned(ctx context.Context, run sqlite.AgentRun, exe
 		"spawn_order": execution.SpawnOrder,
 		"occurred_at": time.Now().UTC().Format(time.RFC3339),
 	}
-	return s.appendAndDispatchEvent(ctx, run.ID, sqlite.EventTypeAgentSpawned, execution.Role, execution.Model, payload)
+	return s.appendAndDispatchEvent(ctx, run.ID, sqlite.EventTypeAgentSpawned, execution.Role, execution.Model, payload, nil)
 }
 
-func (s *Service) emitAgentStateChanged(ctx context.Context, run sqlite.AgentRun, execution sqlite.AgentExecution, state string, message string) error {
+func (s *Service) emitAgentStateChanged(ctx context.Context, run sqlite.AgentRun, execution sqlite.AgentExecution, state string, message string, completion *agents.CompletionMetadata) error {
 	payload := map[string]any{
 		"session_id":  run.SessionID,
 		"run_id":      run.ID,
@@ -477,7 +482,15 @@ func (s *Service) emitAgentStateChanged(ctx context.Context, run sqlite.AgentRun
 		"message":     message,
 		"occurred_at": time.Now().UTC().Format(time.RFC3339),
 	}
-	return s.appendAndDispatchEvent(ctx, run.ID, sqlite.EventTypeAgentStateChanged, execution.Role, execution.Model, payload)
+	if completion != nil {
+		if completion.TokensUsed != nil {
+			payload["tokens_used"] = *completion.TokensUsed
+		}
+		if completion.ContextLimit != nil {
+			payload["context_limit"] = *completion.ContextLimit
+		}
+	}
+	return s.appendAndDispatchEvent(ctx, run.ID, sqlite.EventTypeAgentStateChanged, execution.Role, execution.Model, payload, completion)
 }
 
 func (s *Service) emitTaskAssigned(ctx context.Context, run sqlite.AgentRun, execution sqlite.AgentExecution) error {
@@ -491,7 +504,7 @@ func (s *Service) emitTaskAssigned(ctx context.Context, run sqlite.AgentRun, exe
 		"task_text":   execution.TaskText,
 		"occurred_at": time.Now().UTC().Format(time.RFC3339),
 	}
-	return s.appendAndDispatchEvent(ctx, run.ID, sqlite.EventTypeTaskAssigned, execution.Role, execution.Model, payload)
+	return s.appendAndDispatchEvent(ctx, run.ID, sqlite.EventTypeTaskAssigned, execution.Role, execution.Model, payload, nil)
 }
 
 func (s *Service) emitHandoffEvent(ctx context.Context, run sqlite.AgentRun, fromRole sqlite.AgentRole, toRole sqlite.AgentRole, eventType string, reason string) error {
@@ -505,7 +518,7 @@ func (s *Service) emitHandoffEvent(ctx context.Context, run sqlite.AgentRun, fro
 		"reason":        reason,
 		"occurred_at":   time.Now().UTC().Format(time.RFC3339),
 	}
-	return s.appendAndDispatchEvent(ctx, run.ID, eventType, fromRole, "", payload)
+	return s.appendAndDispatchEvent(ctx, run.ID, eventType, fromRole, "", payload, nil)
 }
 
 func (s *Service) emitAgentToken(ctx context.Context, run sqlite.AgentRun, execution sqlite.AgentExecution, text string) error {
@@ -522,7 +535,7 @@ func (s *Service) emitAgentToken(ctx context.Context, run sqlite.AgentRun, execu
 		"text":        text,
 		"occurred_at": time.Now().UTC().Format(time.RFC3339),
 	}
-	return s.appendAndDispatchEvent(ctx, run.ID, sqlite.EventTypeToken, execution.Role, execution.Model, payload)
+	return s.appendAndDispatchEvent(ctx, run.ID, sqlite.EventTypeToken, execution.Role, execution.Model, payload, nil)
 }
 
 func (s *Service) emitAgentError(ctx context.Context, run sqlite.AgentRun, execution sqlite.AgentExecution, code string, message string) error {
@@ -548,10 +561,10 @@ func (s *Service) emitAgentError(ctx context.Context, run sqlite.AgentRun, execu
 		"terminal":    true,
 		"occurred_at": time.Now().UTC().Format(time.RFC3339),
 	}
-	return s.appendAndDispatchEvent(ctx, run.ID, sqlite.EventTypeAgentError, execution.Role, execution.Model, payload)
+	return s.appendAndDispatchEvent(ctx, run.ID, sqlite.EventTypeAgentError, execution.Role, execution.Model, payload, nil)
 }
 
-func (s *Service) emitRunComplete(ctx context.Context, run sqlite.AgentRun, summary string, execution *sqlite.AgentExecution) error {
+func (s *Service) emitRunComplete(ctx context.Context, run sqlite.AgentRun, summary string, execution *sqlite.AgentExecution, completion *agents.CompletionMetadata) error {
 	completedAt := time.Now().UTC()
 	run.State = sqlite.RunStateCompleted
 	run.CompletedAt = &completedAt
@@ -576,7 +589,15 @@ func (s *Service) emitRunComplete(ctx context.Context, run sqlite.AgentRun, summ
 		"summary":     summary,
 		"occurred_at": completedAt.Format(time.RFC3339),
 	}
-	return s.appendAndDispatchEvent(ctx, run.ID, sqlite.EventTypeRunComplete, role, model, payload)
+	if completion != nil {
+		if completion.TokensUsed != nil {
+			payload["tokens_used"] = *completion.TokensUsed
+		}
+		if completion.ContextLimit != nil {
+			payload["context_limit"] = *completion.ContextLimit
+		}
+	}
+	return s.appendAndDispatchEvent(ctx, run.ID, sqlite.EventTypeRunComplete, role, model, payload, completion)
 }
 
 func (s *Service) emitRunError(ctx context.Context, run sqlite.AgentRun, code string, message string, execution *sqlite.AgentExecution) error {
@@ -625,15 +646,21 @@ func (s *Service) emitRunError(ctx context.Context, run sqlite.AgentRun, code st
 		"terminal":    true,
 		"occurred_at": completedAt.Format(time.RFC3339),
 	}
-	return s.appendAndDispatchEvent(ctx, run.ID, sqlite.EventTypeRunError, role, model, payload)
+	return s.appendAndDispatchEvent(ctx, run.ID, sqlite.EventTypeRunError, role, model, payload, nil)
 }
 
-func (s *Service) appendAndDispatchEvent(ctx context.Context, runID string, eventType string, role sqlite.AgentRole, model string, payload map[string]any) error {
+func (s *Service) appendAndDispatchEvent(ctx context.Context, runID string, eventType string, role sqlite.AgentRole, model string, payload map[string]any, completion *agents.CompletionMetadata) error {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal orchestration payload: %w", err)
 	}
-	event, err := s.store.AppendRunEvent(ctx, runID, eventType, role, model, string(encoded))
+	var tokensUsed *int
+	var contextLimit *int
+	if completion != nil {
+		tokensUsed = completion.TokensUsed
+		contextLimit = completion.ContextLimit
+	}
+	event, err := s.store.AppendRunEvent(ctx, runID, eventType, role, model, string(encoded), tokensUsed, contextLimit)
 	if err != nil {
 		return err
 	}

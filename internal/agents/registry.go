@@ -152,9 +152,12 @@ func (r *profileRunner) Run(ctx context.Context, task string, handlers StreamEve
 				Content:    execution.Content,
 			}, nil
 		},
-		OnComplete: func(finishReason string) {
+		OnComplete: func(metadata openrouter.CompletionMetadata) {
 			if handlers.OnComplete != nil {
-				handlers.OnComplete(finishReason)
+				handlers.OnComplete(CompletionMetadata{
+					FinishReason: metadata.FinishReason,
+					TokensUsed:   metadata.TokensUsed,
+				})
 			}
 		},
 		OnError: func(code string, message string) {
@@ -209,9 +212,12 @@ func (a *promptOnlyStreamAgent) Run(ctx context.Context, task string, handlers S
 				handlers.OnToken(text)
 			}
 		},
-		OnComplete: func(finishReason string) {
+		OnComplete: func(metadata openrouter.CompletionMetadata) {
 			if handlers.OnComplete != nil {
-				handlers.OnComplete(finishReason)
+				handlers.OnComplete(CompletionMetadata{
+					FinishReason: metadata.FinishReason,
+					TokensUsed:   metadata.TokensUsed,
+				})
 			}
 		},
 		OnError: func(code string, message string) {

@@ -292,4 +292,83 @@ describe("canvasModel", () => {
       },
     ]);
   });
+
+  it("derives count-only token usage when the context limit is unavailable", () => {
+    let document = createEmptyCanvasDocument();
+
+    document = addSpawnedNode(document, {
+      agent_id: "agent_coder_2",
+      label: "Coder",
+      model: "custom/local-model",
+      occurred_at: "2026-03-24T12:00:00Z",
+      replay: false,
+      role: "coder",
+      run_id: "run_1",
+      sequence: 1,
+      session_id: "session_alpha",
+      spawn_order: 2,
+    });
+
+    document = patchAgentState(document, {
+      agent_id: "agent_coder_2",
+      message: "Coder completed the patch.",
+      model: "custom/local-model",
+      occurred_at: "2026-03-24T12:00:01Z",
+      replay: false,
+      role: "coder",
+      run_id: "run_1",
+      sequence: 2,
+      session_id: "session_alpha",
+      state: "completed",
+      tokens_used: 4812,
+    });
+
+    expect(document.nodes[0]?.details.tokenUsage).toMatchObject({
+      tokensUsed: 4812,
+      contextLimit: null,
+      usagePercent: null,
+      tone: "count_only",
+      summary: "4,812 used",
+    });
+  });
+
+  it("caps token usage at 100 percent and marks it critical when usage exceeds the limit", () => {
+    let document = createEmptyCanvasDocument();
+
+    document = addSpawnedNode(document, {
+      agent_id: "agent_reviewer_4",
+      label: "Reviewer",
+      model: "anthropic/claude-sonnet-4-5",
+      occurred_at: "2026-03-24T12:00:00Z",
+      replay: false,
+      role: "reviewer",
+      run_id: "run_1",
+      sequence: 1,
+      session_id: "session_alpha",
+      spawn_order: 4,
+    });
+
+    document = patchRunComplete(document, {
+      agent_id: "agent_reviewer_4",
+      model: "anthropic/claude-sonnet-4-5",
+      occurred_at: "2026-03-24T12:00:01Z",
+      replay: false,
+      role: "reviewer",
+      run_id: "run_1",
+      sequence: 2,
+      session_id: "session_alpha",
+      summary: "Reviewer completed the audit.",
+      tokens_used: 1200,
+      context_limit: 1000,
+    });
+
+    expect(document.nodes[0]?.details.tokenUsage).toMatchObject({
+      tokensUsed: 1200,
+      contextLimit: 1000,
+      usagePercent: 1,
+      tone: "critical",
+      summary: "1,200 / 1,000",
+      detail: "Usage exceeded the known context window and is capped at 100%.",
+    });
+  });
 });

@@ -57,7 +57,7 @@ func TestWorkspaceWebSocket_ReconnectPreservesActiveRunIdentity(t *testing.T) {
 	if err := store.UpdateAgentRun(ctx, run); err != nil {
 		t.Fatalf("UpdateAgentRun() error = %v", err)
 	}
-	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeAgentSpawned, sqlite.RolePlanner, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_planner_1","role":"planner","model":"`+run.Model+`","label":"Planner","spawn_order":1,"occurred_at":"`+time.Now().UTC().Format(time.RFC3339)+`"}`); err != nil {
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeAgentSpawned, sqlite.RolePlanner, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","agent_id":"agent_planner_1","role":"planner","model":"`+run.Model+`","label":"Planner","spawn_order":1,"occurred_at":"`+time.Now().UTC().Format(time.RFC3339)+`"}`, nil, nil); err != nil {
 		t.Fatalf("AppendRunEvent() error = %v", err)
 	}
 

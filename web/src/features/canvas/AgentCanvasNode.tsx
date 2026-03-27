@@ -13,6 +13,7 @@ import {
 import type {
   AgentCanvasRole,
   AgentCanvasState,
+  AgentNodeTokenUsage,
 } from "@/features/canvas/canvasModel";
 
 export interface AgentCanvasNodeData extends Record<string, unknown> {
@@ -24,6 +25,7 @@ export interface AgentCanvasNodeData extends Record<string, unknown> {
   readCount: number;
   proposalCount: number;
   summary: string;
+  tokenUsage: AgentNodeTokenUsage;
 }
 
 export type AgentCanvasFlowNode = Node<AgentCanvasNodeData, "agentCanvasNode">;
@@ -89,6 +91,9 @@ export function AgentCanvasNode({
       />
       <button
         aria-label={`${data.label}, ${data.roleLabel} node`}
+        aria-expanded={selected}
+        aria-haspopup="dialog"
+        aria-pressed={selected}
         className="agent-canvas-node-button"
         type="button"
       >
@@ -103,6 +108,30 @@ export function AgentCanvasNode({
           <StateBadge state={data.state} />
         </div>
         <p className="mt-4 text-sm leading-6 text-text-muted">{data.summary}</p>
+        <div className="agent-canvas-token-usage mt-4">
+          <div className="flex items-center justify-between gap-3 text-[0.7rem] uppercase tracking-[0.22em] text-text-muted">
+            <span>Context usage</span>
+            <span>{data.tokenUsage.summary}</span>
+          </div>
+          <div
+            aria-hidden="true"
+            className="agent-canvas-token-bar mt-2"
+            data-token-tone={data.tokenUsage.tone}
+          >
+            <span
+              className="agent-canvas-token-bar-fill"
+              style={{
+                width:
+                  typeof data.tokenUsage.usagePercent === "number"
+                    ? `${Math.round(data.tokenUsage.usagePercent * 100)}%`
+                    : "0%",
+              }}
+            />
+          </div>
+          <p className="mt-2 text-xs leading-5 text-text-muted">
+            {data.tokenUsage.detail}
+          </p>
+        </div>
         <p className="mt-4 text-xs text-text-muted">
           {formatActivitySummary(data.readCount, data.proposalCount)}
         </p>
