@@ -218,6 +218,159 @@ textarea {
   min-width: 0;
 }
 
+.workspace-canvas-toolbar-shell {
+  position: relative;
+  display: block;
+  min-height: 3.6rem;
+}
+
+.workspace-canvas-toolbar {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, rgba(17, 17, 32, 0.94), rgba(13, 13, 24, 0.98));
+}
+
+.workspace-canvas-toolbar-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  flex: 0 0 auto;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  transition:
+    border-color 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.workspace-canvas-toolbar-button:hover {
+  border-color: var(--color-brand-dim);
+  transform: translateY(-1px);
+}
+
+.workspace-canvas-toolbar-button:focus-visible,
+.workspace-canvas-panel-close:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+.workspace-canvas-toolbar-button[data-active="true"] {
+  border-color: var(--color-brand-mid);
+  background: var(--color-raised);
+  box-shadow: 0 0 0 1px var(--color-brand-mid), 0 0 20px rgba(124, 58, 237, 0.24);
+}
+
+.workspace-canvas-toolbar-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.workspace-canvas-toolbar-icon svg {
+  width: 100%;
+  height: 100%;
+  stroke: currentColor;
+  fill: none;
+}
+
+.workspace-canvas-toolbar-badge {
+  position: absolute;
+  top: -0.2rem;
+  right: -0.2rem;
+  display: inline-flex;
+  min-width: 1.3rem;
+  height: 1.3rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--color-error);
+  color: var(--color-base);
+  font-family: var(--font-jetbrains-mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.workspace-canvas-lightbox-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.workspace-canvas-lightbox-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(9, 9, 15, 0.78);
+  backdrop-filter: blur(8px);
+}
+
+.workspace-canvas-panel {
+  position: relative;
+  z-index: 1;
+  width: min(72rem, calc(100vw - 2rem));
+  min-height: 18rem;
+  max-height: calc(100dvh - 2rem);
+  max-height: calc(100vh - 2rem);
+  border: 1px solid var(--color-border);
+  border-radius: 2rem;
+  overflow: hidden;
+  background: var(--surface-glow), var(--color-surface);
+  box-shadow: 0 36px 84px rgba(0, 0, 0, 0.46);
+}
+
+.workspace-canvas-panel[data-size="expanded"] {
+  width: min(92rem, calc(100vw - 2rem));
+}
+
+.workspace-canvas-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--color-border);
+  padding: 1rem 1rem 0.9rem;
+}
+
+.workspace-canvas-panel-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-raised);
+  color: var(--color-text);
+}
+
+.workspace-canvas-panel-close svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.workspace-canvas-panel-body {
+  max-height: calc(100dvh - 9rem);
+  max-height: calc(100vh - 9rem);
+  overflow: auto;
+  padding: 1rem;
+}
+
 .agent-canvas-stage {
   position: relative;
   flex: 1 1 auto;
@@ -427,16 +580,32 @@ textarea {
   min-width: 0;
 }
 
-.agent-canvas-detail-popup {
+.agent-canvas-detail-lightbox-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.agent-canvas-detail-lightbox-backdrop {
   position: absolute;
-  top: 1rem;
-  right: 1rem;
-  z-index: 30;
+  inset: 0;
+  border: 0;
+  background: color-mix(in srgb, var(--color-base) 76%, transparent);
+}
+
+.agent-canvas-detail-popup {
+  position: relative;
   display: flex;
   flex-direction: column;
-  width: min(38rem, calc(100% - 2rem));
-  height: min(46rem, calc(100% - 2rem));
-  max-height: calc(100% - 2rem);
+  z-index: 1;
+  width: min(56rem, calc(100vw - 4rem));
+  max-width: 100%;
+  height: min(46rem, calc(100vh - 4rem));
+  max-height: calc(100vh - 4rem);
   border: 1px solid var(--color-border);
   background: color-mix(in srgb, var(--color-surface) 92%, transparent);
   backdrop-filter: blur(18px);
@@ -995,14 +1164,15 @@ textarea {
 }
 
 @media (max-width: 860px) {
+  .agent-canvas-detail-lightbox-shell {
+    align-items: stretch;
+    padding: 0.75rem;
+  }
+
   .agent-canvas-detail-popup {
-    top: auto;
-    right: 0.75rem;
-    bottom: 0.75rem;
-    left: 0.75rem;
-    width: auto;
-    height: min(70vh, calc(100% - 1.5rem));
-    max-height: min(70vh, calc(100% - 1.5rem));
+    width: min(100%, 100vw - 1.5rem);
+    height: min(100%, calc(100vh - 1.5rem));
+    max-height: calc(100vh - 1.5rem);
   }
 
   .workspace-header-cluster {
@@ -1122,6 +1292,13 @@ textarea {
     border-radius: 1.5rem;
   }
 
+  .workspace-canvas-panel,
+  .workspace-canvas-panel[data-size="expanded"] {
+    width: 100%;
+    max-height: calc(100vh - 1rem);
+    border-radius: 1.5rem;
+  }
+
   .agent-canvas-stage {
     min-height: 0;
   }
@@ -1134,6 +1311,7 @@ textarea {
   .agent-canvas-stage,
   .agent-canvas-node,
   .agent-canvas-detail-panel,
+  .workspace-canvas-panel,
   .workspace-status-inline,
   .workspace-task-dock-card,
   .workspace-utility-drawer,
@@ -1153,6 +1331,17 @@ textarea {
   .agent-command-row,
   .agent-command-cancel,
   .agent-command-submit {
+    border-color: ButtonBorder;
+    background: Canvas;
+    color: ButtonText;
+    box-shadow: none;
+  }
+
+  .workspace-canvas-toolbar,
+  .workspace-canvas-toolbar-button,
+  .workspace-canvas-panel-close,
+  .workspace-canvas-lightbox-backdrop,
+  .workspace-canvas-panel {
     border-color: ButtonBorder;
     background: Canvas;
     color: ButtonText;
@@ -1221,6 +1410,7 @@ textarea {
   .state-glow-error,
   .stream-card,
   .workspace-task-dock-card,
+  .workspace-canvas-panel,
   .workspace-utility-drawer,
   .workspace-approval-dialog {
     box-shadow: none;

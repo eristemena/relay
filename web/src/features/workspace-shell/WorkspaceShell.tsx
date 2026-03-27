@@ -1,9 +1,13 @@
 "use client";
 
-import { startTransition, useEffect, useState } from "react";
+import { startTransition, useEffect, useMemo, useState } from "react";
 import { AgentCommandBar } from "@/features/agent-panel/AgentCommandBar";
 import { ApprovalReviewPanel } from "@/features/approvals/ApprovalReviewPanel";
 import { WorkspaceCanvas } from "@/features/canvas/WorkspaceCanvas";
+import {
+  WorkspaceCanvasToolbar,
+  type WorkspaceCanvasPanelId,
+} from "@/features/canvas/WorkspaceCanvasToolbar";
 import { RunHistoryPanel } from "@/features/history/RunHistoryPanel";
 import { SessionSidebar } from "@/features/history/SessionSidebar";
 import { PreferencesPanel } from "@/features/preferences/PreferencesPanel";
@@ -12,13 +16,13 @@ import {
   hasWorkspaceStatusBanner,
   WorkspaceStatusBanner,
 } from "@/features/workspace-shell/WorkspaceStatusBanner";
-import { WorkspaceUtilityDrawer } from "./WorkspaceUtilityDrawer";
 import { useWorkspaceSocket } from "@/shared/lib/useWorkspaceSocket";
 import { useWorkspaceStore } from "@/shared/lib/workspace-store";
 
 export function WorkspaceShell() {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [approvalOpen, setApprovalOpen] = useState(false);
+  const [activePanel, setActivePanel] = useState<WorkspaceCanvasPanelId | null>(
+    null,
+  );
   const {
     browseRepository,
     createSession,
@@ -86,12 +90,12 @@ export function WorkspaceShell() {
 
   useEffect(() => {
     if (selectedPendingApproval) {
-      setApprovalOpen(true);
+      setActivePanel("approvals");
     }
   }, [selectedPendingApproval]);
 
   useEffect(() => {
-    if (!menuOpen && !approvalOpen) {
+    if (!activePanel) {
       return;
     }
 
@@ -100,18 +104,148 @@ export function WorkspaceShell() {
         return;
       }
 
-      if (approvalOpen) {
-        setApprovalOpen(false);
-        return;
-      }
-
-      setMenuOpen(false);
+      setActivePanel(null);
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [approvalOpen, menuOpen]);
+  }, [activePanel]);
 
+  const expandedPanel =
+    activePanel === "preferences" || activePanel === "approvals";
+  const panelContent = useMemo(() => {
+    switch (activePanel) {
+      case "sessions":
+        return (
+          <nav aria-label="Session history and switching">
+            <SessionSidebar
+              activeSessionId={activeSessionId}
+              onCreate={() =>
+                startTransition(() => {
+                  createSession();
+                })
+              }
+              onOpen={(sessionId) =>
+                startTransition(() => {
+                  openSession(sessionId);
+                  setActivePanel(null);
+                })
+              }
+              sessions={sessions}
+            />
+          </nav>
+        );
+      case "history":
+        return (
+          <RunHistoryPanel
+            activeRunId={activeRunId}
+            historyState={uiState.history_state}
+            runSummaries={runSummaries}
+            selectedRunId={selectedRunId}
+            onOpen={(runId: string) =>
+              startTransition(() => {
+                openRun(activeSessionId, runId);
+                setActivePanel(null);
+              })
+            }
+          />
+        );
+      case "run-summary":
+        return (
+          <WorkspaceRunSummaryPanel
+            runSummary={visibleRunDocument?.runSummary ?? null}
+            visibleRunId={visibleRunId}
+          />
+        );
+      case "workspace-summary":
+        return (
+          <WorkspaceSummaryPanel
+            preferredPort={preferences.preferred_port}
+            repositorySummaryMessage={repositorySummaryMessage}
+            repositorySummaryTitle={repositorySummaryTitle}
+            theme={preferences.appearance_variant}
+          />
+        );
+      case "preferences":
+        return (
+          <PreferencesPanel
+            onBrowseRepository={(path, showHidden) =>
+              startTransition(() => {
+                browseRepository(path, showHidden);
+              })
+            }
+            onSave={(payload) =>
+              startTransition(() => {
+                savePreferences(payload);
+              })
+            }
+            preferences={preferences}
+            repositoryBrowser={repositoryBrowser}
+            saveState={uiState.save_state}
+          />
+        );
+      case "approvals":
+        return (
+          <ApprovalReviewPanel
+            approval={selectedPendingApproval}
+            pendingCount={pendingApprovalCount}
+            selectedApprovalId={selectedPendingApproval?.toolCallId}
+            onApprovalDecision={(toolCallId, decision) =>
+              startTransition(() => {
+                respondToApproval(
+                  activeSessionId,
+                  selectedPendingApproval?.runId ||
+                    selectedRunId ||
+                    activeRunId,
+                  toolCallId,
+                  decision,
+                );
+                setActivePanel(null);
+              })
+            }
+          />
+        );
+      default:
+        return null;
+    }
+  }, [
+    activePanel,
+    activeRunId,
+    activeSessionId,
+    browseRepository,
+    createSession,
+    openRun,
+    openSession,
+    pendingApprovalCount,
+    preferences,
+    repositoryBrowser,
+    repositorySummaryMessage,
+    repositorySummaryTitle,
+    respondToApproval,
+    runSummaries,
+    savePreferences,
+    selectedPendingApproval,
+    selectedRunId,
+    sessions,
+    uiState.history_state,
+    uiState.save_state,
+    visibleRunDocument,
+    visibleRunId,
+  ]);
+  const workspaceToolbar = activeSession ? (
+    <WorkspaceCanvasToolbar
+      activePanel={activePanel}
+      expandedPanel={expandedPanel}
+      onClose={() => setActivePanel(null)}
+      onToggle={(panelId) =>
+        setActivePanel((currentPanel) =>
+          currentPanel === panelId ? null : panelId,
+        )
+      }
+      panelContent={panelContent}
+      pendingApprovalCount={pendingApprovalCount}
+    />
+  ) : null;
   const commandBarDisabled = !activeSessionId || Boolean(activeRunId);
 
   return (
@@ -143,37 +277,6 @@ export function WorkspaceShell() {
                 />
               </div>
             ) : null}
-            <button
-              aria-controls="workspace-utility-heading"
-              aria-expanded={menuOpen}
-              className="workspace-menu-trigger"
-              onClick={() => setMenuOpen(true)}
-              type="button"
-            >
-              <span className="sr-only">Open workspace menu</span>
-              <svg
-                aria-hidden="true"
-                fill="none"
-                height="20"
-                viewBox="0 0 24 24"
-                width="20"
-              >
-                <path
-                  d="M4 7H20M4 12H20M4 17H14"
-                  stroke="currentColor"
-                  strokeLinecap="round"
-                  strokeWidth="1.8"
-                />
-              </svg>
-              {pendingApprovalCount > 0 ? (
-                <span
-                  className="workspace-menu-trigger-count"
-                  aria-hidden="true"
-                >
-                  {pendingApprovalCount}
-                </span>
-              ) : null}
-            </button>
           </div>
         </div>
       </header>
@@ -184,7 +287,10 @@ export function WorkspaceShell() {
         tabIndex={-1}
       >
         <section className="grid min-h-0 min-w-0 gap-4 overflow-hidden">
-          <WorkspaceCanvas activeSession={activeSession} />
+          <WorkspaceCanvas
+            activeSession={activeSession}
+            workspaceToolbar={workspaceToolbar}
+          />
         </section>
       </main>
 
@@ -214,172 +320,88 @@ export function WorkspaceShell() {
           />
         </section>
       </div>
-
-      <WorkspaceUtilityDrawer
-        onClose={() => setMenuOpen(false)}
-        open={menuOpen}
-      >
-        <div className="grid gap-4 p-5">
-          <nav aria-label="Session history and switching">
-            <SessionSidebar
-              activeSessionId={activeSessionId}
-              onCreate={() =>
-                startTransition(() => {
-                  createSession();
-                })
-              }
-              onOpen={(sessionId) =>
-                startTransition(() => {
-                  openSession(sessionId);
-                  setMenuOpen(false);
-                })
-              }
-              sessions={sessions}
-            />
-          </nav>
-          <RunHistoryPanel
-            activeRunId={activeRunId}
-            historyState={uiState.history_state}
-            runSummaries={runSummaries}
-            selectedRunId={selectedRunId}
-            onOpen={(runId: string) =>
-              startTransition(() => {
-                openRun(activeSessionId, runId);
-                setMenuOpen(false);
-              })
-            }
-          />
-          <section
-            aria-labelledby="workspace-run-summary-heading"
-            className="panel-surface rounded-[2rem] p-5 shadow-idle"
-          >
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="eyebrow">Run summary</p>
-                <h2
-                  id="workspace-run-summary-heading"
-                  className="mt-2 font-display text-2xl text-text"
-                >
-                  Latest orchestration recap
-                </h2>
-              </div>
-              {visibleRunId ? (
-                <p className="font-mono text-xs uppercase tracking-[0.2em] text-text-muted">
-                  {visibleRunId}
-                </p>
-              ) : null}
-            </div>
-
-            {visibleRunDocument?.runSummary ? (
-              <div className="mt-4 rounded-[1.25rem] border border-border bg-raised/80 p-4 text-sm leading-6 text-text">
-                <FormattedMarkdown content={visibleRunDocument.runSummary} />
-              </div>
-            ) : (
-              <p className="mt-4 rounded-3xl border border-dashed border-border bg-raised/60 p-5 text-sm leading-6 text-text-muted">
-                Replay or complete a run to capture the orchestration summary
-                here for quick reference.
-              </p>
-            )}
-          </section>
-          <section
-            aria-labelledby="workspace-summary-heading"
-            className="panel-surface rounded-[2rem] p-5 shadow-idle"
-          >
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="eyebrow">Workspace summary</p>
-                <h2
-                  id="workspace-summary-heading"
-                  className="mt-2 font-display text-2xl text-text"
-                >
-                  Saved workspace defaults
-                </h2>
-              </div>
-              <div className="flex flex-wrap justify-end gap-x-4 gap-y-1 text-sm">
-                <p className="font-mono text-text">
-                  Port {preferences.preferred_port}
-                </p>
-                <p className="text-text-muted">
-                  Theme {preferences.appearance_variant}
-                </p>
-                <p className="text-text-muted">{repositorySummaryTitle}</p>
-              </div>
-            </div>
-            <p className="mt-4 break-all text-sm leading-6 text-text-muted">
-              {repositorySummaryMessage}
-            </p>
-          </section>
-          <PreferencesPanel
-            onBrowseRepository={(path, showHidden) =>
-              startTransition(() => {
-                browseRepository(path, showHidden);
-              })
-            }
-            onSave={(payload) =>
-              startTransition(() => {
-                savePreferences(payload);
-              })
-            }
-            preferences={preferences}
-            repositoryBrowser={repositoryBrowser}
-            saveState={uiState.save_state}
-          />
-        </div>
-      </WorkspaceUtilityDrawer>
-
-      {approvalOpen && pendingApprovalCount > 0 ? (
-        <div className="workspace-approval-shell" data-state="open">
-          <button
-            aria-label="Close approval review"
-            className="workspace-approval-backdrop"
-            onClick={() => setApprovalOpen(false)}
-            type="button"
-          />
-          <aside
-            aria-labelledby="approval-review-heading"
-            aria-modal="true"
-            className="workspace-approval-dialog"
-            role="dialog"
-          >
-            <div className="workspace-approval-header">
-              <div>
-                <p className="eyebrow">Action required</p>
-                <h2
-                  id="approval-review-heading"
-                  className="mt-2 font-display text-2xl text-text"
-                >
-                  Relay is waiting for approval
-                </h2>
-              </div>
-              <button
-                className="rounded-full border border-border bg-raised px-4 py-2 text-sm text-text"
-                onClick={() => setApprovalOpen(false)}
-                type="button"
-              >
-                Close
-              </button>
-            </div>
-            <div className="workspace-approval-scroll">
-              <ApprovalReviewPanel
-                approval={selectedPendingApproval}
-                pendingCount={pendingApprovalCount}
-                selectedApprovalId={selectedPendingApproval?.toolCallId}
-                onApprovalDecision={(toolCallId, decision) =>
-                  startTransition(() => {
-                    respondToApproval(
-                      activeSessionId,
-                      selectedRunId,
-                      toolCallId,
-                      decision,
-                    );
-                    setApprovalOpen(false);
-                  })
-                }
-              />
-            </div>
-          </aside>
-        </div>
-      ) : null}
     </div>
+  );
+}
+
+function WorkspaceRunSummaryPanel({
+  runSummary,
+  visibleRunId,
+}: {
+  runSummary: string | null;
+  visibleRunId: string;
+}) {
+  return (
+    <section
+      aria-labelledby="workspace-run-summary-heading"
+      className="panel-surface rounded-[2rem] p-5 shadow-idle"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="eyebrow">Run summary</p>
+          <h2
+            className="mt-2 font-display text-2xl text-text"
+            id="workspace-run-summary-heading"
+          >
+            Latest orchestration recap
+          </h2>
+        </div>
+        {visibleRunId ? (
+          <p className="font-mono text-xs uppercase tracking-[0.2em] text-text-muted">
+            {visibleRunId}
+          </p>
+        ) : null}
+      </div>
+
+      {runSummary ? (
+        <div className="mt-4 rounded-[1.25rem] border border-border bg-raised/80 p-4 text-sm leading-6 text-text">
+          <FormattedMarkdown content={runSummary} />
+        </div>
+      ) : (
+        <p className="mt-4 rounded-3xl border border-dashed border-border bg-raised/60 p-5 text-sm leading-6 text-text-muted">
+          Replay or complete a run to capture the orchestration summary here for
+          quick reference.
+        </p>
+      )}
+    </section>
+  );
+}
+
+function WorkspaceSummaryPanel({
+  preferredPort,
+  repositorySummaryMessage,
+  repositorySummaryTitle,
+  theme,
+}: {
+  preferredPort: number;
+  repositorySummaryMessage: string;
+  repositorySummaryTitle: string;
+  theme: string;
+}) {
+  return (
+    <section
+      aria-labelledby="workspace-summary-heading"
+      className="panel-surface rounded-[2rem] p-5 shadow-idle"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="eyebrow">Workspace summary</p>
+          <h2
+            className="mt-2 font-display text-2xl text-text"
+            id="workspace-summary-heading"
+          >
+            Saved workspace defaults
+          </h2>
+        </div>
+        <div className="flex flex-wrap justify-end gap-x-4 gap-y-1 text-sm">
+          <p className="font-mono text-text">Port {preferredPort}</p>
+          <p className="text-text-muted">Theme {theme}</p>
+          <p className="text-text-muted">{repositorySummaryTitle}</p>
+        </div>
+      </div>
+      <p className="mt-4 break-all text-sm leading-6 text-text-muted">
+        {repositorySummaryMessage}
+      </p>
+    </section>
   );
 }

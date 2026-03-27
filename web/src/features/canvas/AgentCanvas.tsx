@@ -10,7 +10,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { AnimatePresence } from "framer-motion";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import {
   AnimatedHandoffEdge,
   type AnimatedHandoffEdgeData,
@@ -44,6 +44,7 @@ interface AgentCanvasProps {
   errorMessage?: string | null;
   runId: string;
   document: AgentCanvasDocument | null;
+  workspaceToolbar?: ReactNode;
 }
 
 const nodeTypes = { agentCanvasNode: AgentCanvasNode };
@@ -57,6 +58,7 @@ export function AgentCanvas({
   errorMessage,
   runId,
   document,
+  workspaceToolbar,
 }: AgentCanvasProps) {
   return (
     <ReactFlowProvider>
@@ -67,6 +69,7 @@ export function AgentCanvas({
         historyState={historyState}
         runId={runId}
         sessionLabel={sessionLabel}
+        workspaceToolbar={workspaceToolbar}
       />
     </ReactFlowProvider>
   );
@@ -79,6 +82,7 @@ function AgentCanvasSurface({
   errorMessage,
   runId,
   document,
+  workspaceToolbar,
 }: AgentCanvasProps) {
   const canvasDocument = document;
   const canvasErrorMessage =
@@ -205,6 +209,8 @@ function AgentCanvasSurface({
               ? `Live graph with ${canvasDocument.nodes.length} ${canvasDocument.nodes.length === 1 ? "node" : "nodes"} and ${canvasDocument.edges.length} ${canvasDocument.edges.length === 1 ? "handoff" : "handoffs"}.`
               : "Submit a goal or reopen a saved run to populate the orchestration canvas."}
           </p>
+
+          {workspaceToolbar ? workspaceToolbar : null}
 
           {isCanvasLoading ? (
             <div

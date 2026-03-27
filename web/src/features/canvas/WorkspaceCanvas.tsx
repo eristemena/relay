@@ -1,6 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
+import type { ReactNode } from "react";
 import type { SessionSummary } from "@/shared/lib/workspace-protocol";
 import { AgentCanvas } from "@/features/canvas/AgentCanvas";
 import {
@@ -12,9 +13,13 @@ import { useWorkspaceStore } from "@/shared/lib/workspace-store";
 
 interface WorkspaceCanvasProps {
   activeSession: SessionSummary | null;
+  workspaceToolbar?: ReactNode;
 }
 
-export function WorkspaceCanvas({ activeSession }: WorkspaceCanvasProps) {
+export function WorkspaceCanvas({
+  activeSession,
+  workspaceToolbar,
+}: WorkspaceCanvasProps) {
   const activeRunId = useWorkspaceStore((state) => state.activeRunId);
   const selectedRunId = useWorkspaceStore((state) => state.selectedRunId);
   const orchestrationDocuments = useWorkspaceStore(
@@ -48,6 +53,7 @@ export function WorkspaceCanvas({ activeSession }: WorkspaceCanvasProps) {
         historyState={uiState.history_state}
         runId={runId}
         sessionLabel={activeSession.display_name}
+        workspaceToolbar={workspaceToolbar}
       />
     </motion.section>
   );

@@ -82,7 +82,13 @@ describe("WorkspaceShell", () => {
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /open workspace menu/i }),
+      screen.getByRole("button", { name: /open sessions/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /open run history/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /open preferences/i }),
     ).toBeInTheDocument();
     expect(screen.getByLabelText(/agent task/i)).toBeInTheDocument();
     expect(
@@ -98,44 +104,51 @@ describe("WorkspaceShell", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("opens the workspace menu on demand", async () => {
+  it("switches workspace panels from the graph toolbar", async () => {
     primeWorkspaceStore(buildWorkspaceSnapshot());
     render(<WorkspaceShell />);
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /open workspace menu/i }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /open sessions/i }));
 
     expect(
-      await screen.findByRole("dialog", {
-        name: /sessions, saved runs, and preferences/i,
-      }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("navigation", {
+      await screen.findByRole("navigation", {
         name: /session history and switching/i,
       }),
     ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /open run summary/i }));
+
     expect(
-      screen.getByRole("heading", { name: /latest orchestration recap/i }),
+      await screen.findByRole("heading", {
+        name: /latest orchestration recap/i,
+      }),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
         /replay or complete a run to capture the orchestration summary here/i,
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText(/saved workspace defaults/i)).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /open workspace summary/i }),
+    );
+
+    expect(
+      await screen.findByText(/saved workspace defaults/i),
+    ).toBeInTheDocument();
     expect(screen.getByText(/port 4747/i)).toBeInTheDocument();
     expect(screen.getByText(/theme midnight/i)).toBeInTheDocument();
-    expect(screen.getAllByText(/saved runs/i).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: /open preferences/i }));
+
     expect(
-      screen.getByRole("heading", { name: /local settings/i }),
+      await screen.findByRole("heading", { name: /local settings/i }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: /choose a local git repository/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /close workspace menu/i }),
+      screen.getByRole("button", { name: /close workspace panel/i }),
     ).toBeInTheDocument();
   });
 
@@ -143,9 +156,7 @@ describe("WorkspaceShell", () => {
     primeWorkspaceStore(buildWorkspaceSnapshot());
     render(<WorkspaceShell />);
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /open workspace menu/i }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /open preferences/i }));
 
     fireEvent.click(
       await screen.findByRole("button", { name: /browse folders/i }),
@@ -425,7 +436,7 @@ describe("WorkspaceShell", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows the repository summary in the workspace menu", async () => {
+  it("shows the repository summary in the workspace summary panel", async () => {
     primeWorkspaceStore(
       buildWorkspaceSnapshot({
         preferences: {
@@ -451,20 +462,20 @@ describe("WorkspaceShell", () => {
     render(<WorkspaceShell />);
 
     fireEvent.click(
-      screen.getByRole("button", { name: /open workspace menu/i }),
+      screen.getByRole("button", { name: /open workspace summary/i }),
     );
 
-    const drawer = await screen.findByRole("dialog", {
-      name: /sessions, saved runs, and preferences/i,
+    const panel = await screen.findByRole("dialog", {
+      name: /close workspace summary/i,
     });
 
     expect(
-      within(drawer).getByText(/repository connected/i),
+      within(panel).getByText(/repository connected/i),
     ).toBeInTheDocument();
-    expect(within(drawer).getAllByText("/tmp/relay").length).toBeGreaterThan(0);
+    expect(within(panel).getAllByText("/tmp/relay").length).toBeGreaterThan(0);
   });
 
-  it("opens a blocking approval dialog and forwards approval decisions", async () => {
+  it("opens the approval panel automatically and forwards approval decisions", async () => {
     primeWorkspaceStore(
       buildWorkspaceSnapshot({
         active_run_id: "run_1",
@@ -518,7 +529,7 @@ describe("WorkspaceShell", () => {
     render(<WorkspaceShell />);
 
     expect(
-      await screen.findByText(/relay is waiting for approval/i),
+      await screen.findByRole("button", { name: /close approval review/i }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /approve request/i }),
@@ -559,14 +570,12 @@ describe("WorkspaceShell", () => {
 
     render(<WorkspaceShell />);
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /open workspace menu/i }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /open run history/i }));
 
-    const drawer = await screen.findByRole("dialog", {
-      name: /sessions, saved runs, and preferences/i,
+    const panel = await screen.findByRole("dialog", {
+      name: /close run history/i,
     });
-    const savedRunButton = within(drawer)
+    const savedRunButton = within(panel)
       .getAllByRole("button")
       .find((button) =>
         /inspect saved startup run/i.test(button.textContent ?? ""),
@@ -618,16 +627,14 @@ describe("WorkspaceShell", () => {
       } as never);
     });
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /open workspace menu/i }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /open run history/i }));
 
-    const reopenedDrawer = screen.getByRole("dialog", {
-      name: /sessions, saved runs, and preferences/i,
+    const reopenedPanel = screen.getByRole("dialog", {
+      name: /close run history/i,
     });
 
     expect(
-      within(reopenedDrawer)
+      within(reopenedPanel)
         .getAllByRole("button")
         .filter((button) =>
           /inspect saved startup run/i.test(button.textContent ?? ""),
