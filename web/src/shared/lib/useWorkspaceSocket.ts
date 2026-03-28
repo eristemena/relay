@@ -5,14 +5,20 @@ import {
   createAgentRunApprovalRespondRequest,
   createAgentRunCancelRequest,
   createAgentRunOpenRequest,
+  createAgentRunReplayControlRequest,
   createAgentRunSubmitRequest,
   createBootstrapRequest,
   createPreferencesSaveRequest,
   createRepositoryBrowseRequest,
+  createRunHistoryDetailsRequest,
+  createRunHistoryExportRequest,
+  createRunHistoryQueryRequest,
   createSessionCreateRequest,
   createSessionOpenRequest,
+  type AgentRunReplayControlPayload,
   type Envelope,
   type PreferencesSavePayload,
+  type RunHistoryQueryPayload,
   type WorkspaceSnapshotPayload,
 } from "@/shared/lib/workspace-protocol";
 import {
@@ -134,6 +140,21 @@ export function useWorkspaceSocket() {
     },
     openRun(sessionId: string, runId: string) {
       sendEnvelope(createAgentRunOpenRequest(sessionId, runId));
+    },
+    queryRunHistory(
+      sessionId: string,
+      payload: Omit<RunHistoryQueryPayload, "session_id"> = {},
+    ) {
+      sendEnvelope(createRunHistoryQueryRequest(sessionId, payload));
+    },
+    getRunHistoryDetails(sessionId: string, runId: string) {
+      sendEnvelope(createRunHistoryDetailsRequest(sessionId, runId));
+    },
+    controlReplay(payload: AgentRunReplayControlPayload) {
+      sendEnvelope(createAgentRunReplayControlRequest(payload));
+    },
+    exportRunHistory(sessionId: string, runId: string) {
+      sendEnvelope(createRunHistoryExportRequest(sessionId, runId));
     },
     cancelRun(sessionId: string, runId: string) {
       sendEnvelope(createAgentRunCancelRequest(sessionId, runId));

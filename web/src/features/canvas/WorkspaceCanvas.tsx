@@ -25,15 +25,30 @@ export function WorkspaceCanvas({
   const orchestrationDocuments = useWorkspaceStore(
     (state) => state.orchestrationDocuments,
   );
+  const replayStateByRunId = useWorkspaceStore(
+    (state) => state.replayStateByRunId,
+  );
   const uiState = useWorkspaceStore((state) => state.uiState);
   const error = useWorkspaceStore((state) => state.error);
 
   if (!activeSession) {
-    return <CanvasEmptyState sessionLabel="Relay" />;
+    return (
+      <motion.section
+        animate={{ opacity: 1, y: 0 }}
+        className="relative h-full min-h-0"
+        initial={{ opacity: 0, y: 12 }}
+        transition={{ duration: CANVAS_MOTION_SECONDS, ease: CANVAS_MOTION_EASE }}
+      >
+        <CanvasEmptyState sessionLabel="Relay">
+          {workspaceToolbar}
+        </CanvasEmptyState>
+      </motion.section>
+    );
   }
 
   const runId = activeRunId || selectedRunId;
   const document = runId ? (orchestrationDocuments[runId] ?? null) : null;
+  const replayState = runId ? (replayStateByRunId[runId] ?? null) : null;
   const canvasErrorMessage =
     uiState.canvas_state === "error" || (!document && error)
       ? error?.message || "Relay could not load the orchestration canvas."
@@ -51,6 +66,7 @@ export function WorkspaceCanvas({
         document={document}
         errorMessage={canvasErrorMessage}
         historyState={uiState.history_state}
+        replayState={replayState}
         runId={runId}
         sessionLabel={activeSession.display_name}
         workspaceToolbar={workspaceToolbar}

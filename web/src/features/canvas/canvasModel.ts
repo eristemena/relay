@@ -191,6 +191,10 @@ export function createEmptyCanvasDocument(): AgentCanvasDocument {
   };
 }
 
+export function resetCanvasDocumentForReplay(): AgentCanvasDocument {
+  return createEmptyCanvasDocument();
+}
+
 export function addSpawnedNode(
   document: AgentCanvasDocument,
   payload: AgentSpawnedPayload,

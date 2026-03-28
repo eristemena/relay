@@ -32,7 +32,10 @@ import {
   clearWorkspaceCanvasSelection,
   selectWorkspaceCanvasNode,
 } from "@/shared/lib/workspace-store";
-import type { WorkspaceUIState } from "@/shared/lib/workspace-protocol";
+import type {
+  AgentRunReplayStatePayload,
+  WorkspaceUIState,
+} from "@/shared/lib/workspace-protocol";
 import {
   getRunFailureTitle,
   isClarificationRequiredCode,
@@ -43,6 +46,7 @@ interface AgentCanvasProps {
   sessionLabel: string;
   historyState?: WorkspaceUIState["history_state"];
   errorMessage?: string | null;
+  replayState?: AgentRunReplayStatePayload | null;
   runId: string;
   document: AgentCanvasDocument | null;
   workspaceToolbar?: ReactNode;
@@ -57,6 +61,7 @@ export function AgentCanvas({
   sessionLabel,
   historyState,
   errorMessage,
+  replayState,
   runId,
   document,
   workspaceToolbar,
@@ -68,6 +73,7 @@ export function AgentCanvas({
         document={document}
         errorMessage={errorMessage}
         historyState={historyState}
+        replayState={replayState}
         runId={runId}
         sessionLabel={sessionLabel}
         workspaceToolbar={workspaceToolbar}
@@ -81,6 +87,7 @@ function AgentCanvasSurface({
   sessionLabel,
   historyState,
   errorMessage,
+  replayState,
   runId,
   document,
   workspaceToolbar,
@@ -103,6 +110,31 @@ function AgentCanvasSurface({
   const haltNote = isClarificationRequiredCode(canvasDocument?.haltCode)
     ? "Relay stopped before continuing to downstream agents because one stage asked for more input instead of taking action."
     : null;
+  const replayTimestampLabel = replayState?.selected_timestamp
+    ? new Date(replayState.selected_timestamp).toLocaleString()
+    : null;
+  const nodeCountLabel = canvasDocument
+    ? `${canvasDocument.nodes.length} ${canvasDocument.nodes.length === 1 ? "node" : "nodes"}`
+    : null;
+  const handoffCountLabel = canvasDocument
+    ? `${canvasDocument.edges.length} ${canvasDocument.edges.length === 1 ? "handoff" : "handoffs"}`
+    : null;
+  const replaySummaryLabel = replayState
+    ? [
+        "Replay",
+        replayState.status,
+        replayTimestampLabel,
+        nodeCountLabel,
+        handoffCountLabel,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : null;
+  const canvasStatusMessage = canvasDocument
+    ? replayState
+      ? `Historical replay ${replayState.status}${replayTimestampLabel ? ` at ${replayTimestampLabel}` : ""}. Graph currently shows ${nodeCountLabel} and ${handoffCountLabel}.`
+      : `Live graph with ${canvasDocument.nodes.length} ${canvasDocument.nodes.length === 1 ? "node" : "nodes"} and ${canvasDocument.edges.length} ${canvasDocument.edges.length === 1 ? "handoff" : "handoffs"}.`
+    : "Submit a goal or reopen a saved run to populate the orchestration canvas.";
 
   useEffect(() => {
     if (!selectedNode) {
@@ -200,16 +232,33 @@ function AgentCanvasSurface({
           </div>
         ) : null}
 
+        {replayState ? (
+          <div
+            className="flex flex-wrap items-center gap-2 rounded-[1.25rem] border border-border bg-raised/80 px-4 py-3 text-xs uppercase tracking-[0.18em] text-text-muted"
+            role="status"
+          >
+            <span className="font-medium text-text">Historical replay</span>
+            <span aria-hidden="true">·</span>
+            <span>Read-only</span>
+            {replaySummaryLabel ? (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>{replaySummaryLabel}</span>
+              </>
+            ) : null}
+          </div>
+        ) : null}
+
         <div className="agent-canvas-shell">
           <p
             aria-live="polite"
-            className="text-sm leading-6 text-text-muted"
+            className={
+              replayState ? "sr-only" : "text-sm leading-6 text-text-muted"
+            }
             id="agent-canvas-status"
             role="status"
           >
-            {canvasDocument
-              ? `Live graph with ${canvasDocument.nodes.length} ${canvasDocument.nodes.length === 1 ? "node" : "nodes"} and ${canvasDocument.edges.length} ${canvasDocument.edges.length === 1 ? "handoff" : "handoffs"}.`
-              : "Submit a goal or reopen a saved run to populate the orchestration canvas."}
+            {canvasStatusMessage}
           </p>
 
           {workspaceToolbar ? workspaceToolbar : null}
@@ -269,6 +318,7 @@ function AgentCanvasSurface({
                     <Background />
                     <Controls showInteractive={false} />
                     <ViewportSync
+                      isHistoricalReplay={Boolean(replayState)}
                       layoutRevision={canvasDocument.layoutRevision}
                     />
                   </ReactFlow>
@@ -282,6 +332,7 @@ function AgentCanvasSurface({
                       haltRole={canvasDocument.haltRole}
                       key={selectedNode.id}
                       onClose={() => clearWorkspaceCanvasSelection(runId)}
+                      replayState={replayState}
                       selectedNode={selectedNode}
                     />
                   ) : null}
@@ -295,7 +346,13 @@ function AgentCanvasSurface({
   );
 }
 
-function ViewportSync({ layoutRevision }: { layoutRevision: number }) {
+function ViewportSync({
+  isHistoricalReplay,
+  layoutRevision,
+}: {
+  isHistoricalReplay: boolean;
+  layoutRevision: number;
+}) {
   const reactFlow = useReactFlow();
 
   useEffect(() => {
@@ -305,14 +362,14 @@ function ViewportSync({ layoutRevision }: { layoutRevision: number }) {
 
     const frame = window.requestAnimationFrame(() => {
       void reactFlow.fitView({
-        duration: 250,
+        duration: isHistoricalReplay ? 0 : 250,
         maxZoom: 1.1,
         padding: 0.2,
       });
     });
 
     return () => window.cancelAnimationFrame(frame);
-  }, [layoutRevision, reactFlow]);
+  }, [isHistoricalReplay, layoutRevision, reactFlow]);
 
   return null;
 }

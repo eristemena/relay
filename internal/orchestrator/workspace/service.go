@@ -28,12 +28,21 @@ type Store interface {
 	GetAgentRun(ctx context.Context, runID string) (sqlite.AgentRun, error)
 	ListAgentExecutions(ctx context.Context, runID string) ([]sqlite.AgentExecution, error)
 	ListRunSummaries(ctx context.Context, sessionID string) ([]sqlite.RunSummary, error)
+	UpsertRunHistoryDocument(ctx context.Context, document sqlite.RunHistoryDocument) error
+	UpsertRunHistorySearchDocument(ctx context.Context, document sqlite.RunHistorySearchDocument) error
+	GetRunHistoryDocument(ctx context.Context, runID string) (sqlite.RunHistoryDocument, error)
+	QueryRunHistory(ctx context.Context, query sqlite.RunHistoryQuery) ([]sqlite.RunHistoryDocument, error)
+	ReplaceRunChangeRecords(ctx context.Context, runID string, records []sqlite.RunChangeRecord) error
+	ListRunChangeRecords(ctx context.Context, runID string) ([]sqlite.RunChangeRecord, error)
+	RecordRunExport(ctx context.Context, document sqlite.RunExportDocument) error
+	GetLatestRunExport(ctx context.Context, runID string) (sqlite.RunExportDocument, error)
 	AppendRunEvent(ctx context.Context, runID string, eventType string, role sqlite.AgentRole, model string, payloadJSON string, tokensUsed *int, contextLimit *int) (sqlite.AgentRunEvent, error)
 	ListRunEvents(ctx context.Context, runID string) ([]sqlite.AgentRunEvent, error)
 	CreateApprovalRequest(ctx context.Context, approval sqlite.ApprovalRequest) (sqlite.ApprovalRequest, error)
 	GetApprovalRequest(ctx context.Context, runID string, toolCallID string) (sqlite.ApprovalRequest, error)
 	ListPendingApprovalRequests(ctx context.Context, sessionID string) ([]sqlite.ApprovalRequest, error)
 	ListPendingApprovalRequestsForRun(ctx context.Context, runID string) ([]sqlite.ApprovalRequest, error)
+	ListApprovalRequestsForRun(ctx context.Context, runID string) ([]sqlite.ApprovalRequest, error)
 	UpdateApprovalRequestState(ctx context.Context, runID string, toolCallID string, state string, reviewedAt *time.Time, appliedAt *time.Time) error
 	ResolvePendingApprovalRequestsForRun(ctx context.Context, runID string, state string, reviewedAt *time.Time) error
 	UpdateAgentRun(ctx context.Context, run sqlite.AgentRun) error
@@ -55,7 +64,17 @@ type Service struct {
 	repositoryGraphBuilder   repositoryGraphBuilder
 	repositoryGraphSignature repositoryGraphSignatureFunc
 	workspaceSubscribers     map[string]func(StreamEnvelope) error
+	replaySessions           map[string]replaySessionRuntime
 	modelContextLimits       *modelContextLimitResolver
+}
+
+type replaySessionRuntime struct {
+	session        ReplaySession
+	timeline       replayTimeline
+	approvals      []sqlite.ApprovalRequest
+	frames         []replayFrame
+	playbackCancel context.CancelFunc
+	playbackToken  int64
 }
 
 type activeRunRegistration struct {
@@ -158,6 +177,7 @@ type CredentialStatus struct {
 
 type RunSummary struct {
 	ID              string           `json:"id"`
+	GeneratedTitle  string           `json:"generated_title,omitempty"`
 	TaskTextPreview string           `json:"task_text_preview"`
 	Role            sqlite.AgentRole `json:"role"`
 	Model           string           `json:"model"`
@@ -166,6 +186,36 @@ type RunSummary struct {
 	StartedAt       time.Time        `json:"started_at"`
 	CompletedAt     *time.Time       `json:"completed_at,omitempty"`
 	HasToolActivity bool             `json:"has_tool_activity"`
+	AgentCount      int              `json:"agent_count,omitempty"`
+	FinalStatus     string           `json:"final_status,omitempty"`
+	HasFileChanges  bool             `json:"has_file_changes,omitempty"`
+}
+
+type RunHistoryQueryInput struct {
+	SessionID string
+	Query     string
+	FilePath  string
+	DateFrom  *time.Time
+	DateTo    *time.Time
+}
+
+type RunChangeRecord struct {
+	ToolCallID      string    `json:"tool_call_id"`
+	Path            string    `json:"path"`
+	OriginalContent string    `json:"original_content,omitempty"`
+	ProposedContent string    `json:"proposed_content,omitempty"`
+	BaseContentHash string    `json:"base_content_hash,omitempty"`
+	ApprovalState   string    `json:"approval_state,omitempty"`
+	OccurredAt      time.Time `json:"occurred_at"`
+}
+
+type RunHistoryDetails struct {
+	SessionID      string            `json:"session_id"`
+	RunID          string            `json:"run_id"`
+	GeneratedTitle string            `json:"generated_title,omitempty"`
+	FinalStatus    string            `json:"final_status,omitempty"`
+	AgentCount     int               `json:"agent_count,omitempty"`
+	ChangeRecords  []RunChangeRecord `json:"change_records,omitempty"`
 }
 
 type SubmitRunInput struct {
@@ -214,6 +264,7 @@ func NewService(store Store, paths config.Paths) *Service {
 		repositoryGraphs:      make(map[string]repositoryGraphCacheEntry),
 		repositoryGraphBuilds: make(map[string]context.CancelFunc),
 		workspaceSubscribers:  make(map[string]func(StreamEnvelope) error),
+		replaySessions:        make(map[string]replaySessionRuntime),
 		modelContextLimits:    newModelContextLimitResolver(),
 	}
 	service.repositoryGraphBuilder = defaultRepositoryGraphBuilder
@@ -494,7 +545,7 @@ func approvalPayload(summary ApprovalSummary) map[string]any {
 		"status":        sqlite.ApprovalStateProposed,
 		"input_preview": summary.InputPreview,
 		"message":       summary.Message,
-		"occurred_at":   summary.OccurredAt.UTC().Format(time.RFC3339),
+		"occurred_at":   formatEventTimestamp(summary.OccurredAt),
 	}
 	if requestKind, ok := summary.InputPreview["request_kind"].(string); ok && strings.TrimSpace(requestKind) != "" {
 		payload["request_kind"] = requestKind
@@ -521,7 +572,7 @@ func approvalStateChangedPayload(summary ApprovalSummary, state string, occurred
 	payload := approvalPayload(summary)
 	payload["status"] = state
 	payload["message"] = strings.TrimSpace(message)
-	payload["occurred_at"] = occurredAt.UTC().Format(time.RFC3339)
+	payload["occurred_at"] = formatEventTimestamp(occurredAt)
 	return payload
 }
 
@@ -1108,6 +1159,7 @@ func summarizeRuns(runs []sqlite.RunSummary) []RunSummary {
 	for _, run := range runs {
 		items = append(items, RunSummary{
 			ID:              run.ID,
+			GeneratedTitle:  run.GeneratedTitle,
 			TaskTextPreview: run.TaskTextPreview,
 			Role:            run.Role,
 			Model:           run.Model,
@@ -1116,10 +1168,93 @@ func summarizeRuns(runs []sqlite.RunSummary) []RunSummary {
 			StartedAt:       run.StartedAt,
 			CompletedAt:     run.CompletedAt,
 			HasToolActivity: run.HasToolActivity,
+			AgentCount:      run.AgentCount,
+			FinalStatus:     run.FinalStatus,
+			HasFileChanges:  run.HasFileChanges,
 		})
 	}
 
 	return items
+}
+
+func (s *Service) QueryRunHistory(ctx context.Context, input RunHistoryQueryInput) ([]RunSummary, error) {
+	if err := s.refreshSessionRunHistory(ctx, input.SessionID); err != nil {
+		return nil, err
+	}
+	documents, err := s.store.QueryRunHistory(ctx, sqlite.RunHistoryQuery{
+		SessionID: input.SessionID,
+		Query:     input.Query,
+		FilePath:  input.FilePath,
+		DateFrom:  input.DateFrom,
+		DateTo:    input.DateTo,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("query run history: %w", err)
+	}
+	items := make([]RunSummary, 0, len(documents))
+	for _, document := range documents {
+		run, err := s.store.GetAgentRun(ctx, document.RunID)
+		if err != nil {
+			return nil, fmt.Errorf("load run for history summary: %w", err)
+		}
+		state := document.FinalStatus
+		if strings.TrimSpace(state) == "" {
+			state = sqlite.RunStateCompleted
+		}
+		items = append(items, RunSummary{
+			ID:              document.RunID,
+			GeneratedTitle:  document.GeneratedTitle,
+			TaskTextPreview: truncateSingleLine(document.GoalText, 96),
+			Role:            run.Role,
+			Model:           run.Model,
+			State:           state,
+			ErrorCode:       run.ErrorCode,
+			StartedAt:       document.StartedAt,
+			CompletedAt:     document.CompletedAt,
+			HasToolActivity: run.Active() || document.FirstEventAt != nil,
+			AgentCount:      document.AgentCount,
+			FinalStatus:     document.FinalStatus,
+			HasFileChanges:  document.HasFileChanges,
+		})
+	}
+	return items, nil
+}
+
+func (s *Service) GetRunHistoryDetails(ctx context.Context, sessionID string, runID string) (RunHistoryDetails, error) {
+	if err := s.refreshRunHistory(ctx, runID); err != nil {
+		return RunHistoryDetails{}, err
+	}
+	document, err := s.store.GetRunHistoryDocument(ctx, runID)
+	if err != nil {
+		return RunHistoryDetails{}, err
+	}
+	if document.SessionID != sessionID {
+		return RunHistoryDetails{}, fmt.Errorf("run %s does not belong to session %s", runID, sessionID)
+	}
+	records, err := s.store.ListRunChangeRecords(ctx, runID)
+	if err != nil {
+		return RunHistoryDetails{}, fmt.Errorf("list run change records: %w", err)
+	}
+	changeRecords := make([]RunChangeRecord, 0, len(records))
+	for _, record := range records {
+		changeRecords = append(changeRecords, RunChangeRecord{
+			ToolCallID:      record.ToolCallID,
+			Path:            record.Path,
+			OriginalContent: record.OriginalContent,
+			ProposedContent: record.ProposedContent,
+			BaseContentHash: record.BaseContentHash,
+			ApprovalState:   record.ApprovalState,
+			OccurredAt:      record.OccurredAt,
+		})
+	}
+	return RunHistoryDetails{
+		SessionID:      sessionID,
+		RunID:          runID,
+		GeneratedTitle: document.GeneratedTitle,
+		FinalStatus:    document.FinalStatus,
+		AgentCount:     document.AgentCount,
+		ChangeRecords:  changeRecords,
+	}, nil
 }
 
 func summarizeSessions(sessions []sqlite.Session) []SessionSummary {

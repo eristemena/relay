@@ -80,6 +80,7 @@ Relay now includes a live orchestration canvas inside the workspace shell.
 - Selecting a node opens that agent's current or preserved output in the side panel without interrupting the run.
 - The selected-node panel keeps explicit empty, loading, and plain-language error states while selection changes animate in place.
 - Opening a saved run replays the stored orchestration timeline into the same canvas surface.
+- The run history panel now supports transcript-aware keyword search, touched-file and date filters, cursor-aware diff review, replay speed control, and markdown export to `~/.relay/exports/`.
 
 This orchestration mode is intentionally prompt-only. It does not read the repository, write files, or run shell commands as part of the orchestration DAG.
 
@@ -105,6 +106,8 @@ This orchestration mode is intentionally prompt-only. It does not read the repos
 - Relay allows only one active run at a time.
 - Completed, halted, and errored runs are stored in `~/.relay/relay.db` as ordered events.
 - Opening a saved run replays its stored timeline without contacting OpenRouter.
+- Historical diff review is reconstructed from persisted approval diffs, not current repository contents.
+- Export is accepted only from a direct user action in the workspace UI and writes a markdown report under `~/.relay/exports/`.
 - If the browser reconnects during an active run, Relay restores any still-pending approvals, replays stored events, then reattaches the live stream.
 
 ## Orchestration Validation
@@ -112,7 +115,10 @@ This orchestration mode is intentionally prompt-only. It does not read the repos
 - `go test -cover ./internal/agents ./internal/orchestrator/workspace ./internal/handlers/ws ./internal/storage/sqlite`: verify the current orchestration coverage threshold across the touched core packages
 - `go test ./tests/integration -run 'TestAgentStreaming_|TestWorkspaceWebSocket_' -count=1`: run the broader orchestration ordering, replay, and reconnect regressions
 - `go test ./tests/integration/run_history_replay_test.go`: run the replay-focused integration file directly
+- `go test ./internal/orchestrator/workspace ./internal/handlers/ws -run 'Test.*(Replay|Seek|Export|HistoryQuery)'`: run focused replay-control, export, and history-query coverage
+- `go test ./internal/storage/sqlite -run 'Test.*(RunHistory|RunChange|FTS|Export)'`: run focused persistence, search, and export coverage
 - `npm --prefix web test -- src/features/canvas/AgentCanvas.test.tsx src/features/workspace-shell/WorkspaceShell.test.tsx`: run the current canvas and workspace-shell regression suite
+- `npm --prefix web test -- src/features/history/replay/RunChangeReviewPanel.test.tsx src/features/canvas/AgentCanvas.test.tsx src/features/history/RunHistoryPanel.test.tsx src/features/history/replay/ReplayControls.test.tsx src/features/history/replay/ReplayTimeline.test.tsx src/shared/lib/workspace-store.test.ts`: run the focused run-history replay UI, diff-review, and store regression suite
 - `npm --prefix web test -- src/features/canvas/AgentCanvas.test.tsx src/features/canvas/AnimatedHandoffEdge.test.tsx src/features/canvas/AgentNodeDetailPanel.test.tsx src/features/canvas/AgentCanvasNode.test.tsx src/features/canvas/canvasModel.test.ts src/features/canvas/layoutGraph.test.ts src/shared/lib/workspace-store.test.ts`: run the canvas animation layer regressions and store derivation checks
 - `go test ./internal/agents/openrouter ./internal/orchestrator/workspace -run 'Test.*(Usage|ContextLimit|Complete)'`: run focused provider-usage and context-limit resolution coverage
 - `go test ./internal/storage/sqlite ./internal/handlers/ws ./tests/integration -run 'Test.*(RunEvent|Replay|TokenUsage)'`: run focused persistence, replay, and token-usage regressions

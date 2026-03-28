@@ -1944,6 +1944,10 @@ func TestService_OpenRunReplaysHistoryAndStreamsFutureEvents(t *testing.T) {
 		t.Fatalf("OpenRun() error = %v", err)
 	}
 
+	preparing := <-secondStream
+	if preparing.Type != "agent.run.replay.state" {
+		t.Fatalf("preparing event = %q, want agent.run.replay.state", preparing.Type)
+	}
 	replayed := <-secondStream
 	if replayed.Type != sqlite.EventTypeStateChange {
 		t.Fatalf("replayed event = %q, want %q", replayed.Type, sqlite.EventTypeStateChange)
@@ -1974,6 +1978,76 @@ func TestService_OpenRunReplaysHistoryAndStreamsFutureEvents(t *testing.T) {
 		case <-deadline:
 			t.Fatalf("timed out waiting for live events after reattaching")
 		}
+	}
+}
+
+func TestService_QueryRunHistoryMaterializesDocumentsFromRecordedRun(t *testing.T) {
+	paths, store := newTestServiceStore(t)
+	defer store.Close()
+
+	service := NewService(store, paths)
+	ctx := context.Background()
+	session, err := store.CreateSession(ctx, "History materialization")
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	run, err := store.CreateAgentRun(ctx, session.ID, "Audit README approval flow", sqlite.RoleCoder, config.DefaultCoderModel)
+	if err != nil {
+		t.Fatalf("CreateAgentRun() error = %v", err)
+	}
+	completedAt := time.Now().UTC()
+	run.State = sqlite.RunStateCompleted
+	run.CompletedAt = &completedAt
+	if err := store.UpdateAgentRun(ctx, run); err != nil {
+		t.Fatalf("UpdateAgentRun() error = %v", err)
+	}
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeToken, run.Role, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","text":"approval findings for README","occurred_at":"2026-03-24T12:00:01Z"}`, nil, nil); err != nil {
+		t.Fatalf("AppendRunEvent() token error = %v", err)
+	}
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeRunComplete, run.Role, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","summary":"Review approval flow","occurred_at":"2026-03-24T12:00:02Z"}`, nil, nil); err != nil {
+		t.Fatalf("AppendRunEvent() run_complete error = %v", err)
+	}
+	if _, err := store.CreateApprovalRequest(ctx, sqlite.ApprovalRequest{
+		SessionID: session.ID,
+		RunID: run.ID,
+		ToolCallID: "call_1",
+		ToolName: string(agents.ToolWriteFile),
+		Role: sqlite.RoleCoder,
+		Model: config.DefaultCoderModel,
+		InputPreviewJSON: `{"diff_preview":{"target_path":"README.md","original_content":"before\n","proposed_content":"after\n","base_content_hash":"sha256:abc"},"request_kind":"file_write","repository_root":"/tmp/project"}`,
+		Message: "Need approval",
+		State: sqlite.ApprovalStateApplied,
+		OccurredAt: completedAt,
+	}); err != nil {
+		t.Fatalf("CreateApprovalRequest() error = %v", err)
+	}
+
+	runs, err := service.QueryRunHistory(ctx, RunHistoryQueryInput{SessionID: session.ID, Query: "approval README"})
+	if err != nil {
+		t.Fatalf("QueryRunHistory() error = %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("len(runs) = %d, want 1", len(runs))
+	}
+	if runs[0].GeneratedTitle != "Review approval flow" {
+		t.Fatalf("runs[0].GeneratedTitle = %q, want Review approval flow", runs[0].GeneratedTitle)
+	}
+	if !runs[0].HasFileChanges {
+		t.Fatal("runs[0].HasFileChanges = false, want true")
+	}
+	details, err := service.GetRunHistoryDetails(ctx, session.ID, run.ID)
+	if err != nil {
+		t.Fatalf("GetRunHistoryDetails() error = %v", err)
+	}
+	if len(details.ChangeRecords) != 1 || details.ChangeRecords[0].Path != "README.md" {
+		t.Fatalf("details.ChangeRecords = %#v, want one README.md change", details.ChangeRecords)
+	}
+	document, err := store.GetRunHistoryDocument(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("GetRunHistoryDocument() error = %v", err)
+	}
+	if document.FinalStatus != "completed" {
+		t.Fatalf("document.FinalStatus = %q, want completed", document.FinalStatus)
 	}
 }
 
@@ -2010,7 +2084,7 @@ func TestService_OpenRunReplaysStoredOrchestrationEvents(t *testing.T) {
 		t.Fatalf("AppendRunEvent() run_complete error = %v", err)
 	}
 
-	envelopes := make([]StreamEnvelope, 0, 4)
+	envelopes := make([]StreamEnvelope, 0, 6)
 	_, err = service.OpenRun(ctx, OpenRunInput{SessionID: session.ID, RunID: run.ID}, func(envelope StreamEnvelope) error {
 		envelopes = append(envelopes, envelope)
 		return nil
@@ -2018,13 +2092,13 @@ func TestService_OpenRunReplaysStoredOrchestrationEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenRun() error = %v", err)
 	}
-	if len(envelopes) != 4 {
-		t.Fatalf("len(envelopes) = %d, want 4", len(envelopes))
+	if len(envelopes) != 6 {
+		t.Fatalf("len(envelopes) = %d, want 6", len(envelopes))
 	}
-	if envelopes[0].Type != sqlite.EventTypeAgentSpawned || envelopes[1].Type != sqlite.EventTypeTaskAssigned || envelopes[2].Type != sqlite.EventTypeToken || envelopes[3].Type != sqlite.EventTypeRunComplete {
+	if envelopes[0].Type != "agent.run.replay.state" || envelopes[1].Type != sqlite.EventTypeAgentSpawned || envelopes[2].Type != sqlite.EventTypeTaskAssigned || envelopes[3].Type != sqlite.EventTypeToken || envelopes[4].Type != sqlite.EventTypeRunComplete || envelopes[5].Type != "agent.run.replay.state" {
 		t.Fatalf("envelopes = %#v, want orchestration replay order", envelopes)
 	}
-	for index, envelope := range envelopes {
+	for index, envelope := range envelopes[1:5] {
 		payload, ok := envelope.Payload.(map[string]any)
 		if !ok {
 			t.Fatalf("envelopes[%d].Payload = %#v, want map payload", index, envelope.Payload)
@@ -2036,11 +2110,11 @@ func TestService_OpenRunReplaysStoredOrchestrationEvents(t *testing.T) {
 			t.Fatalf("envelopes[%d].payload.sequence = %v, want %d", index, payload["sequence"], index+1)
 		}
 	}
-	spawnPayload := envelopes[0].Payload.(map[string]any)
+	spawnPayload := envelopes[1].Payload.(map[string]any)
 	if spawnPayload["agent_id"] != "agent_planner_1" {
 		t.Fatalf("spawnPayload.agent_id = %v, want agent_planner_1", spawnPayload["agent_id"])
 	}
-	tokenPayload := envelopes[2].Payload.(map[string]any)
+	tokenPayload := envelopes[3].Payload.(map[string]any)
 	if tokenPayload["text"] != "planner transcript" {
 		t.Fatalf("tokenPayload.text = %v, want planner transcript", tokenPayload["text"])
 	}

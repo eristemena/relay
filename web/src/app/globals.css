@@ -94,6 +94,77 @@ textarea {
   border: 1px solid var(--color-border);
 }
 
+.replay-control-button,
+.replay-speed-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  transition:
+    border-color 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    color 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.replay-control-button {
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+}
+
+.replay-control-button[data-variant="accent"] {
+  border-color: var(--color-brand-mid);
+}
+
+.replay-speed-button {
+  min-width: 3.5rem;
+  padding: 0.35rem 0.85rem;
+  font-size: 0.875rem;
+}
+
+.replay-control-button:hover:not(:disabled),
+.replay-speed-button:hover:not(:disabled) {
+  border-color: var(--color-brand-dim);
+  background: var(--color-raised);
+}
+
+.replay-speed-button[aria-pressed="true"] {
+  border-color: var(--color-brand-mid);
+  background: var(--color-raised);
+}
+
+.replay-control-button:disabled,
+.replay-speed-button:disabled,
+.replay-timeline-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.replay-change-card {
+  padding: 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: 1.5rem;
+  background: color-mix(in srgb, var(--color-raised) 70%, transparent);
+}
+
+.replay-change-pane {
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: 1.5rem;
+  background: color-mix(in srgb, var(--color-base) 60%, transparent);
+}
+
+.replay-timeline-input:focus-visible,
+.replay-control-button:focus-visible,
+.replay-speed-button:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 3px;
+}
+
 .eyebrow {
   font-family: var(--font-jetbrains-mono);
   font-size: 0.72rem;
@@ -171,6 +242,23 @@ textarea {
 
   .approval-diff-fallback {
     background: Canvas;
+  }
+
+  .replay-control-button,
+  .replay-speed-button,
+  .replay-change-card,
+  .replay-change-pane {
+    border-color: ButtonBorder;
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .replay-speed-button[aria-pressed="true"] {
+    border-color: Highlight;
+  }
+
+  .replay-timeline-input {
+    accent-color: Highlight;
   }
 }
 
@@ -1071,28 +1159,26 @@ textarea {
 }
 
 .workspace-task-dock {
-  position: fixed;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  z-index: 50;
+  position: relative;
   display: flex;
-  justify-content: center;
-  padding: 0 1rem 1rem;
-  pointer-events: none;
+  flex: 0 0 auto;
+  padding: 0;
 }
 
 .workspace-task-dock-inner {
-  width: min(72rem, 100%);
-  pointer-events: auto;
+  width: 100%;
 }
 
 .workspace-task-dock-card {
   border: 1px solid var(--color-border);
   background:
     linear-gradient(180deg, rgba(17, 17, 32, 0.98), rgba(13, 13, 24, 0.98));
-  box-shadow: 0 -16px 40px rgba(0, 0, 0, 0.32);
-  backdrop-filter: blur(10px);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.24);
+}
+
+.workspace-replay-dock {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .workspace-task-dock-card[data-expanded="false"] {
@@ -1232,8 +1318,7 @@ textarea {
   }
 
   .workspace-task-dock {
-    padding-right: 0.75rem;
-    padding-left: 0.75rem;
+    margin-top: 0;
   }
 
   .agent-command-row {
@@ -1295,15 +1380,12 @@ textarea {
   }
 
   .workspace-task-dock-card {
-    border-right: 0;
-    border-bottom: 0;
-    border-left: 0;
-    border-radius: 1.5rem 1.5rem 0 0;
-    box-shadow: 0 -20px 44px rgba(0, 0, 0, 0.38);
+    border-radius: 1.5rem;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
   }
 
   .workspace-task-dock-card[data-expanded="false"] {
-    border-radius: 1.5rem 1.5rem 0 0;
+    border-radius: 1.5rem;
   }
 
   .agent-command-row {

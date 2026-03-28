@@ -13,6 +13,14 @@ export type ConnectionMessageType =
   | "preferences.saved"
   | "agent.run.submit"
   | "agent.run.open"
+  | "run.history.query"
+  | "run.history.result"
+  | "run.history.details.request"
+  | "run.history.details.result"
+  | "run.history.export.request"
+  | "run.history.export.result"
+  | "agent.run.replay.control"
+  | "agent.run.replay.state"
   | "agent.run.cancel"
   | "agent.run.approval.respond"
   | "approval_request"
@@ -118,6 +126,32 @@ export interface AgentRunOpenPayload {
   run_id: string;
 }
 
+export interface RunHistoryQueryPayload {
+  session_id: string;
+  query?: string;
+  file_path?: string;
+  date_from?: string;
+  date_to?: string;
+}
+
+export interface RunHistoryDetailsRequestPayload {
+  session_id: string;
+  run_id: string;
+}
+
+export interface RunHistoryExportRequestPayload {
+  session_id: string;
+  run_id: string;
+}
+
+export interface AgentRunReplayControlPayload {
+  session_id: string;
+  run_id: string;
+  action: "play" | "pause" | "seek" | "set_speed" | "reset";
+  cursor_ms?: number;
+  speed?: 0.5 | 1 | 2 | 5;
+}
+
 export interface AgentRunCancelPayload {
   session_id: string;
   run_id: string;
@@ -209,6 +243,7 @@ export function buildConnectedRepositoryView(
 
 export interface AgentRunSummary {
   id: string;
+  generated_title?: string;
   task_text_preview: string;
   role: "planner" | "coder" | "reviewer" | "tester" | "explainer";
   model: string;
@@ -226,6 +261,61 @@ export interface AgentRunSummary {
   started_at: string;
   completed_at?: string;
   has_tool_activity: boolean;
+  agent_count?: number;
+  final_status?: string;
+  has_file_changes?: boolean;
+}
+
+export interface RunChangeRecordPayload {
+  tool_call_id: string;
+  path: string;
+  original_content?: string;
+  proposed_content?: string;
+  base_content_hash?: string;
+  approval_state?: string;
+  occurred_at?: string;
+}
+
+export interface RunHistoryResultPayload {
+  session_id: string;
+  query?: string;
+  file_path?: string;
+  date_from?: string;
+  date_to?: string;
+  runs: AgentRunSummary[];
+}
+
+export interface RunHistoryDetailsResultPayload {
+  session_id: string;
+  run_id: string;
+  generated_title?: string;
+  final_status?: string;
+  agent_count?: number;
+  change_records: RunChangeRecordPayload[];
+}
+
+export interface AgentRunReplayStatePayload {
+  session_id: string;
+  run_id: string;
+  status:
+    | "preparing"
+    | "playing"
+    | "paused"
+    | "seeking"
+    | "completed"
+    | "error";
+  cursor_ms: number;
+  duration_ms: number;
+  speed: 0.5 | 1 | 2 | 5;
+  selected_timestamp?: string;
+}
+
+export interface RunHistoryExportResultPayload {
+  session_id: string;
+  run_id: string;
+  status: "started" | "completed" | "error";
+  export_path?: string;
+  generated_at?: string;
 }
 
 export interface CredentialStatusView {
@@ -395,6 +485,10 @@ export type RealtimeRunMessage =
 
 export type IncomingEnvelope =
   | Envelope<WorkspaceSnapshotPayload>
+  | Envelope<RunHistoryResultPayload>
+  | Envelope<RunHistoryDetailsResultPayload>
+  | Envelope<AgentRunReplayStatePayload>
+  | Envelope<RunHistoryExportResultPayload>
   | Envelope<RepositoryBrowseResultPayload>
   | Envelope<RepositoryGraphStatusPayload>
   | Envelope<WorkspaceStatusPayload>
@@ -477,6 +571,49 @@ export function createAgentRunOpenRequest(
     type: "agent.run.open",
     request_id: crypto.randomUUID(),
     payload: { session_id: sessionId, run_id: runId },
+  };
+}
+
+export function createRunHistoryQueryRequest(
+  sessionId: string,
+  payload: Omit<RunHistoryQueryPayload, "session_id"> = {},
+): Envelope<RunHistoryQueryPayload> {
+  return {
+    type: "run.history.query",
+    request_id: crypto.randomUUID(),
+    payload: { session_id: sessionId, ...payload },
+  };
+}
+
+export function createRunHistoryDetailsRequest(
+  sessionId: string,
+  runId: string,
+): Envelope<RunHistoryDetailsRequestPayload> {
+  return {
+    type: "run.history.details.request",
+    request_id: crypto.randomUUID(),
+    payload: { session_id: sessionId, run_id: runId },
+  };
+}
+
+export function createRunHistoryExportRequest(
+  sessionId: string,
+  runId: string,
+): Envelope<RunHistoryExportRequestPayload> {
+  return {
+    type: "run.history.export.request",
+    request_id: crypto.randomUUID(),
+    payload: { session_id: sessionId, run_id: runId },
+  };
+}
+
+export function createAgentRunReplayControlRequest(
+  payload: AgentRunReplayControlPayload,
+): Envelope<AgentRunReplayControlPayload> {
+  return {
+    type: "agent.run.replay.control",
+    request_id: crypto.randomUUID(),
+    payload,
   };
 }
 

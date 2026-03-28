@@ -25,6 +25,8 @@ var ErrSessionNotFound = errors.New("session not found")
 var ErrRunNotFound = errors.New("agent run not found")
 var ErrActiveRunExists = errors.New("agent run already active")
 var ErrApprovalRequestNotFound = errors.New("approval request not found")
+var ErrRunHistoryNotFound = errors.New("run history document not found")
+var ErrRunExportNotFound = errors.New("run export document not found")
 
 type Store struct {
 	db      *sql.DB
@@ -392,7 +394,7 @@ func (s *Store) AppendRunEvent(ctx context.Context, runID string, eventType stri
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO agent_run_events (run_id, sequence, event_type, role, model, payload_json, tokens_used, context_limit, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, runID, nextSequence, eventType, string(role), strings.TrimSpace(model), payloadJSON, nullableInt(tokensUsed), nullableInt(contextLimit), now.Format(time.RFC3339)); err != nil {
+	`, runID, nextSequence, eventType, string(role), strings.TrimSpace(model), payloadJSON, nullableInt(tokensUsed), nullableInt(contextLimit), now.Format(time.RFC3339Nano)); err != nil {
 		return AgentRunEvent{}, fmt.Errorf("insert run event: %w", err)
 	}
 
@@ -401,15 +403,15 @@ func (s *Store) AppendRunEvent(ctx context.Context, runID string, eventType stri
 	}
 
 	return AgentRunEvent{
-		RunID:       runID,
-		Sequence:    nextSequence,
-		EventType:   eventType,
-		Role:        role,
-		Model:       strings.TrimSpace(model),
-		PayloadJSON: payloadJSON,
-		TokensUsed:  cloneIntPtr(tokensUsed),
+		RunID:        runID,
+		Sequence:     nextSequence,
+		EventType:    eventType,
+		Role:         role,
+		Model:        strings.TrimSpace(model),
+		PayloadJSON:  payloadJSON,
+		TokensUsed:   cloneIntPtr(tokensUsed),
 		ContextLimit: cloneIntPtr(contextLimit),
-		CreatedAt:   now,
+		CreatedAt:    now,
 	}, nil
 }
 
@@ -428,16 +430,16 @@ func (s *Store) ListRunEvents(ctx context.Context, runID string) ([]AgentRunEven
 	events := make([]AgentRunEvent, 0)
 	for rows.Next() {
 		var (
-			event     AgentRunEvent
-			role      string
-			tokensUsed sql.NullInt64
+			event        AgentRunEvent
+			role         string
+			tokensUsed   sql.NullInt64
 			contextLimit sql.NullInt64
-			createdAt string
+			createdAt    string
 		)
 		if err := rows.Scan(&event.RunID, &event.Sequence, &event.EventType, &role, &event.Model, &event.PayloadJSON, &tokensUsed, &contextLimit, &createdAt); err != nil {
 			return nil, fmt.Errorf("scan run event: %w", err)
 		}
-		parsedCreatedAt, err := time.Parse(time.RFC3339, createdAt)
+		parsedCreatedAt, err := time.Parse(time.RFC3339Nano, createdAt)
 		if err != nil {
 			return nil, fmt.Errorf("parse run event created_at: %w", err)
 		}
@@ -453,6 +455,275 @@ func (s *Store) ListRunEvents(ctx context.Context, runID string) ([]AgentRunEven
 	}
 
 	return events, nil
+}
+
+func (s *Store) UpsertRunHistoryDocument(ctx context.Context, document RunHistoryDocument) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO run_history_documents (
+			run_id, session_id, generated_title, goal_text, final_status, agent_count, started_at,
+			completed_at, first_event_at, last_event_at, summary_text, touched_file_count,
+			has_file_changes, exported_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(run_id) DO UPDATE SET
+			session_id = excluded.session_id,
+			generated_title = excluded.generated_title,
+			goal_text = excluded.goal_text,
+			final_status = excluded.final_status,
+			agent_count = excluded.agent_count,
+			started_at = excluded.started_at,
+			completed_at = excluded.completed_at,
+			first_event_at = excluded.first_event_at,
+			last_event_at = excluded.last_event_at,
+			summary_text = excluded.summary_text,
+			touched_file_count = excluded.touched_file_count,
+			has_file_changes = excluded.has_file_changes,
+			exported_at = excluded.exported_at
+	`, document.RunID, document.SessionID, strings.TrimSpace(document.GeneratedTitle), document.GoalText, document.FinalStatus, document.AgentCount, document.StartedAt.Format(time.RFC3339), nullableRFC3339(document.CompletedAt), nullableRFC3339(document.FirstEventAt), nullableRFC3339(document.LastEventAt), nullableString(document.SummaryText), document.TouchedFileCount, boolToInt(document.HasFileChanges), nullableRFC3339(document.ExportedAt))
+	if err != nil {
+		return fmt.Errorf("upsert run history document: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) UpsertRunHistorySearchDocument(ctx context.Context, document RunHistorySearchDocument) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin run history search transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO run_history_search_documents (
+			run_id, session_id, title_text, goal_text, summary_text, transcript_text, file_names_text, participant_text
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(run_id) DO UPDATE SET
+			session_id = excluded.session_id,
+			title_text = excluded.title_text,
+			goal_text = excluded.goal_text,
+			summary_text = excluded.summary_text,
+			transcript_text = excluded.transcript_text,
+			file_names_text = excluded.file_names_text,
+			participant_text = excluded.participant_text
+	`, document.RunID, document.SessionID, document.TitleText, document.GoalText, document.SummaryText, document.TranscriptText, document.FileNamesText, document.ParticipantText); err != nil {
+		return fmt.Errorf("upsert run history search document: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM run_history_search_fts WHERE run_id = ?`, document.RunID); err != nil {
+		return fmt.Errorf("delete stale run history search index: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO run_history_search_fts (run_id, title_text, goal_text, summary_text, transcript_text, file_names_text, participant_text)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, document.RunID, document.TitleText, document.GoalText, document.SummaryText, document.TranscriptText, document.FileNamesText, document.ParticipantText); err != nil {
+		return fmt.Errorf("insert run history search index: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit run history search transaction: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) GetRunHistoryDocument(ctx context.Context, runID string) (RunHistoryDocument, error) {
+	document, err := scanRunHistoryDocument(s.db.QueryRowContext(ctx, `
+		SELECT run_id, session_id, generated_title, goal_text, final_status, agent_count, started_at,
+		       completed_at, first_event_at, last_event_at, summary_text, touched_file_count,
+		       has_file_changes, exported_at
+		FROM run_history_documents
+		WHERE run_id = ?
+	`, runID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return RunHistoryDocument{}, ErrRunHistoryNotFound
+	}
+	if err != nil {
+		return RunHistoryDocument{}, fmt.Errorf("get run history document: %w", err)
+	}
+	return document, nil
+}
+
+func (s *Store) QueryRunHistory(ctx context.Context, query RunHistoryQuery) ([]RunHistoryDocument, error) {
+	clauses := []string{"d.session_id = ?"}
+	args := []any{query.SessionID}
+	joinFTS := false
+
+	if strings.TrimSpace(query.Query) != "" {
+		joinFTS = true
+		clauses = append(clauses, "fts.rowid IN (SELECT rowid FROM run_history_search_fts WHERE run_history_search_fts MATCH ?)")
+		args = append(args, escapeFTSQuery(query.Query))
+	}
+	if strings.TrimSpace(query.FilePath) != "" {
+		clauses = append(clauses, `EXISTS (SELECT 1 FROM run_change_records crc WHERE crc.run_id = d.run_id AND lower(crc.path) LIKE lower(?))`)
+		args = append(args, "%"+strings.TrimSpace(query.FilePath)+"%")
+	}
+	if query.DateFrom != nil {
+		clauses = append(clauses, "datetime(d.started_at) >= datetime(?)")
+		args = append(args, query.DateFrom.Format(time.RFC3339))
+	}
+	if query.DateTo != nil {
+		clauses = append(clauses, "datetime(d.started_at) <= datetime(?)")
+		args = append(args, query.DateTo.Format(time.RFC3339))
+	}
+
+	statement := `
+		SELECT d.run_id, d.session_id, d.generated_title, d.goal_text, d.final_status, d.agent_count, d.started_at,
+		       d.completed_at, d.first_event_at, d.last_event_at, d.summary_text, d.touched_file_count,
+		       d.has_file_changes, d.exported_at
+		FROM run_history_documents d
+	`
+	if joinFTS {
+		statement += ` JOIN run_history_search_fts fts ON fts.run_id = d.run_id `
+	}
+	statement += " WHERE " + strings.Join(clauses, " AND ") + " ORDER BY datetime(d.started_at) DESC, d.run_id DESC"
+
+	rows, err := s.db.QueryContext(ctx, statement, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query run history: %w", err)
+	}
+	defer rows.Close()
+
+	documents := make([]RunHistoryDocument, 0)
+	for rows.Next() {
+		document, err := scanRunHistoryDocument(rows)
+		if err != nil {
+			return nil, err
+		}
+		documents = append(documents, document)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate run history documents: %w", err)
+	}
+	return documents, nil
+}
+
+func (s *Store) ReplaceRunChangeRecords(ctx context.Context, runID string, records []RunChangeRecord) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin replace run change records: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM run_change_records WHERE run_id = ?`, runID); err != nil {
+		return fmt.Errorf("clear run change records: %w", err)
+	}
+	for _, record := range records {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO run_change_records (
+				run_id, tool_call_id, path, original_content, proposed_content, base_content_hash,
+				approval_state, role, model, occurred_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, runID, record.ToolCallID, record.Path, nullableString(record.OriginalContent), nullableString(record.ProposedContent), record.BaseContentHash, record.ApprovalState, string(record.Role), record.Model, record.OccurredAt.Format(time.RFC3339)); err != nil {
+			return fmt.Errorf("insert run change record: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit replace run change records: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ListRunChangeRecords(ctx context.Context, runID string) ([]RunChangeRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT run_id, tool_call_id, path, original_content, proposed_content, base_content_hash,
+		       approval_state, role, model, occurred_at
+		FROM run_change_records
+		WHERE run_id = ?
+		ORDER BY datetime(occurred_at) ASC, tool_call_id ASC, path ASC
+	`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("list run change records: %w", err)
+	}
+	defer rows.Close()
+
+	records := make([]RunChangeRecord, 0)
+	for rows.Next() {
+		record, err := scanRunChangeRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate run change records: %w", err)
+	}
+	return records, nil
+}
+
+func (s *Store) RecordRunExport(ctx context.Context, document RunExportDocument) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	participantsJSON, err := json.Marshal(document.Participants)
+	if err != nil {
+		return fmt.Errorf("marshal run export participants: %w", err)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin run export transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO run_export_documents (
+			run_id, export_path, generated_at, title, final_status, participants_json,
+			timeline_markdown, changes_markdown, requested_by
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, document.RunID, document.ExportPath, document.GeneratedAt.Format(time.RFC3339Nano), document.Title, document.FinalStatus, string(participantsJSON), document.TimelineMarkdown, nullableString(document.ChangesMarkdown), document.RequestedBy); err != nil {
+		return fmt.Errorf("insert run export document: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `UPDATE run_history_documents SET exported_at = ? WHERE run_id = ?`, document.GeneratedAt.Format(time.RFC3339Nano), document.RunID); err != nil {
+		return fmt.Errorf("update run history export timestamp: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit run export transaction: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) GetLatestRunExport(ctx context.Context, runID string) (RunExportDocument, error) {
+	var (
+		document         RunExportDocument
+		participantsJSON string
+		generatedAt      string
+		changesMarkdown  sql.NullString
+	)
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT run_id, export_path, generated_at, title, final_status, participants_json,
+		       timeline_markdown, changes_markdown, requested_by
+		FROM run_export_documents
+		WHERE run_id = ?
+		ORDER BY datetime(generated_at) DESC, export_path DESC
+		LIMIT 1
+	`, runID).Scan(&document.RunID, &document.ExportPath, &generatedAt, &document.Title, &document.FinalStatus, &participantsJSON, &document.TimelineMarkdown, &changesMarkdown, &document.RequestedBy); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return RunExportDocument{}, ErrRunExportNotFound
+		}
+		return RunExportDocument{}, fmt.Errorf("get latest run export: %w", err)
+	}
+	parsedGeneratedAt, err := time.Parse(time.RFC3339Nano, generatedAt)
+	if err != nil {
+		return RunExportDocument{}, fmt.Errorf("parse run export generated_at: %w", err)
+	}
+	document.GeneratedAt = parsedGeneratedAt
+	if changesMarkdown.Valid {
+		document.ChangesMarkdown = changesMarkdown.String
+	}
+	if err := json.Unmarshal([]byte(participantsJSON), &document.Participants); err != nil {
+		return RunExportDocument{}, fmt.Errorf("decode run export participants: %w", err)
+	}
+	return document, nil
 }
 
 func nullableInt(value *int) any {
@@ -476,6 +747,33 @@ func cloneIntPtr(value *int) *int {
 	}
 	cloned := *value
 	return &cloned
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func nullableString(value string) any {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return value
+}
+
+func escapeFTSQuery(value string) string {
+	terms := strings.Fields(strings.TrimSpace(value))
+	if len(terms) == 0 {
+		return ""
+	}
+	quoted := make([]string, 0, len(terms))
+	for _, term := range terms {
+		escaped := strings.ReplaceAll(term, `"`, `""`)
+		quoted = append(quoted, `"`+escaped+`"`)
+	}
+	return strings.Join(quoted, " AND ")
 }
 
 func (s *Store) CreateApprovalRequest(ctx context.Context, approval ApprovalRequest) (ApprovalRequest, error) {
@@ -588,6 +886,32 @@ func (s *Store) ListPendingApprovalRequestsForRun(ctx context.Context, runID str
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate run approval requests: %w", err)
+	}
+	return approvals, nil
+}
+
+func (s *Store) ListApprovalRequestsForRun(ctx context.Context, runID string) ([]ApprovalRequest, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, session_id, run_id, tool_call_id, tool_name, role, model, input_preview_json, message, state, occurred_at, reviewed_at, applied_at
+		FROM approval_requests
+		WHERE run_id = ?
+		ORDER BY datetime(occurred_at) ASC, tool_call_id ASC
+	`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("list approval requests for run: %w", err)
+	}
+	defer rows.Close()
+
+	approvals := make([]ApprovalRequest, 0)
+	for rows.Next() {
+		approval, err := scanApprovalRequest(rows)
+		if err != nil {
+			return nil, err
+		}
+		approvals = append(approvals, approval)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate approval requests for run: %w", err)
 	}
 	return approvals, nil
 }
@@ -876,11 +1200,11 @@ func scanAgentExecution(scanner rowScanner) (AgentExecution, error) {
 
 func scanApprovalRequest(scanner rowScanner) (ApprovalRequest, error) {
 	var (
-		approval      ApprovalRequest
-		role          string
-		occurredAt    string
-		reviewedAt    sql.NullString
-		appliedAt     sql.NullString
+		approval   ApprovalRequest
+		role       string
+		occurredAt string
+		reviewedAt sql.NullString
+		appliedAt  sql.NullString
 	)
 
 	if err := scanner.Scan(&approval.ID, &approval.SessionID, &approval.RunID, &approval.ToolCallID, &approval.ToolName, &role, &approval.Model, &approval.InputPreviewJSON, &approval.Message, &approval.State, &occurredAt, &reviewedAt, &appliedAt); err != nil {
@@ -946,6 +1270,86 @@ func scanAgentRun(scanner rowScanner) (AgentRun, error) {
 	}
 
 	return run, nil
+}
+
+func scanRunHistoryDocument(scanner rowScanner) (RunHistoryDocument, error) {
+	var (
+		document       RunHistoryDocument
+		startedAt      string
+		completedAt    sql.NullString
+		firstEventAt   sql.NullString
+		lastEventAt    sql.NullString
+		summaryText    sql.NullString
+		hasFileChanges int
+		exportedAt     sql.NullString
+	)
+	if err := scanner.Scan(&document.RunID, &document.SessionID, &document.GeneratedTitle, &document.GoalText, &document.FinalStatus, &document.AgentCount, &startedAt, &completedAt, &firstEventAt, &lastEventAt, &summaryText, &document.TouchedFileCount, &hasFileChanges, &exportedAt); err != nil {
+		return RunHistoryDocument{}, err
+	}
+	parsedStartedAt, err := time.Parse(time.RFC3339, startedAt)
+	if err != nil {
+		return RunHistoryDocument{}, fmt.Errorf("parse run history started_at: %w", err)
+	}
+	document.StartedAt = parsedStartedAt
+	if completedAt.Valid {
+		parsedCompletedAt, err := time.Parse(time.RFC3339, completedAt.String)
+		if err != nil {
+			return RunHistoryDocument{}, fmt.Errorf("parse run history completed_at: %w", err)
+		}
+		document.CompletedAt = &parsedCompletedAt
+	}
+	if firstEventAt.Valid {
+		parsedFirstEventAt, err := time.Parse(time.RFC3339, firstEventAt.String)
+		if err != nil {
+			return RunHistoryDocument{}, fmt.Errorf("parse run history first_event_at: %w", err)
+		}
+		document.FirstEventAt = &parsedFirstEventAt
+	}
+	if lastEventAt.Valid {
+		parsedLastEventAt, err := time.Parse(time.RFC3339, lastEventAt.String)
+		if err != nil {
+			return RunHistoryDocument{}, fmt.Errorf("parse run history last_event_at: %w", err)
+		}
+		document.LastEventAt = &parsedLastEventAt
+	}
+	if summaryText.Valid {
+		document.SummaryText = summaryText.String
+	}
+	document.HasFileChanges = hasFileChanges == 1
+	if exportedAt.Valid {
+		parsedExportedAt, err := time.Parse(time.RFC3339, exportedAt.String)
+		if err != nil {
+			return RunHistoryDocument{}, fmt.Errorf("parse run history exported_at: %w", err)
+		}
+		document.ExportedAt = &parsedExportedAt
+	}
+	return document, nil
+}
+
+func scanRunChangeRecord(scanner rowScanner) (RunChangeRecord, error) {
+	var (
+		record     RunChangeRecord
+		role       string
+		occurredAt string
+		original   sql.NullString
+		proposed   sql.NullString
+	)
+	if err := scanner.Scan(&record.RunID, &record.ToolCallID, &record.Path, &original, &proposed, &record.BaseContentHash, &record.ApprovalState, &role, &record.Model, &occurredAt); err != nil {
+		return RunChangeRecord{}, err
+	}
+	parsedOccurredAt, err := time.Parse(time.RFC3339, occurredAt)
+	if err != nil {
+		return RunChangeRecord{}, fmt.Errorf("parse run change record occurred_at: %w", err)
+	}
+	record.OccurredAt = parsedOccurredAt
+	record.Role = AgentRole(role)
+	if original.Valid {
+		record.OriginalContent = original.String
+	}
+	if proposed.Valid {
+		record.ProposedContent = proposed.String
+	}
+	return record, nil
 }
 
 func generateSessionID() (string, error) {

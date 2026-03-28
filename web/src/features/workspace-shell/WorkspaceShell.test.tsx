@@ -1,4 +1,11 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceShell } from "@/features/workspace-shell/WorkspaceShell";
 import {
@@ -42,9 +49,13 @@ vi.mock("@/features/approvals/MonacoDiffViewer", () => ({
 const socketActions = {
   browseRepository: vi.fn(),
   cancelRun: vi.fn(),
+  controlReplay: vi.fn(),
   createSession: vi.fn(),
+  exportRunHistory: vi.fn(),
+  getRunHistoryDetails: vi.fn(),
   openRun: vi.fn(),
   openSession: vi.fn(),
+  queryRunHistory: vi.fn(),
   respondToApproval: vi.fn(),
   savePreferences: vi.fn(),
   submitRun: vi.fn(),
@@ -104,6 +115,59 @@ describe("WorkspaceShell", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("does not show the historical replay rail on first load without an active run", () => {
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        run_summaries: [
+          {
+            id: "run_saved_1",
+            task_text_preview: "Inspect saved startup run",
+            role: "coder",
+            model: "anthropic/claude-sonnet-4-5",
+            state: "completed",
+            started_at: "2026-03-23T12:00:00Z",
+            has_tool_activity: true,
+          },
+        ],
+      }),
+    );
+
+    render(<WorkspaceShell />);
+
+    expect(
+      screen.queryByRole("heading", { name: /historical replay/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /submit a goal or reopen a saved run to populate the orchestration canvas/i,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps session creation reachable on a clean install with no saved sessions", async () => {
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        active_session_id: "",
+        sessions: [],
+      }),
+    );
+    render(<WorkspaceShell />);
+
+    expect(
+      screen.getByRole("button", { name: /open sessions/i }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /open sessions/i }));
+
+    expect(
+      await screen.findByRole("button", { name: /start new session/i }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /start new session/i }));
+
+    expect(socketActions.createSession).toHaveBeenCalledTimes(1);
+  });
+
   it("switches workspace panels from the graph toolbar", async () => {
     primeWorkspaceStore(buildWorkspaceSnapshot());
     render(<WorkspaceShell />);
@@ -150,6 +214,201 @@ describe("WorkspaceShell", () => {
     expect(
       screen.getByRole("button", { name: /close workspace panel/i }),
     ).toBeInTheDocument();
+  });
+
+  it("queries run history and requests run details when the history panel opens", async () => {
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        active_run_id: "run_history_1",
+        run_summaries: [
+          {
+            id: "run_history_1",
+            task_text_preview: "Audit approval review flow",
+            role: "reviewer",
+            model: "anthropic/claude-sonnet-4-5",
+            state: "completed",
+            started_at: "2026-03-24T12:00:00Z",
+            has_tool_activity: true,
+          },
+        ],
+      }),
+    );
+
+    render(<WorkspaceShell />);
+
+    fireEvent.click(screen.getByRole("button", { name: /open run history/i }));
+
+    await waitFor(() => {
+      expect(socketActions.queryRunHistory).toHaveBeenCalledWith(
+        "session_alpha",
+        {
+          query: undefined,
+          file_path: undefined,
+          date_from: undefined,
+          date_to: undefined,
+        },
+      );
+    });
+    await waitFor(() => {
+      expect(socketActions.getRunHistoryDetails).toHaveBeenCalledWith(
+        "session_alpha",
+        "run_history_1",
+      );
+    });
+
+    const historyDialog = screen.getByRole("dialog", {
+      name: /close run history/i,
+    });
+    expect(
+      within(historyDialog).getByRole("heading", {
+        name: /audit approval review flow/i,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("closes the history dialog after opening a saved run and keeps replay controls visible", async () => {
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        run_summaries: [
+          {
+            id: "run_saved_1",
+            task_text_preview: "Inspect saved startup run",
+            role: "coder",
+            model: "anthropic/claude-sonnet-4-5",
+            state: "completed",
+            started_at: "2026-03-23T12:00:00Z",
+            has_tool_activity: true,
+          },
+        ],
+      }),
+    );
+
+    render(<WorkspaceShell />);
+
+    fireEvent.click(screen.getByRole("button", { name: /open run history/i }));
+
+    const panel = await screen.findByRole("dialog", {
+      name: /close run history/i,
+    });
+
+    fireEvent.click(
+      within(panel).getByRole("button", { name: /inspect saved startup run/i }),
+    );
+
+    expect(socketActions.openRun).toHaveBeenCalledWith(
+      "session_alpha",
+      "run_saved_1",
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "workspace.bootstrap",
+        payload: buildWorkspaceSnapshot({
+          active_run_id: "run_saved_1",
+          run_summaries: [
+            {
+              id: "run_saved_1",
+              task_text_preview: "Inspect saved startup run",
+              role: "coder",
+              model: "anthropic/claude-sonnet-4-5",
+              state: "completed",
+              started_at: "2026-03-23T12:00:00Z",
+              has_tool_activity: true,
+            },
+          ],
+        }),
+      } as never);
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("dialog", { name: /run history/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    expect(
+      screen.getByRole("heading", { name: /inspect saved startup run/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /browse runs/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("updates the replay scrubber when backend replay cursor states change", () => {
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        active_run_id: "run_history_1",
+        run_summaries: [
+          {
+            id: "run_history_1",
+            task_text_preview: "Replay the long historical run",
+            role: "coder",
+            model: "anthropic/claude-sonnet-4-5",
+            state: "completed",
+            started_at: "2026-03-24T12:00:00Z",
+            completed_at: "2026-03-24T12:01:23Z",
+            has_tool_activity: true,
+          },
+        ],
+      }),
+    );
+
+    render(<WorkspaceShell />);
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent.run.replay.state",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_history_1",
+          status: "completed",
+          cursor_ms: 83000,
+          duration_ms: 83000,
+          speed: 1,
+          selected_timestamp: "2026-03-24T12:01:23Z",
+        },
+      } as never);
+    });
+
+    const slider = screen.getByLabelText(/replay position/i);
+    expect(slider).toHaveValue("83000");
+    expect(screen.getAllByText("83000 ms")).toHaveLength(2);
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent.run.replay.state",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_history_1",
+          status: "seeking",
+          cursor_ms: 0,
+          duration_ms: 83000,
+          speed: 1,
+          selected_timestamp: "2026-03-24T12:00:00Z",
+        },
+      } as never);
+    });
+
+    expect(slider).toHaveValue("0");
+    expect(screen.getByText("0 ms")).toBeInTheDocument();
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent.run.replay.state",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_history_1",
+          status: "playing",
+          cursor_ms: 1200,
+          duration_ms: 83000,
+          speed: 1,
+          selected_timestamp: "2026-03-24T12:00:01Z",
+        },
+      } as never);
+    });
+
+    expect(slider).toHaveValue("1200");
+    expect(screen.getByText("1200 ms")).toBeInTheDocument();
   });
 
   it("forwards repository browse requests from the preferences panel", async () => {
@@ -389,7 +648,9 @@ describe("WorkspaceShell", () => {
       } as never);
     });
 
-    expect(screen.getAllByText(/clarification required/i).length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText(/clarification required/i).length,
+    ).toBeGreaterThan(0);
     expect(
       screen.getAllByText(
         /the run stopped because the coder asked for user clarification instead of producing actionable output/i,
@@ -627,10 +888,8 @@ describe("WorkspaceShell", () => {
       } as never);
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /open run history/i }));
-
     const reopenedPanel = screen.getByRole("dialog", {
-      name: /close run history/i,
+      name: /run history/i,
     });
 
     expect(

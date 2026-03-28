@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -257,6 +258,231 @@ func TestRunHistoryReplay_RestartReplaysStoredOrchestrationNodeEvents(t *testing
 	}
 }
 
+func TestRunHistoryReplay_ControlSeekReplaysHistoricalCursorOverWebsocket(t *testing.T) {
+	homeDir := t.TempDir()
+	_ = initReplayRepositoryAtHome(t, homeDir)
+
+	firstServer, firstCancel := startServerAtHome(t, homeDir)
+	firstCancel()
+	_ = firstServer.Close()
+
+	paths, err := config.EnsurePaths(homeDir)
+	if err != nil {
+		t.Fatalf("EnsurePaths() error = %v", err)
+	}
+	store, err := sqlite.NewStore(paths.Database)
+	if err != nil {
+		t.Fatalf("sqlite.NewStore() error = %v", err)
+	}
+	ctx := context.Background()
+	session, err := store.CreateSession(ctx, "Replay control over websocket")
+	if err != nil {
+		store.Close()
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	run, err := store.CreateAgentRun(ctx, session.ID, "Replay seek cursor", sqlite.RoleCoder, config.DefaultCoderModel)
+	if err != nil {
+		store.Close()
+		t.Fatalf("CreateAgentRun() error = %v", err)
+	}
+	completedAt := time.Now().UTC()
+	run.State = sqlite.RunStateCompleted
+	run.CompletedAt = &completedAt
+	if err := store.UpdateAgentRun(ctx, run); err != nil {
+		store.Close()
+		t.Fatalf("UpdateAgentRun() error = %v", err)
+	}
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeStateChange, run.Role, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","state":"running","occurred_at":"2026-03-24T12:00:00Z"}`, nil, nil); err != nil {
+		store.Close()
+		t.Fatalf("AppendRunEvent() first error = %v", err)
+	}
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeToken, run.Role, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","text":"later","occurred_at":"2026-03-24T12:00:02Z"}`, nil, nil); err != nil {
+		store.Close()
+		t.Fatalf("AppendRunEvent() second error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("store.Close() error = %v", err)
+	}
+
+	cfg, warnings, err := config.Load(paths)
+	if err != nil {
+		t.Fatalf("config.Load() error = %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("config warnings = %v, want none", warnings)
+	}
+	cfg.OpenRouter.APIKey = "or-test-key"
+	cfg.ProjectRoot = filepath.Join(homeDir, "relay-repo")
+	cfg.LastSessionID = session.ID
+	if err := config.Save(paths, cfg); err != nil {
+		t.Fatalf("config.Save() error = %v", err)
+	}
+
+	server, cancel := startServerAtHome(t, homeDir)
+	defer func() {
+		cancel()
+		_ = server.Close()
+	}()
+
+	connection := dialWorkspace(t, server.BaseURL())
+	writeMessage(t, connection, map[string]any{
+		"type": "agent.run.open",
+		"payload": map[string]any{
+			"session_id": session.ID,
+			"run_id":     run.ID,
+		},
+	})
+	_ = readUntilType(t, connection, "agent.run.replay.state")
+	_ = readUntilType(t, connection, "state_change")
+	_ = readUntilType(t, connection, "token")
+	_ = readUntilType(t, connection, "agent.run.replay.state")
+
+	writeMessage(t, connection, map[string]any{
+		"type": "agent.run.replay.control",
+		"payload": map[string]any{
+			"session_id": session.ID,
+			"run_id":     run.ID,
+			"action":     "seek",
+			"cursor_ms":  0,
+			"speed":      1,
+		},
+	})
+	seeking := readUntilType(t, connection, "agent.run.replay.state")
+	stateChange := readUntilType(t, connection, "state_change")
+	paused := readUntilType(t, connection, "agent.run.replay.state")
+
+	if seeking["payload"].(map[string]any)["status"] != "seeking" {
+		t.Fatalf("seeking status = %v, want seeking", seeking["payload"].(map[string]any)["status"])
+	}
+	if stateChange["payload"].(map[string]any)["sequence"] != float64(1) {
+		t.Fatalf("state_change.sequence = %v, want 1", stateChange["payload"].(map[string]any)["sequence"])
+	}
+	if paused["payload"].(map[string]any)["status"] != "paused" {
+		t.Fatalf("paused status = %v, want paused", paused["payload"].(map[string]any)["status"])
+	}
+}
+
+func TestRunHistoryReplay_ExportRequestWritesMarkdownReport(t *testing.T) {
+	homeDir := t.TempDir()
+	_ = initReplayRepositoryAtHome(t, homeDir)
+
+	firstServer, firstCancel := startServerAtHome(t, homeDir)
+	firstCancel()
+	_ = firstServer.Close()
+
+	paths, err := config.EnsurePaths(homeDir)
+	if err != nil {
+		t.Fatalf("EnsurePaths() error = %v", err)
+	}
+	store, err := sqlite.NewStore(paths.Database)
+	if err != nil {
+		t.Fatalf("sqlite.NewStore() error = %v", err)
+	}
+	ctx := context.Background()
+	session, err := store.CreateSession(ctx, "Replay export over websocket")
+	if err != nil {
+		store.Close()
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	run, err := store.CreateAgentRun(ctx, session.ID, "Review approval flow", sqlite.RoleReviewer, config.DefaultReviewerModel)
+	if err != nil {
+		store.Close()
+		t.Fatalf("CreateAgentRun() error = %v", err)
+	}
+	completedAt := time.Now().UTC()
+	run.State = sqlite.RunStateCompleted
+	run.CompletedAt = &completedAt
+	if err := store.UpdateAgentRun(ctx, run); err != nil {
+		store.Close()
+		t.Fatalf("UpdateAgentRun() error = %v", err)
+	}
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeToken, run.Role, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","text":"preserved transcript","occurred_at":"2026-03-24T12:00:01Z"}`, nil, nil); err != nil {
+		store.Close()
+		t.Fatalf("AppendRunEvent() token error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("store.Close() error = %v", err)
+	}
+
+	cfg, warnings, err := config.Load(paths)
+	if err != nil {
+		t.Fatalf("config.Load() error = %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("config warnings = %v, want none", warnings)
+	}
+	cfg.OpenRouter.APIKey = "or-test-key"
+	cfg.ProjectRoot = filepath.Join(homeDir, "relay-repo")
+	cfg.LastSessionID = session.ID
+	if err := config.Save(paths, cfg); err != nil {
+		t.Fatalf("config.Save() error = %v", err)
+	}
+
+	server, cancel := startServerAtHome(t, homeDir)
+	defer func() {
+		cancel()
+		_ = server.Close()
+	}()
+
+	connection := dialWorkspace(t, server.BaseURL())
+	writeMessage(t, connection, map[string]any{
+		"type": "run.history.export.request",
+		"payload": map[string]any{
+			"session_id": session.ID,
+			"run_id":     run.ID,
+		},
+	})
+	started := readUntilType(t, connection, "run.history.export.result")
+	completed := readUntilType(t, connection, "run.history.export.result")
+	if started["payload"].(map[string]any)["status"] != "started" {
+		t.Fatalf("started status = %v, want started", started["payload"].(map[string]any)["status"])
+	}
+	completedPayload := completed["payload"].(map[string]any)
+	if completedPayload["status"] != "completed" {
+		t.Fatalf("completed status = %v, want completed", completedPayload["status"])
+	}
+	exportPath := completedPayload["export_path"].(string)
+	body, err := os.ReadFile(exportPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !strings.Contains(string(body), "## Timeline") {
+		t.Fatalf("export body = %q, want timeline heading", string(body))
+	}
+}
+
+func TestRunHistoryReplay_ExportRequestReturnsErrorForUnknownRun(t *testing.T) {
+	homeDir := t.TempDir()
+	_ = initReplayRepositoryAtHome(t, homeDir)
+	server, cancel := startServerAtHome(t, homeDir)
+	defer func() {
+		cancel()
+		_ = server.Close()
+	}()
+
+	connection := dialWorkspace(t, server.BaseURL())
+	writeMessage(t, connection, map[string]any{
+		"type": "run.history.export.request",
+		"payload": map[string]any{
+			"session_id": "session_missing",
+			"run_id":     "run_missing",
+		},
+	})
+	started := readUntilType(t, connection, "run.history.export.result")
+	errorResult := readUntilType(t, connection, "run.history.export.result")
+	if started["payload"].(map[string]any)["status"] != "started" {
+		t.Fatalf("started status = %v, want started", started["payload"].(map[string]any)["status"])
+	}
+	if errorResult["payload"].(map[string]any)["status"] != "error" {
+		t.Fatalf("error status = %v, want error", errorResult["payload"].(map[string]any)["status"])
+	}
+	errorEnvelope := readUntilType(t, connection, "error")
+	payload := errorEnvelope["payload"].(map[string]any)
+	if payload["code"] != "run_history_export_failed" {
+		t.Fatalf("error code = %v, want run_history_export_failed", payload["code"])
+	}
+}
+
 func TestRunHistoryReplay_RestartReplaysStoredTokenUsageFields(t *testing.T) {
 	homeDir := t.TempDir()
 	_ = initReplayRepositoryAtHome(t, homeDir)
@@ -341,6 +567,114 @@ func TestRunHistoryReplay_RestartReplaysStoredTokenUsageFields(t *testing.T) {
 	}
 	if completePayload["context_limit"] != float64(contextLimit) {
 		t.Fatalf("completePayload.context_limit = %v, want %d", completePayload["context_limit"], contextLimit)
+	}
+}
+
+func TestRunHistoryReplay_RestartReplaysStoredApprovalRequestForHistoricalRun(t *testing.T) {
+	homeDir := t.TempDir()
+	_ = initReplayRepositoryAtHome(t, homeDir)
+
+	firstServer, firstCancel := startServerAtHome(t, homeDir)
+	firstCancel()
+	_ = firstServer.Close()
+
+	paths, err := config.EnsurePaths(homeDir)
+	if err != nil {
+		t.Fatalf("EnsurePaths() error = %v", err)
+	}
+	store, err := sqlite.NewStore(paths.Database)
+	if err != nil {
+		t.Fatalf("sqlite.NewStore() error = %v", err)
+	}
+
+	ctx := context.Background()
+	session, err := store.CreateSession(ctx, "Replay halted approval-required run")
+	if err != nil {
+		store.Close()
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	run, err := store.CreateAgentRun(ctx, session.ID, "Need approval before write", sqlite.RoleCoder, config.DefaultCoderModel)
+	if err != nil {
+		store.Close()
+		t.Fatalf("CreateAgentRun() error = %v", err)
+	}
+	completedAt := time.Now().UTC()
+	run.State = sqlite.RunStateHalted
+	run.ErrorCode = "approval_required"
+	run.ErrorMessage = "Relay paused until the developer reviews the proposed change."
+	run.CompletedAt = &completedAt
+	if err := store.UpdateAgentRun(ctx, run); err != nil {
+		store.Close()
+		t.Fatalf("UpdateAgentRun() error = %v", err)
+	}
+	if _, err := store.AppendRunEvent(ctx, run.ID, sqlite.EventTypeStateChange, run.Role, run.Model, `{"session_id":"`+session.ID+`","run_id":"`+run.ID+`","state":"tool_running","message":"Running write_file","occurred_at":"2026-03-24T12:00:00Z"}`, nil, nil); err != nil {
+		store.Close()
+		t.Fatalf("AppendRunEvent() state_change error = %v", err)
+	}
+	if _, err := store.CreateApprovalRequest(ctx, sqlite.ApprovalRequest{
+		SessionID:        session.ID,
+		RunID:            run.ID,
+		ToolCallID:       "call_approval_1",
+		ToolName:         "write_file",
+		Role:             sqlite.RoleCoder,
+		Model:            config.DefaultCoderModel,
+		InputPreviewJSON: `{"path":"README.md"}`,
+		Message:          "Relay needs approval before it can write files inside the configured project root.",
+		State:            sqlite.ApprovalStateProposed,
+		OccurredAt:       completedAt,
+	}); err != nil {
+		store.Close()
+		t.Fatalf("CreateApprovalRequest() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("store.Close() error = %v", err)
+	}
+
+	cfg, warnings, err := config.Load(paths)
+	if err != nil {
+		t.Fatalf("config.Load() error = %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("config warnings = %v, want none", warnings)
+	}
+	cfg.OpenRouter.APIKey = "or-test-key"
+	cfg.ProjectRoot = filepath.Join(homeDir, "relay-repo")
+	cfg.LastSessionID = session.ID
+	if err := config.Save(paths, cfg); err != nil {
+		t.Fatalf("config.Save() error = %v", err)
+	}
+
+	secondServer, secondCancel := startServerAtHome(t, homeDir)
+	defer func() {
+		secondCancel()
+		_ = secondServer.Close()
+	}()
+
+	connection := dialWorkspace(t, secondServer.BaseURL())
+	writeMessage(t, connection, map[string]any{
+		"type": "agent.run.open",
+		"payload": map[string]any{
+			"session_id": session.ID,
+			"run_id":     run.ID,
+		},
+	})
+
+	stateChange := readUntilType(t, connection, "state_change")
+	approvalRequest := readUntilType(t, connection, "approval_request")
+
+	statePayload := stateChange["payload"].(map[string]any)
+	approvalPayload := approvalRequest["payload"].(map[string]any)
+	if statePayload["replay"] != true {
+		t.Fatalf("statePayload.replay = %v, want true", statePayload["replay"])
+	}
+	if approvalPayload["tool_call_id"] != "call_approval_1" {
+		t.Fatalf("approvalPayload.tool_call_id = %v, want call_approval_1", approvalPayload["tool_call_id"])
+	}
+	if approvalPayload["tool_name"] != "write_file" {
+		t.Fatalf("approvalPayload.tool_name = %v, want write_file", approvalPayload["tool_name"])
+	}
+	if approvalPayload["status"] != sqlite.ApprovalStateProposed {
+		t.Fatalf("approvalPayload.status = %v, want %q", approvalPayload["status"], sqlite.ApprovalStateProposed)
 	}
 }
 

@@ -309,6 +309,195 @@ describe("workspaceStore", () => {
     resetWorkspaceStore();
   });
 
+  it("does not auto-select the first saved run on bootstrap without an active run", () => {
+    resetWorkspaceStore();
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "workspace.bootstrap",
+        payload: buildWorkspaceSnapshot({
+          run_summaries: [
+            {
+              id: "run_saved_1",
+              task_text_preview: "Inspect saved startup run",
+              role: "coder",
+              model: "anthropic/claude-sonnet-4-5",
+              state: "completed",
+              started_at: "2026-03-23T12:00:00Z",
+              has_tool_activity: true,
+            },
+          ],
+        }),
+      } as never);
+    });
+
+    const state = workspaceStore.getSnapshot();
+    expect(state.activeRunId).toBe("");
+    expect(state.selectedRunId).toBe("");
+
+    resetWorkspaceStore();
+  });
+
+  it("stores history results, detail payloads, and resets replay artifacts when seeking", () => {
+    resetWorkspaceStore();
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({ active_run_id: "run_history_1" }),
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "token",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_history_1",
+          sequence: 1,
+          replay: true,
+          role: "coder",
+          model: "anthropic/claude-sonnet-4-5",
+          agent_id: "agent_coder_1",
+          text: "preserved transcript",
+          occurred_at: "2026-03-24T12:00:01Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "approval_request",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_history_1",
+          tool_call_id: "call_replay_1",
+          tool_name: "write_file",
+          input_preview: { path: "README.md" },
+          message: "Historical approval",
+          occurred_at: "2026-03-24T12:00:02Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "run.history.result",
+        payload: {
+          session_id: "session_alpha",
+          query: "approval",
+          runs: [
+            {
+              id: "run_history_1",
+              generated_title: "Review approval flow",
+              task_text_preview: "Audit approval review flow",
+              role: "reviewer",
+              model: "anthropic/claude-sonnet-4-5",
+              state: "completed",
+              started_at: "2026-03-24T12:00:00Z",
+              completed_at: "2026-03-24T12:02:00Z",
+              has_tool_activity: true,
+              agent_count: 3,
+              final_status: "completed",
+              has_file_changes: true,
+            },
+          ],
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "run.history.details.result",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_history_1",
+          generated_title: "Review approval flow",
+          final_status: "completed",
+          agent_count: 3,
+          change_records: [
+            {
+              tool_call_id: "call_replay_1",
+              path: "README.md",
+              base_content_hash: "sha256:abc",
+              approval_state: "applied",
+              occurred_at: "2026-03-24T12:00:02Z",
+            },
+          ],
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "agent.run.replay.state",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_history_1",
+          status: "seeking",
+          cursor_ms: 2000,
+          duration_ms: 60000,
+          speed: 1,
+          selected_timestamp: "2026-03-24T12:00:02Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "run.history.export.result",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_history_1",
+          status: "completed",
+          export_path: "/Users/example/.relay/exports/review-approval-flow.md",
+          generated_at: "2026-03-24T12:03:00Z",
+        },
+      } as never);
+    });
+
+    const state = workspaceStore.getSnapshot();
+    expect(state.runHistoryQuery?.query).toBe("approval");
+    expect(state.runHistoryResults).toHaveLength(1);
+    expect(state.runHistoryDetails.run_history_1?.change_records).toHaveLength(
+      1,
+    );
+    expect(state.replayStateByRunId.run_history_1?.status).toBe("seeking");
+    expect(state.exportStateByRunId.run_history_1?.status).toBe("completed");
+    expect(state.runEvents.run_history_1 ?? []).toEqual([]);
+    expect(state.runTranscripts.run_history_1 ?? "").toBe("");
+    expect(state.pendingApprovals.call_replay_1).toBeUndefined();
+    expect(state.orchestrationDocuments.run_history_1?.nodes ?? []).toEqual([]);
+
+    resetWorkspaceStore();
+  });
+
+  it("tracks replay speed updates and export error state per historical run", () => {
+    resetWorkspaceStore();
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({ active_run_id: "run_history_2" }),
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent.run.replay.state",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_history_2",
+          status: "playing",
+          cursor_ms: 3200,
+          duration_ms: 8000,
+          speed: 5,
+          selected_timestamp: "2026-03-24T12:00:04Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "run.history.export.result",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_history_2",
+          status: "error",
+          error: "unable to write export",
+          generated_at: "2026-03-24T12:05:00Z",
+        },
+      } as never);
+    });
+
+    const state = workspaceStore.getSnapshot();
+    expect(state.replayStateByRunId.run_history_2).toMatchObject({
+      status: "playing",
+      speed: 5,
+      cursor_ms: 3200,
+    });
+    expect(state.exportStateByRunId.run_history_2).toMatchObject({
+      status: "error",
+      error: "unable to write export",
+    });
+
+    resetWorkspaceStore();
+  });
+
   it("preserves diff and command approval previews from bootstrap snapshots", () => {
     resetWorkspaceStore();
 

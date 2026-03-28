@@ -8,7 +8,14 @@ describe("RunHistoryPanel", () => {
       <RunHistoryPanel
         activeRunId=""
         historyState="ready"
+        onExport={() => undefined}
         runSummaries={[]}
+        onQuery={() => undefined}
+        onReplayControl={() => undefined}
+        replayState={null}
+        runHistoryQuery={null}
+        selectedRun={null}
+        selectedRunDetails={null}
         selectedRunId=""
         onOpen={() => undefined}
       />,
@@ -28,6 +35,7 @@ describe("RunHistoryPanel", () => {
       <RunHistoryPanel
         activeRunId=""
         historyState="ready"
+        onExport={() => undefined}
         runSummaries={[
           {
             id: "run_1",
@@ -39,6 +47,12 @@ describe("RunHistoryPanel", () => {
             has_tool_activity: false,
           },
         ]}
+        onQuery={() => undefined}
+        onReplayControl={() => undefined}
+        replayState={null}
+        runHistoryQuery={null}
+        selectedRun={null}
+        selectedRunDetails={null}
         selectedRunId=""
         onOpen={onOpen}
       />,
@@ -53,7 +67,9 @@ describe("RunHistoryPanel", () => {
     render(
       <RunHistoryPanel
         activeRunId="run_live"
+        exportState={null}
         historyState="ready"
+        onExport={() => undefined}
         runSummaries={[
           {
             id: "run_halted",
@@ -75,6 +91,12 @@ describe("RunHistoryPanel", () => {
             has_tool_activity: false,
           },
         ]}
+        onQuery={() => undefined}
+        onReplayControl={() => undefined}
+        replayState={null}
+        runHistoryQuery={null}
+        selectedRun={null}
+        selectedRunDetails={null}
         selectedRunId="run_halted"
         onOpen={onOpen}
       />,
@@ -94,5 +116,173 @@ describe("RunHistoryPanel", () => {
       screen.getByRole("button", { name: /replay the halted orchestration/i }),
     );
     expect(onOpen).toHaveBeenCalledWith("run_halted");
+  });
+
+  it("applies filters and shows filtered diff review for the selected run", () => {
+    const onQuery = vi.fn();
+    render(
+      <RunHistoryPanel
+        activeRunId="run_history_1"
+        exportState={{
+          session_id: "session_alpha",
+          run_id: "run_history_1",
+          status: "completed",
+          export_path: "/Users/example/.relay/exports/review.md",
+          generated_at: "2026-03-24T12:03:00Z",
+        }}
+        historyState="ready"
+        onExport={() => undefined}
+        onOpen={() => undefined}
+        onQuery={onQuery}
+        onReplayControl={() => undefined}
+        replayState={{
+          session_id: "session_alpha",
+          run_id: "run_history_1",
+          status: "paused",
+          cursor_ms: 1200,
+          duration_ms: 5000,
+          speed: 1,
+          selected_timestamp: "2026-03-24T12:00:02Z",
+        }}
+        runHistoryQuery={null}
+        runSummaries={[
+          {
+            id: "run_history_1",
+            generated_title: "Review approval flow",
+            task_text_preview: "Audit approval review flow",
+            role: "reviewer",
+            model: "anthropic/claude-sonnet-4-5",
+            state: "completed",
+            started_at: "2026-03-24T12:00:00Z",
+            has_tool_activity: true,
+            agent_count: 3,
+            final_status: "completed",
+            has_file_changes: true,
+          },
+        ]}
+        selectedRun={{
+          id: "run_history_1",
+          generated_title: "Review approval flow",
+          task_text_preview: "Audit approval review flow",
+          role: "reviewer",
+          model: "anthropic/claude-sonnet-4-5",
+          state: "completed",
+          started_at: "2026-03-24T12:00:00Z",
+          has_tool_activity: true,
+          agent_count: 3,
+          final_status: "completed",
+          has_file_changes: true,
+        }}
+        selectedRunDetails={{
+          session_id: "session_alpha",
+          run_id: "run_history_1",
+          generated_title: "Review approval flow",
+          final_status: "completed",
+          agent_count: 3,
+          change_records: [
+            {
+              tool_call_id: "call_1",
+              path: "README.md",
+              original_content: "before\n",
+              proposed_content: "after\n",
+              approval_state: "applied",
+              occurred_at: "2026-03-24T12:00:01Z",
+            },
+            {
+              tool_call_id: "call_2",
+              path: "docs/future.md",
+              original_content: "later before\n",
+              proposed_content: "later after\n",
+              approval_state: "applied",
+              occurred_at: "2026-03-24T12:00:03Z",
+            },
+          ],
+        }}
+        selectedRunId="run_history_1"
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/keyword/i), {
+      target: { value: "approval" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /apply filters/i }));
+    expect(onQuery).toHaveBeenCalledWith({
+      query: "approval",
+      file_path: undefined,
+      date_from: undefined,
+      date_to: undefined,
+    });
+    expect(
+      screen.getByText(/showing 1 of 2 recorded changes through/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/readme\.md/i)).toBeInTheDocument();
+    expect(screen.getByText(/^applied$/i)).toBeInTheDocument();
+    expect(screen.queryByText(/docs\/future\.md/i)).not.toBeInTheDocument();
+  });
+
+  it("treats missing change records in selected run details as empty", () => {
+    render(
+      <RunHistoryPanel
+        activeRunId="run_history_1"
+        exportState={null}
+        historyState="ready"
+        onExport={() => undefined}
+        onOpen={() => undefined}
+        onQuery={() => undefined}
+        onReplayControl={() => undefined}
+        replayState={{
+          session_id: "session_alpha",
+          run_id: "run_history_1",
+          status: "paused",
+          cursor_ms: 1200,
+          duration_ms: 5000,
+          speed: 1,
+          selected_timestamp: "2026-03-24T12:00:02Z",
+        }}
+        runHistoryQuery={null}
+        runSummaries={[
+          {
+            id: "run_history_1",
+            generated_title: "Review approval flow",
+            task_text_preview: "Audit approval review flow",
+            role: "reviewer",
+            model: "anthropic/claude-sonnet-4-5",
+            state: "completed",
+            started_at: "2026-03-24T12:00:00Z",
+            has_tool_activity: true,
+            agent_count: 3,
+            final_status: "completed",
+            has_file_changes: true,
+          },
+        ]}
+        selectedRun={{
+          id: "run_history_1",
+          generated_title: "Review approval flow",
+          task_text_preview: "Audit approval review flow",
+          role: "reviewer",
+          model: "anthropic/claude-sonnet-4-5",
+          state: "completed",
+          started_at: "2026-03-24T12:00:00Z",
+          has_tool_activity: true,
+          agent_count: 3,
+          final_status: "completed",
+          has_file_changes: true,
+        }}
+        selectedRunDetails={
+          {
+            session_id: "session_alpha",
+            run_id: "run_history_1",
+            generated_title: "Review approval flow",
+            final_status: "completed",
+            agent_count: 3,
+          } as never
+        }
+        selectedRunId="run_history_1"
+      />,
+    );
+
+    expect(
+      screen.getByText(/does not include recorded file changes/i),
+    ).toBeInTheDocument();
   });
 });

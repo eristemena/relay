@@ -20,6 +20,7 @@ import {
   patchTaskAssigned,
   patchToolCall,
   patchToolResult,
+  resetCanvasDocumentForReplay,
   selectCanvasNode,
   type AgentCanvasDocument,
 } from "@/features/canvas/canvasModel";
@@ -27,6 +28,7 @@ import type {
   ApprovalStateChangedPayload,
   ApprovalRequestPayload,
   AgentSpawnedPayload,
+  AgentRunReplayStatePayload,
   AgentStateChangedPayload,
   AgentRunSummary,
   ConnectedRepositoryView,
@@ -39,7 +41,12 @@ import type {
   RepositoryDirectoryPayload,
   RepositoryGraphStatusPayload,
   RealtimeRunMessage,
+  RunChangeRecordPayload,
   RunEventPayload,
+  RunHistoryDetailsResultPayload,
+  RunHistoryResultPayload,
+  RunHistoryQueryPayload,
+  RunHistoryExportResultPayload,
   RunCompletePayload,
   SessionSummary,
   StateChangePayload,
@@ -63,6 +70,11 @@ export interface WorkspaceState {
   runSummaries: AgentRunSummary[];
   runEvents: Record<string, StoredRunEvent[]>;
   runTranscripts: Record<string, string>;
+  runHistoryQuery: RunHistoryQueryPayload | null;
+  runHistoryResults: AgentRunSummary[];
+  runHistoryDetails: Record<string, RunHistoryDetailsResultPayload>;
+  replayStateByRunId: Record<string, AgentRunReplayStatePayload>;
+  exportStateByRunId: Record<string, RunHistoryExportResultPayload>;
   orchestrationDocuments: Record<string, AgentCanvasDocument>;
   pendingApprovals: Record<string, PendingApproval>;
   connectedRepository: ConnectedRepositoryView;
@@ -174,6 +186,11 @@ const defaultState: WorkspaceState = {
   runSummaries: [],
   runEvents: {},
   runTranscripts: {},
+  runHistoryQuery: null,
+  runHistoryResults: [],
+  runHistoryDetails: {},
+  replayStateByRunId: {},
+  exportStateByRunId: {},
   orchestrationDocuments: {},
   pendingApprovals: {},
   connectedRepository: deriveConnectedRepositoryView(defaultPreferences),
@@ -264,7 +281,7 @@ class WorkspaceStore {
         : this.state.selectedRunId &&
             this.state.runEvents[this.state.selectedRunId]
           ? this.state.selectedRunId
-          : (payload.active_run_id ?? nextRunSummaries[0]?.id ?? "");
+          : (payload.active_run_id ?? "");
 
     const nextConnectedRepository =
       payload.connected_repository ??
@@ -282,6 +299,11 @@ class WorkspaceStore {
       sessions: payload.sessions,
       runSummaries: nextRunSummaries,
       runTranscripts: this.state.runTranscripts,
+      runHistoryResults: this.state.runHistoryResults,
+      runHistoryQuery: this.state.runHistoryQuery,
+      runHistoryDetails: this.state.runHistoryDetails,
+      replayStateByRunId: this.state.replayStateByRunId,
+      exportStateByRunId: this.state.exportStateByRunId,
       orchestrationDocuments: this.state.orchestrationDocuments,
       pendingApprovals: nextPendingApprovals,
       connectedRepository: nextConnectedRepository,
@@ -378,7 +400,10 @@ class WorkspaceStore {
     if (message.type === "tool_result" && "tool_call_id" in payload) {
       delete nextPendingApprovals[payload.tool_call_id as string];
     }
-    if (message.type === "approval_state_changed" && "tool_call_id" in payload) {
+    if (
+      message.type === "approval_state_changed" &&
+      "tool_call_id" in payload
+    ) {
       delete nextPendingApprovals[payload.tool_call_id as string];
     }
     if (message.type === "complete" || message.type === "error") {
@@ -425,6 +450,76 @@ class WorkspaceStore {
     this.emit();
   };
 
+  setRunHistoryResult = (payload: RunHistoryResultPayload) => {
+    this.state = {
+      ...this.state,
+      runHistoryQuery: {
+        session_id: payload.session_id,
+        query: payload.query,
+        file_path: payload.file_path,
+        date_from: payload.date_from,
+        date_to: payload.date_to,
+      },
+      runHistoryResults: payload.runs,
+    };
+    this.emit();
+  };
+
+  setRunHistoryDetails = (payload: RunHistoryDetailsResultPayload) => {
+    this.state = {
+      ...this.state,
+      runHistoryDetails: {
+        ...this.state.runHistoryDetails,
+        [payload.run_id]: payload,
+      },
+    };
+    this.emit();
+  };
+
+  setReplayState = (payload: AgentRunReplayStatePayload) => {
+    const shouldResetReplayArtifacts =
+      payload.status === "preparing" || payload.status === "seeking";
+
+    this.state = {
+      ...this.state,
+      runEvents: shouldResetReplayArtifacts
+        ? { ...this.state.runEvents, [payload.run_id]: [] }
+        : this.state.runEvents,
+      runTranscripts: shouldResetReplayArtifacts
+        ? { ...this.state.runTranscripts, [payload.run_id]: "" }
+        : this.state.runTranscripts,
+      pendingApprovals: shouldResetReplayArtifacts
+        ? Object.fromEntries(
+            Object.entries(this.state.pendingApprovals).filter(
+              ([, approval]) => approval.runId !== payload.run_id,
+            ),
+          )
+        : this.state.pendingApprovals,
+      orchestrationDocuments: shouldResetReplayArtifacts
+        ? {
+            ...this.state.orchestrationDocuments,
+            [payload.run_id]: resetCanvasDocumentForReplay(),
+          }
+        : this.state.orchestrationDocuments,
+      replayStateByRunId: {
+        ...this.state.replayStateByRunId,
+        [payload.run_id]: payload,
+      },
+    };
+    this.emit();
+  };
+
+  setRunHistoryExportState = (payload: RunHistoryExportResultPayload) => {
+    this.state = {
+      ...this.state,
+      exportStateByRunId: {
+        ...this.state.exportStateByRunId,
+        [payload.run_id]: payload,
+      },
+    };
+    this.emit();
+  };
+
   handleEnvelope = (message: Envelope<unknown>) => {
     switch (message.type) {
       case "workspace.bootstrap":
@@ -451,6 +546,22 @@ class WorkspaceStore {
       case "repository.browse.result":
         this.setRepositoryBrowseResult(
           message.payload as RepositoryBrowseResultPayload,
+        );
+        return;
+      case "run.history.result":
+        this.setRunHistoryResult(message.payload as RunHistoryResultPayload);
+        return;
+      case "run.history.details.result":
+        this.setRunHistoryDetails(
+          message.payload as RunHistoryDetailsResultPayload,
+        );
+        return;
+      case "agent.run.replay.state":
+        this.setReplayState(message.payload as AgentRunReplayStatePayload);
+        return;
+      case "run.history.export.result":
+        this.setRunHistoryExportState(
+          message.payload as RunHistoryExportResultPayload,
         );
         return;
       case "repository_graph_status":

@@ -17,6 +17,14 @@ const (
 	TypePreferencesSaved          = "preferences.saved"
 	TypeAgentRunSubmit            = "agent.run.submit"
 	TypeAgentRunOpen              = "agent.run.open"
+	TypeRunHistoryQuery           = "run.history.query"
+	TypeRunHistoryResult          = "run.history.result"
+	TypeRunHistoryDetailsRequest  = "run.history.details.request"
+	TypeRunHistoryDetailsResult   = "run.history.details.result"
+	TypeRunHistoryExportRequest   = "run.history.export.request"
+	TypeRunHistoryExportResult    = "run.history.export.result"
+	TypeAgentRunReplayControl     = "agent.run.replay.control"
+	TypeAgentRunReplayState       = "agent.run.replay.state"
 	TypeAgentRunCancel            = "agent.run.cancel"
 	TypeAgentRunApprovalRespond   = "agent.run.approval.respond"
 	TypeApprovalRequest           = "approval_request"
@@ -129,6 +137,32 @@ type AgentRunOpenPayload struct {
 	RunID     string `json:"run_id"`
 }
 
+type RunHistoryQueryPayload struct {
+	SessionID string `json:"session_id"`
+	Query     string `json:"query,omitempty"`
+	FilePath  string `json:"file_path,omitempty"`
+	DateFrom  string `json:"date_from,omitempty"`
+	DateTo    string `json:"date_to,omitempty"`
+}
+
+type RunHistoryDetailsRequestPayload struct {
+	SessionID string `json:"session_id"`
+	RunID     string `json:"run_id"`
+}
+
+type RunHistoryExportRequestPayload struct {
+	SessionID string `json:"session_id"`
+	RunID     string `json:"run_id"`
+}
+
+type AgentRunReplayControlPayload struct {
+	SessionID string  `json:"session_id"`
+	RunID     string  `json:"run_id"`
+	Action    string  `json:"action"`
+	CursorMS  int     `json:"cursor_ms,omitempty"`
+	Speed     float64 `json:"speed,omitempty"`
+}
+
 type AgentRunCancelPayload struct {
 	SessionID string `json:"session_id"`
 	RunID     string `json:"run_id"`
@@ -192,6 +226,7 @@ type WorkspaceSnapshotPayload struct {
 
 type AgentRunSummary struct {
 	ID              string `json:"id"`
+	GeneratedTitle  string `json:"generated_title,omitempty"`
 	TaskTextPreview string `json:"task_text_preview"`
 	Role            string `json:"role"`
 	Model           string `json:"model"`
@@ -200,6 +235,55 @@ type AgentRunSummary struct {
 	StartedAt       string `json:"started_at"`
 	CompletedAt     string `json:"completed_at,omitempty"`
 	HasToolActivity bool   `json:"has_tool_activity"`
+	AgentCount      int    `json:"agent_count,omitempty"`
+	FinalStatus     string `json:"final_status,omitempty"`
+	HasFileChanges  bool   `json:"has_file_changes,omitempty"`
+}
+
+type RunChangeRecordPayload struct {
+	ToolCallID     string `json:"tool_call_id"`
+	Path           string `json:"path"`
+	OriginalContent string `json:"original_content,omitempty"`
+	ProposedContent string `json:"proposed_content,omitempty"`
+	BaseContentHash string `json:"base_content_hash,omitempty"`
+	ApprovalState   string `json:"approval_state,omitempty"`
+	OccurredAt      string `json:"occurred_at,omitempty"`
+}
+
+type RunHistoryResultPayload struct {
+	SessionID string            `json:"session_id"`
+	Query     string            `json:"query,omitempty"`
+	FilePath  string            `json:"file_path,omitempty"`
+	DateFrom  string            `json:"date_from,omitempty"`
+	DateTo    string            `json:"date_to,omitempty"`
+	Runs      []AgentRunSummary `json:"runs"`
+}
+
+type RunHistoryDetailsResultPayload struct {
+	SessionID      string                   `json:"session_id"`
+	RunID          string                   `json:"run_id"`
+	GeneratedTitle string                   `json:"generated_title,omitempty"`
+	FinalStatus    string                   `json:"final_status,omitempty"`
+	AgentCount     int                      `json:"agent_count,omitempty"`
+	ChangeRecords  []RunChangeRecordPayload `json:"change_records,omitempty"`
+}
+
+type AgentRunReplayStatePayload struct {
+	SessionID         string  `json:"session_id"`
+	RunID             string  `json:"run_id"`
+	Status            string  `json:"status"`
+	CursorMS          int     `json:"cursor_ms"`
+	DurationMS        int     `json:"duration_ms"`
+	Speed             float64 `json:"speed"`
+	SelectedTimestamp string  `json:"selected_timestamp,omitempty"`
+}
+
+type RunHistoryExportResultPayload struct {
+	SessionID   string `json:"session_id"`
+	RunID       string `json:"run_id"`
+	Status      string `json:"status"`
+	ExportPath  string `json:"export_path,omitempty"`
+	GeneratedAt string `json:"generated_at,omitempty"`
 }
 
 type CredentialStatusView struct {

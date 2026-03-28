@@ -145,6 +145,7 @@ type ApprovalRequest struct {
 
 type RunSummary struct {
 	ID              string     `json:"id"`
+	GeneratedTitle  string     `json:"generated_title,omitempty"`
 	TaskTextPreview string     `json:"task_text_preview"`
 	Role            AgentRole  `json:"role"`
 	Model           string     `json:"model"`
@@ -153,6 +154,70 @@ type RunSummary struct {
 	StartedAt       time.Time  `json:"started_at"`
 	CompletedAt     *time.Time `json:"completed_at,omitempty"`
 	HasToolActivity bool       `json:"has_tool_activity"`
+	AgentCount      int        `json:"agent_count,omitempty"`
+	FinalStatus     string     `json:"final_status,omitempty"`
+	HasFileChanges  bool       `json:"has_file_changes,omitempty"`
+}
+
+type RunHistoryDocument struct {
+	RunID            string     `json:"run_id"`
+	SessionID        string     `json:"session_id"`
+	GeneratedTitle   string     `json:"generated_title"`
+	GoalText         string     `json:"goal_text"`
+	FinalStatus      string     `json:"final_status"`
+	AgentCount       int        `json:"agent_count"`
+	StartedAt        time.Time  `json:"started_at"`
+	CompletedAt      *time.Time `json:"completed_at,omitempty"`
+	FirstEventAt     *time.Time `json:"first_event_at,omitempty"`
+	LastEventAt      *time.Time `json:"last_event_at,omitempty"`
+	SummaryText      string     `json:"summary_text,omitempty"`
+	TouchedFileCount int        `json:"touched_file_count"`
+	HasFileChanges   bool       `json:"has_file_changes"`
+	ExportedAt       *time.Time `json:"exported_at,omitempty"`
+}
+
+type RunHistorySearchDocument struct {
+	RunID          string `json:"run_id"`
+	SessionID      string `json:"session_id"`
+	TitleText      string `json:"title_text"`
+	GoalText       string `json:"goal_text"`
+	SummaryText    string `json:"summary_text,omitempty"`
+	TranscriptText string `json:"transcript_text,omitempty"`
+	FileNamesText  string `json:"file_names_text,omitempty"`
+	ParticipantText string `json:"participant_text,omitempty"`
+}
+
+type RunHistoryQuery struct {
+	SessionID string
+	Query     string
+	FilePath  string
+	DateFrom  *time.Time
+	DateTo    *time.Time
+}
+
+type RunChangeRecord struct {
+	RunID           string     `json:"run_id"`
+	ToolCallID      string     `json:"tool_call_id"`
+	Path            string     `json:"path"`
+	OriginalContent string     `json:"original_content,omitempty"`
+	ProposedContent string     `json:"proposed_content,omitempty"`
+	BaseContentHash string     `json:"base_content_hash"`
+	ApprovalState   string     `json:"approval_state"`
+	Role            AgentRole  `json:"role,omitempty"`
+	Model           string     `json:"model,omitempty"`
+	OccurredAt      time.Time  `json:"occurred_at"`
+}
+
+type RunExportDocument struct {
+	RunID            string    `json:"run_id"`
+	ExportPath       string    `json:"export_path"`
+	GeneratedAt      time.Time `json:"generated_at"`
+	Title            string    `json:"title"`
+	FinalStatus      string    `json:"final_status"`
+	Participants     []string  `json:"participants"`
+	TimelineMarkdown string    `json:"timeline_markdown"`
+	ChangesMarkdown  string    `json:"changes_markdown,omitempty"`
+	RequestedBy      string    `json:"requested_by"`
 }
 
 func EmptySnapshot() Snapshot {

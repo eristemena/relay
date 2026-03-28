@@ -465,7 +465,7 @@ func (s *Service) emitAgentSpawned(ctx context.Context, run sqlite.AgentRun, exe
 		"model":       execution.Model,
 		"label":       labelForRole(execution.Role),
 		"spawn_order": execution.SpawnOrder,
-		"occurred_at": time.Now().UTC().Format(time.RFC3339),
+		"occurred_at": formatEventTimestamp(time.Now().UTC()),
 	}
 	return s.appendAndDispatchEvent(ctx, run.ID, sqlite.EventTypeAgentSpawned, execution.Role, execution.Model, payload, nil)
 }
@@ -480,7 +480,7 @@ func (s *Service) emitAgentStateChanged(ctx context.Context, run sqlite.AgentRun
 		"model":       execution.Model,
 		"state":       state,
 		"message":     message,
-		"occurred_at": time.Now().UTC().Format(time.RFC3339),
+		"occurred_at": formatEventTimestamp(time.Now().UTC()),
 	}
 	if completion != nil {
 		if completion.TokensUsed != nil {
@@ -502,7 +502,7 @@ func (s *Service) emitTaskAssigned(ctx context.Context, run sqlite.AgentRun, exe
 		"role":        execution.Role,
 		"model":       execution.Model,
 		"task_text":   execution.TaskText,
-		"occurred_at": time.Now().UTC().Format(time.RFC3339),
+		"occurred_at": formatEventTimestamp(time.Now().UTC()),
 	}
 	return s.appendAndDispatchEvent(ctx, run.ID, sqlite.EventTypeTaskAssigned, execution.Role, execution.Model, payload, nil)
 }
@@ -516,7 +516,7 @@ func (s *Service) emitHandoffEvent(ctx context.Context, run sqlite.AgentRun, fro
 		"from_agent_id": executionID(run.ID, fromRole, spawnOrderForRole(fromRole)),
 		"to_agent_id":   executionID(run.ID, toRole, spawnOrderForRole(toRole)),
 		"reason":        reason,
-		"occurred_at":   time.Now().UTC().Format(time.RFC3339),
+		"occurred_at":   formatEventTimestamp(time.Now().UTC()),
 	}
 	return s.appendAndDispatchEvent(ctx, run.ID, eventType, fromRole, "", payload, nil)
 }
@@ -533,7 +533,7 @@ func (s *Service) emitAgentToken(ctx context.Context, run sqlite.AgentRun, execu
 		"role":        execution.Role,
 		"model":       execution.Model,
 		"text":        text,
-		"occurred_at": time.Now().UTC().Format(time.RFC3339),
+		"occurred_at": formatEventTimestamp(time.Now().UTC()),
 	}
 	return s.appendAndDispatchEvent(ctx, run.ID, sqlite.EventTypeToken, execution.Role, execution.Model, payload, nil)
 }
@@ -559,7 +559,7 @@ func (s *Service) emitAgentError(ctx context.Context, run sqlite.AgentRun, execu
 		"code":        code,
 		"message":     message,
 		"terminal":    true,
-		"occurred_at": time.Now().UTC().Format(time.RFC3339),
+		"occurred_at": formatEventTimestamp(time.Now().UTC()),
 	}
 	return s.appendAndDispatchEvent(ctx, run.ID, sqlite.EventTypeAgentError, execution.Role, execution.Model, payload, nil)
 }
@@ -587,7 +587,7 @@ func (s *Service) emitRunComplete(ctx context.Context, run sqlite.AgentRun, summ
 		"role":        role,
 		"model":       model,
 		"summary":     summary,
-		"occurred_at": completedAt.Format(time.RFC3339),
+		"occurred_at": formatEventTimestamp(completedAt),
 	}
 	if completion != nil {
 		if completion.TokensUsed != nil {
@@ -644,7 +644,7 @@ func (s *Service) emitRunError(ctx context.Context, run sqlite.AgentRun, code st
 		"code":        code,
 		"message":     message,
 		"terminal":    true,
-		"occurred_at": completedAt.Format(time.RFC3339),
+		"occurred_at": formatEventTimestamp(completedAt),
 	}
 	return s.appendAndDispatchEvent(ctx, run.ID, sqlite.EventTypeRunError, role, model, payload, nil)
 }

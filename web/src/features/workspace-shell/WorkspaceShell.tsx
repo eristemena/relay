@@ -9,6 +9,7 @@ import {
   type WorkspaceCanvasPanelId,
 } from "@/features/canvas/WorkspaceCanvasToolbar";
 import { RunHistoryPanel } from "@/features/history/RunHistoryPanel";
+import { ReplayDock } from "@/features/history/replay/ReplayDock";
 import { SessionSidebar } from "@/features/history/SessionSidebar";
 import { PreferencesPanel } from "@/features/preferences/PreferencesPanel";
 import { FormattedMarkdown } from "@/shared/lib/FormattedMarkdown";
@@ -26,8 +27,12 @@ export function WorkspaceShell() {
   const {
     browseRepository,
     createSession,
+    controlReplay,
+    exportRunHistory,
+    getRunHistoryDetails,
     openRun,
     openSession,
+    queryRunHistory,
     respondToApproval,
     savePreferences,
     submitRun,
@@ -40,6 +45,19 @@ export function WorkspaceShell() {
   const sessions = useWorkspaceStore((state) => state.sessions);
   const runSummaries = useWorkspaceStore((state) => state.runSummaries);
   const pendingApprovals = useWorkspaceStore((state) => state.pendingApprovals);
+  const runHistoryQuery = useWorkspaceStore((state) => state.runHistoryQuery);
+  const runHistoryResults = useWorkspaceStore(
+    (state) => state.runHistoryResults,
+  );
+  const runHistoryDetails = useWorkspaceStore(
+    (state) => state.runHistoryDetails,
+  );
+  const replayStateByRunId = useWorkspaceStore(
+    (state) => state.replayStateByRunId,
+  );
+  const exportStateByRunId = useWorkspaceStore(
+    (state) => state.exportStateByRunId,
+  );
   const orchestrationDocuments = useWorkspaceStore(
     (state) => state.orchestrationDocuments,
   );
@@ -87,12 +105,66 @@ export function WorkspaceShell() {
     : preferences.project_root_message ||
       "Choose a local Git repository in Local settings to enable repository-aware tools.";
   const pendingApprovalCount = Object.keys(pendingApprovals).length;
+  const historyRuns =
+    runHistoryQuery || runHistoryResults.length > 0
+      ? runHistoryResults
+      : runSummaries;
+  const selectedHistoryRun =
+    historyRuns.find((run) => run.id === selectedRunId) ??
+    historyRuns.find((run) => run.id === activeRunId) ??
+    null;
+  const selectedHistoryRunId = selectedHistoryRun?.id ?? "";
+  const selectedHistoryRunDetails = selectedHistoryRunId
+    ? (runHistoryDetails[selectedHistoryRunId] ?? null)
+    : null;
+  const selectedReplayState = selectedHistoryRunId
+    ? (replayStateByRunId[selectedHistoryRunId] ?? null)
+    : null;
+  const selectedExportState = selectedHistoryRunId
+    ? (exportStateByRunId[selectedHistoryRunId] ?? null)
+    : null;
 
   useEffect(() => {
     if (selectedPendingApproval) {
       setActivePanel("approvals");
     }
   }, [selectedPendingApproval]);
+
+  useEffect(() => {
+    if (activePanel !== "history" || !activeSessionId) {
+      return;
+    }
+
+    startTransition(() => {
+      queryRunHistory(activeSessionId, {
+        query: runHistoryQuery?.query,
+        file_path: runHistoryQuery?.file_path,
+        date_from: runHistoryQuery?.date_from,
+        date_to: runHistoryQuery?.date_to,
+      });
+    });
+  }, [activePanel, activeSessionId]);
+
+  useEffect(() => {
+    if (
+      activePanel !== "history" ||
+      !activeSessionId ||
+      !selectedHistoryRunId ||
+      selectedHistoryRunDetails
+    ) {
+      return;
+    }
+
+    startTransition(() => {
+      getRunHistoryDetails(activeSessionId, selectedHistoryRunId);
+    });
+  }, [
+    activePanel,
+    activeSessionId,
+    getRunHistoryDetails,
+    selectedHistoryRunDetails,
+    selectedHistoryRunId,
+  ]);
 
   useEffect(() => {
     if (!activePanel) {
@@ -140,8 +212,43 @@ export function WorkspaceShell() {
           <RunHistoryPanel
             activeRunId={activeRunId}
             historyState={uiState.history_state}
-            runSummaries={runSummaries}
+            exportState={selectedExportState}
+            onExport={() => {
+              if (!activeSessionId || !selectedHistoryRunId) {
+                return;
+              }
+              startTransition(() => {
+                exportRunHistory(activeSessionId, selectedHistoryRunId);
+              });
+            }}
             selectedRunId={selectedRunId}
+            onQuery={(payload) => {
+              if (!activeSessionId) {
+                return;
+              }
+              startTransition(() => {
+                queryRunHistory(activeSessionId, payload);
+              });
+            }}
+            onReplayControl={(payload) => {
+              if (!activeSessionId || !selectedHistoryRunId) {
+                return;
+              }
+              startTransition(() => {
+                controlReplay({
+                  session_id: activeSessionId,
+                  run_id: selectedHistoryRunId,
+                  action: payload.action,
+                  cursor_ms: payload.cursor_ms,
+                  speed: payload.speed,
+                });
+              });
+            }}
+            replayState={selectedReplayState}
+            runHistoryQuery={runHistoryQuery}
+            runSummaries={historyRuns}
+            selectedRun={selectedHistoryRun}
+            selectedRunDetails={selectedHistoryRunDetails}
             onOpen={(runId: string) =>
               startTransition(() => {
                 openRun(activeSessionId, runId);
@@ -222,9 +329,21 @@ export function WorkspaceShell() {
     repositorySummaryMessage,
     repositorySummaryTitle,
     respondToApproval,
+    queryRunHistory,
+    getRunHistoryDetails,
+    controlReplay,
+    exportRunHistory,
     runSummaries,
+    runHistoryDetails,
+    runHistoryQuery,
+    runHistoryResults,
     savePreferences,
+    selectedExportState,
     selectedPendingApproval,
+    selectedReplayState,
+    selectedHistoryRun,
+    selectedHistoryRunDetails,
+    selectedHistoryRunId,
     selectedRunId,
     sessions,
     uiState.history_state,
@@ -232,7 +351,7 @@ export function WorkspaceShell() {
     visibleRunDocument,
     visibleRunId,
   ]);
-  const workspaceToolbar = activeSession ? (
+  const workspaceToolbar = (
     <WorkspaceCanvasToolbar
       activePanel={activePanel}
       expandedPanel={expandedPanel}
@@ -245,7 +364,7 @@ export function WorkspaceShell() {
       panelContent={panelContent}
       pendingApprovalCount={pendingApprovalCount}
     />
-  ) : null;
+  );
   const commandBarDisabled = !activeSessionId || Boolean(activeRunId);
 
   return (
@@ -255,7 +374,7 @@ export function WorkspaceShell() {
           <div>
             <p className="eyebrow">Relay workspace</p>
             <h1
-              className="font-display text-4xl text-text 
+              className="font-display text-2xl text-text 
                -mt-[0.1em] pt-[0.1em] leading-[1.2]"
             >
               Local AI session control, without leaving localhost.
@@ -286,40 +405,80 @@ export function WorkspaceShell() {
         id="maincontent"
         tabIndex={-1}
       >
-        <section className="grid min-h-0 min-w-0 gap-4 overflow-hidden">
-          <WorkspaceCanvas
-            activeSession={activeSession}
-            workspaceToolbar={workspaceToolbar}
-          />
-        </section>
-      </main>
-
-      <div className="workspace-task-dock" role="presentation">
         <section
-          aria-label="Task composer"
-          className="workspace-task-dock-inner"
+          className={
+            selectedHistoryRun && activeSessionId
+              ? "grid min-h-0 min-w-0 gap-4 overflow-hidden xl:grid-cols-[minmax(0,1.65fr)_minmax(24rem,0.75fr)]"
+              : "grid min-h-0 min-w-0 gap-4 overflow-hidden"
+          }
         >
-          <AgentCommandBar
-            disabled={commandBarDisabled}
-            hasActiveRun={Boolean(activeRunId)}
-            onCancel={() =>
-              startTransition(() => {
-                if (!activeSessionId || !activeRunId) {
+          <div className="flex min-h-0 min-w-0 flex-col gap-4 overflow-hidden">
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <WorkspaceCanvas
+                activeSession={activeSession}
+                workspaceToolbar={workspaceToolbar}
+              />
+            </div>
+
+            <div className="workspace-task-dock" role="presentation">
+              <section
+                aria-label="Task composer"
+                className="workspace-task-dock-inner"
+              >
+                <AgentCommandBar
+                  disabled={commandBarDisabled}
+                  hasActiveRun={Boolean(activeRunId)}
+                  onCancel={() =>
+                    startTransition(() => {
+                      if (!activeSessionId || !activeRunId) {
+                        return;
+                      }
+
+                      cancelRun(activeSessionId, activeRunId);
+                    })
+                  }
+                  onSubmit={(task) =>
+                    startTransition(() => {
+                      submitRun(activeSessionId, task);
+                    })
+                  }
+                  panelClassName="workspace-task-dock-card"
+                />
+              </section>
+            </div>
+          </div>
+          {selectedHistoryRun && activeSessionId ? (
+            <ReplayDock
+              exportState={selectedExportState}
+              onBrowseRuns={() => setActivePanel("history")}
+              onExport={() => {
+                if (!selectedHistoryRunId) {
                   return;
                 }
-
-                cancelRun(activeSessionId, activeRunId);
-              })
-            }
-            onSubmit={(task) =>
-              startTransition(() => {
-                submitRun(activeSessionId, task);
-              })
-            }
-            panelClassName="workspace-task-dock-card"
-          />
+                startTransition(() => {
+                  exportRunHistory(activeSessionId, selectedHistoryRunId);
+                });
+              }}
+              onReplayControl={(payload) => {
+                if (!selectedHistoryRunId) {
+                  return;
+                }
+                startTransition(() => {
+                  controlReplay({
+                    session_id: activeSessionId,
+                    run_id: selectedHistoryRunId,
+                    action: payload.action,
+                    cursor_ms: payload.cursor_ms,
+                    speed: payload.speed,
+                  });
+                });
+              }}
+              replayState={selectedReplayState}
+              selectedRun={selectedHistoryRun}
+            />
+          ) : null}
         </section>
-      </div>
+      </main>
     </div>
   );
 }

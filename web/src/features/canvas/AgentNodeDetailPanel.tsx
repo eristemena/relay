@@ -14,6 +14,7 @@ import type {
   AgentCanvasRole,
   SelectedCanvasNodeView,
 } from "@/features/canvas/canvasModel";
+import type { AgentRunReplayStatePayload } from "@/shared/lib/workspace-protocol";
 import { FormattedMarkdown } from "@/shared/lib/FormattedMarkdown";
 
 interface AgentNodeDetailPanelProps {
@@ -24,6 +25,7 @@ interface AgentNodeDetailPanelProps {
   isLoading?: boolean;
   onClose?: () => void;
   errorMessage?: string | null;
+  replayState?: AgentRunReplayStatePayload | null;
   selectedNode: SelectedCanvasNodeView | null;
 }
 
@@ -35,6 +37,7 @@ export function AgentNodeDetailPanel({
   isLoading = false,
   onClose,
   errorMessage = null,
+  replayState = null,
   selectedNode,
 }: AgentNodeDetailPanelProps) {
   const prefersReducedMotion = useReducedMotion() ?? false;
@@ -199,6 +202,9 @@ export function AgentNodeDetailPanel({
     selectedNode.state === "clarification_required"
       ? "Clarification required"
       : "Failure";
+  const replayTimestampLabel = replayState?.selected_timestamp
+    ? new Date(replayState.selected_timestamp).toLocaleString()
+    : null;
 
   const selectedPanel = (
     <div className="agent-canvas-detail-lightbox-shell">
@@ -272,6 +278,15 @@ export function AgentNodeDetailPanel({
                 <p className="eyebrow">Role</p>
                 <p className="mt-2 text-text">{selectedNode.role}</p>
               </div>
+              {replayState ? (
+                <div>
+                  <p className="eyebrow">Replay position</p>
+                  <p className="mt-2 text-text">
+                    {replayState.status}
+                    {replayTimestampLabel ? ` at ${replayTimestampLabel}` : ""}
+                  </p>
+                </div>
+              ) : null}
               <div>
                 <p className="eyebrow">Context usage</p>
                 <div className="mt-2 rounded-2xl border border-border bg-raised/80 p-4">

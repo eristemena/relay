@@ -178,7 +178,7 @@ func (s *Service) emitStateChange(ctx context.Context, run sqlite.AgentRun, stat
 		"model":       run.Model,
 		"state":       state,
 		"message":     message,
-		"occurred_at": time.Now().UTC().Format(time.RFC3339),
+		"occurred_at": formatEventTimestamp(time.Now().UTC()),
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -221,7 +221,7 @@ func (s *Service) emitToken(ctx context.Context, runID string, text string, emit
 		"role":        run.Role,
 		"model":       run.Model,
 		"text":        text,
-		"occurred_at": now.Format(time.RFC3339),
+		"occurred_at": formatEventTimestamp(now),
 	}
 	if firstVisibleToken {
 		payload["first_token_latency_ms"] = now.Sub(run.StartedAt).Milliseconds()
@@ -270,7 +270,7 @@ func (s *Service) emitToolCall(ctx context.Context, runID string, event agents.T
 		"tool_call_id":  event.ToolCallID,
 		"tool_name":     string(event.ToolName),
 		"input_preview": event.InputPreview,
-		"occurred_at":   time.Now().UTC().Format(time.RFC3339),
+		"occurred_at":   formatEventTimestamp(time.Now().UTC()),
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -313,7 +313,7 @@ func (s *Service) emitToolResult(ctx context.Context, runID string, event agents
 		"tool_name":      string(event.ToolName),
 		"status":         event.Status,
 		"result_preview": event.ResultPreview,
-		"occurred_at":    time.Now().UTC().Format(time.RFC3339),
+		"occurred_at":    formatEventTimestamp(time.Now().UTC()),
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -367,7 +367,7 @@ func (s *Service) completeRun(ctx context.Context, runID string, metadata agents
 		"role":          run.Role,
 		"model":         run.Model,
 		"finish_reason": metadata.FinishReason,
-		"occurred_at":   now.Format(time.RFC3339),
+		"occurred_at":   formatEventTimestamp(now),
 	}
 	if metadata.TokensUsed != nil {
 		payload["tokens_used"] = *metadata.TokensUsed
@@ -415,7 +415,7 @@ func (s *Service) failRun(ctx context.Context, runID string, code string, messag
 		"code":        code,
 		"message":     message,
 		"terminal":    true,
-		"occurred_at": now.Format(time.RFC3339),
+		"occurred_at": formatEventTimestamp(now),
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {

@@ -278,6 +278,129 @@ func TestHandlerHandleMessage_RoutesServiceActionsAndMapsErrors(t *testing.T) {
 			t.Fatalf("browse failure payload = %#v, want repository_browse_failed", calls[0].payload)
 		}
 	})
+
+	t.Run("run history query and details", func(t *testing.T) {
+		service.runHistoryRuns = []workspaceorchestrator.RunSummary{{
+			ID:              "run_history_1",
+			GeneratedTitle:  "Review approval flow",
+			TaskTextPreview: "Audit approval review flow",
+			Role:            sqlite.RoleReviewer,
+			Model:           "anthropic/claude-sonnet-4-5",
+			State:           sqlite.RunStateCompleted,
+			StartedAt:       time.Date(2026, time.March, 24, 12, 0, 0, 0, time.UTC),
+			HasToolActivity: true,
+			AgentCount:      3,
+			FinalStatus:     "completed",
+			HasFileChanges:  true,
+		}}
+		service.runHistoryDetails = workspaceorchestrator.RunHistoryDetails{
+			SessionID:      "session_alpha",
+			RunID:          "run_history_1",
+			GeneratedTitle: "Review approval flow",
+			FinalStatus:    "completed",
+			AgentCount:     3,
+			ChangeRecords: []workspaceorchestrator.RunChangeRecord{{
+				ToolCallID:      "call_1",
+				Path:            "README.md",
+				OriginalContent: "before\n",
+				ProposedContent: "after\n",
+				BaseContentHash: "sha256:abc",
+				ApprovalState:   sqlite.ApprovalStateApplied,
+				OccurredAt:      time.Date(2026, time.March, 24, 12, 1, 0, 0, time.UTC),
+			}},
+		}
+
+		queryCalls := make([]capturedWrite, 0, 1)
+		err := handler.handleMessage(context.Background(), Envelope{
+			Type:      TypeRunHistoryQuery,
+			RequestID: "req_history_query",
+			Payload:   mustMarshalJSON(t, RunHistoryQueryPayload{SessionID: "session_alpha", Query: "approval", FilePath: "README.md", DateFrom: "2026-03-24"}),
+		}, captureWrites(&queryCalls))
+		if err != nil {
+			t.Fatalf("handleMessage() history query error = %v", err)
+		}
+		assertWriteType(t, queryCalls, TypeRunHistoryResult)
+		queryPayload := queryCalls[0].payload.(RunHistoryResultPayload)
+		if len(queryPayload.Runs) != 1 || queryPayload.Runs[0].GeneratedTitle != "Review approval flow" {
+			t.Fatalf("queryPayload = %#v, want generated title in run history result", queryPayload)
+		}
+		if service.runHistoryQueryInput.Query != "approval" || service.runHistoryQueryInput.FilePath != "README.md" {
+			t.Fatalf("runHistoryQueryInput = %#v, want approval + README.md", service.runHistoryQueryInput)
+		}
+
+		detailCalls := make([]capturedWrite, 0, 1)
+		err = handler.handleMessage(context.Background(), Envelope{
+			Type:      TypeRunHistoryDetailsRequest,
+			RequestID: "req_history_details",
+			Payload:   mustMarshalJSON(t, RunHistoryDetailsRequestPayload{SessionID: "session_alpha", RunID: "run_history_1"}),
+		}, captureWrites(&detailCalls))
+		if err != nil {
+			t.Fatalf("handleMessage() history details error = %v", err)
+		}
+		assertWriteType(t, detailCalls, TypeRunHistoryDetailsResult)
+		detailsPayload := detailCalls[0].payload.(RunHistoryDetailsResultPayload)
+		if len(detailsPayload.ChangeRecords) != 1 || detailsPayload.ChangeRecords[0].Path != "README.md" {
+			t.Fatalf("detailsPayload = %#v, want one README.md change record", detailsPayload)
+		}
+		if service.runHistoryDetailsSessionID != "session_alpha" || service.runHistoryDetailsRunID != "run_history_1" {
+			t.Fatalf("history details input = %q/%q, want session_alpha/run_history_1", service.runHistoryDetailsSessionID, service.runHistoryDetailsRunID)
+		}
+	})
+
+	t.Run("run history export", func(t *testing.T) {
+		service.runHistoryExportResult = workspaceorchestrator.RunHistoryExportResult{
+			SessionID:   "session_alpha",
+			RunID:       "run_history_1",
+			Status:      "completed",
+			ExportPath:  "/Users/example/.relay/exports/review-approval-flow.md",
+			GeneratedAt: time.Date(2026, time.March, 24, 12, 3, 0, 0, time.UTC),
+		}
+		calls := make([]capturedWrite, 0, 3)
+		err := handler.handleMessage(context.Background(), Envelope{
+			Type:      TypeRunHistoryExportRequest,
+			RequestID: "req_history_export",
+			Payload:   mustMarshalJSON(t, RunHistoryExportRequestPayload{SessionID: "session_alpha", RunID: "run_history_1"}),
+		}, captureWrites(&calls))
+		if err != nil {
+			t.Fatalf("handleMessage() history export error = %v", err)
+		}
+		assertWriteTypes(t, calls, TypeRunHistoryExportResult, TypeRunHistoryExportResult)
+		startedPayload := calls[0].payload.(RunHistoryExportResultPayload)
+		if startedPayload.Status != "started" {
+			t.Fatalf("startedPayload.Status = %q, want started", startedPayload.Status)
+		}
+		completedPayload := calls[1].payload.(RunHistoryExportResultPayload)
+		if completedPayload.Status != "completed" || completedPayload.ExportPath == "" {
+			t.Fatalf("completedPayload = %#v, want completed export result", completedPayload)
+		}
+		if service.runHistoryExportInput.RunID != "run_history_1" || !service.runHistoryExportInput.DirectUser {
+			t.Fatalf("runHistoryExportInput = %#v, want direct export request for run_history_1", service.runHistoryExportInput)
+		}
+	})
+
+	t.Run("run history replay control", func(t *testing.T) {
+		calls := make([]capturedWrite, 0, 1)
+		err := handler.handleMessage(context.Background(), Envelope{
+			Type:      TypeAgentRunReplayControl,
+			RequestID: "req_replay",
+			Payload: mustMarshalJSON(t, AgentRunReplayControlPayload{
+				SessionID: "session_alpha",
+				RunID:     "run_history_1",
+				Action:    "seek",
+				CursorMS:  2500,
+				Speed:     1,
+			}),
+		}, captureWrites(&calls))
+		if err != nil {
+			t.Fatalf("handleMessage() replay control error = %v", err)
+		}
+		if service.replayControlInput.RunID != "run_history_1" || service.replayControlInput.CursorMS != 2500 {
+			t.Fatalf("replayControlInput = %#v, want run_history_1 cursor 2500", service.replayControlInput)
+		}
+		if service.replayControlInput.Action != workspaceorchestrator.ReplayActionSeek || !service.replayControlInput.DirectUser {
+			t.Fatalf("replayControlInput = %#v, want seek direct-user request", service.replayControlInput)
+		}
+	})
 }
 
 func TestToPayloadAndSummarizeRunPayload(t *testing.T) {
@@ -431,6 +554,14 @@ type stubService struct {
 	cancelInput            workspaceorchestrator.CancelRunInput
 	approvalInput          workspaceorchestrator.ApprovalResponseInput
 	browseInput            workspaceorchestrator.RepositoryBrowseInput
+	runHistoryQueryInput   workspaceorchestrator.RunHistoryQueryInput
+	runHistoryRuns         []workspaceorchestrator.RunSummary
+	runHistoryDetails      workspaceorchestrator.RunHistoryDetails
+	runHistoryDetailsSessionID string
+	runHistoryDetailsRunID string
+	runHistoryExportInput  workspaceorchestrator.RunHistoryExportRequest
+	runHistoryExportResult workspaceorchestrator.RunHistoryExportResult
+	replayControlInput     workspaceorchestrator.ReplayControlInput
 	openErr                error
 	submitErr              error
 	browseErr              error
@@ -481,6 +612,27 @@ func (s *stubService) SubmitRun(_ context.Context, input workspaceorchestrator.S
 func (s *stubService) OpenRun(_ context.Context, input workspaceorchestrator.OpenRunInput, _ func(workspaceorchestrator.StreamEnvelope) error) (workspaceorchestrator.WorkspaceSnapshot, error) {
 	s.openRunInput = input
 	return s.openRunSnapshot, nil
+}
+
+func (s *stubService) ReplayControl(_ context.Context, input workspaceorchestrator.ReplayControlInput, _ func(workspaceorchestrator.StreamEnvelope) error) error {
+	s.replayControlInput = input
+	return nil
+}
+
+func (s *stubService) ExportRunHistory(_ context.Context, input workspaceorchestrator.RunHistoryExportRequest) (workspaceorchestrator.RunHistoryExportResult, error) {
+	s.runHistoryExportInput = input
+	return s.runHistoryExportResult, nil
+}
+
+func (s *stubService) QueryRunHistory(_ context.Context, input workspaceorchestrator.RunHistoryQueryInput) ([]workspaceorchestrator.RunSummary, error) {
+	s.runHistoryQueryInput = input
+	return s.runHistoryRuns, nil
+}
+
+func (s *stubService) GetRunHistoryDetails(_ context.Context, sessionID string, runID string) (workspaceorchestrator.RunHistoryDetails, error) {
+	s.runHistoryDetailsSessionID = sessionID
+	s.runHistoryDetailsRunID = runID
+	return s.runHistoryDetails, nil
 }
 
 func (s *stubService) CancelRun(_ context.Context, input workspaceorchestrator.CancelRunInput, _ func(workspaceorchestrator.StreamEnvelope) error) (workspaceorchestrator.WorkspaceSnapshot, error) {

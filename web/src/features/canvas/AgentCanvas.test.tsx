@@ -1329,4 +1329,66 @@ describe("AgentCanvas", () => {
       ).length,
     ).toBeGreaterThan(0);
   });
+
+  it("labels historical replay state in the canvas and selected node detail panel", () => {
+    const snapshot = buildWorkspaceSnapshot({
+      active_run_id: "run_1",
+      run_summaries: [
+        {
+          id: "run_1",
+          task_text_preview: "Replay recorded reviewer activity",
+          role: "reviewer",
+          model: "anthropic/claude-sonnet-4-5",
+          state: "completed",
+          started_at: "2026-03-24T12:00:00Z",
+          has_tool_activity: true,
+        },
+      ],
+    });
+    renderWithWorkspace(
+      <WorkspaceCanvas activeSession={snapshot.sessions[0]} />,
+      snapshot,
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          agent_id: "agent_reviewer_1",
+          sequence: 1,
+          replay: true,
+          role: "reviewer",
+          model: "anthropic/claude-sonnet-4-5",
+          label: "Reviewer",
+          spawn_order: 1,
+          occurred_at: "2026-03-24T12:00:00Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "agent.run.replay.state",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_1",
+          status: "paused",
+          cursor_ms: 1200,
+          duration_ms: 5000,
+          speed: 1,
+          selected_timestamp: "2026-03-24T12:00:02Z",
+        },
+      } as never);
+    });
+
+    expect(screen.getAllByText(/historical replay/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/read-only/i)).toBeInTheDocument();
+    expect(screen.getByText(/replay · paused/i)).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /reviewer, reviewer node/i }),
+    );
+
+    expect(screen.getByText(/replay position/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/paused/i).length).toBeGreaterThan(0);
+  });
 });

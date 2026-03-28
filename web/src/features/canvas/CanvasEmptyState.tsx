@@ -14,7 +14,7 @@ export function CanvasEmptyState({
   sessionLabel,
   eyebrow = "Fresh workspace",
   title = `${sessionLabel} is ready for its first task.`,
-  description = "This canvas stays intentionally quiet until the session gains activity. Use the sidebar to resume another session or save preferences for the next run.",
+  description = "This canvas stays intentionally quiet until the session gains activity. Use the workspace toolbar to open Sessions, review saved history, or adjust local preferences before the next run.",
   children,
 }: CanvasEmptyStateProps) {
   return (

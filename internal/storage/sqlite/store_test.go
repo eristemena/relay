@@ -310,6 +310,202 @@ func TestStore_GetSessionAndRunLookups(t *testing.T) {
 	}
 }
 
+func TestStore_RunHistoryDocumentsQueriesAndExports(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	session, err := store.CreateSession(ctx, "History search")
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	run, err := store.CreateAgentRun(ctx, session.ID, "Audit approval review flow", RoleReviewer, "reviewer-model")
+	if err != nil {
+		t.Fatalf("CreateAgentRun() error = %v", err)
+	}
+	startedAt := time.Date(2026, 3, 28, 9, 0, 0, 0, time.UTC)
+	completedAt := startedAt.Add(2 * time.Minute)
+	firstEventAt := startedAt.Add(2 * time.Second)
+	lastEventAt := completedAt.Add(-5 * time.Second)
+
+	if err := store.UpsertRunHistoryDocument(ctx, RunHistoryDocument{
+		RunID:            run.ID,
+		SessionID:        session.ID,
+		GeneratedTitle:   "Review approval flow",
+		GoalText:         run.TaskText,
+		FinalStatus:      "completed",
+		AgentCount:       5,
+		StartedAt:        startedAt,
+		CompletedAt:      &completedAt,
+		FirstEventAt:     &firstEventAt,
+		LastEventAt:      &lastEventAt,
+		SummaryText:      "The reviewer completed the approval audit.",
+		TouchedFileCount: 1,
+		HasFileChanges:   true,
+	}); err != nil {
+		t.Fatalf("UpsertRunHistoryDocument() error = %v", err)
+	}
+	if err := store.UpsertRunHistorySearchDocument(ctx, RunHistorySearchDocument{
+		RunID:           run.ID,
+		SessionID:       session.ID,
+		TitleText:       "Review approval flow",
+		GoalText:        run.TaskText,
+		SummaryText:     "The reviewer completed the approval audit.",
+		TranscriptText:  "approval review findings and follow-up",
+		FileNamesText:   "web/src/features/history/RunHistoryPanel.tsx RunHistoryPanel.tsx",
+		ParticipantText: "reviewer reviewer-model",
+	}); err != nil {
+		t.Fatalf("UpsertRunHistorySearchDocument() error = %v", err)
+	}
+	if err := store.ReplaceRunChangeRecords(ctx, run.ID, []RunChangeRecord{{
+		RunID:           run.ID,
+		ToolCallID:      "tool_1",
+		Path:            "web/src/features/history/RunHistoryPanel.tsx",
+		OriginalContent: "before\n",
+		ProposedContent: "after\n",
+		BaseContentHash: "sha256:abc",
+		ApprovalState:   ApprovalStateApplied,
+		Role:            RoleReviewer,
+		Model:           "reviewer-model",
+		OccurredAt:      startedAt.Add(45 * time.Second),
+	}}); err != nil {
+		t.Fatalf("ReplaceRunChangeRecords() error = %v", err)
+	}
+
+	document, err := store.GetRunHistoryDocument(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("GetRunHistoryDocument() error = %v", err)
+	}
+	if document.GeneratedTitle != "Review approval flow" {
+		t.Fatalf("document.GeneratedTitle = %q, want Review approval flow", document.GeneratedTitle)
+	}
+	if !document.HasFileChanges {
+		t.Fatal("document.HasFileChanges = false, want true")
+	}
+
+	results, err := store.QueryRunHistory(ctx, RunHistoryQuery{SessionID: session.ID, Query: "approval review"})
+	if err != nil {
+		t.Fatalf("QueryRunHistory() keyword error = %v", err)
+	}
+	if len(results) != 1 || results[0].RunID != run.ID {
+		t.Fatalf("keyword QueryRunHistory() = %+v, want run %q", results, run.ID)
+	}
+
+	results, err = store.QueryRunHistory(ctx, RunHistoryQuery{SessionID: session.ID, FilePath: "RunHistoryPanel.tsx"})
+	if err != nil {
+		t.Fatalf("QueryRunHistory() file filter error = %v", err)
+	}
+	if len(results) != 1 || results[0].RunID != run.ID {
+		t.Fatalf("file QueryRunHistory() = %+v, want run %q", results, run.ID)
+	}
+
+	dateFrom := startedAt.Add(-time.Minute)
+	dateTo := startedAt.Add(time.Minute)
+	results, err = store.QueryRunHistory(ctx, RunHistoryQuery{SessionID: session.ID, DateFrom: &dateFrom, DateTo: &dateTo})
+	if err != nil {
+		t.Fatalf("QueryRunHistory() date filter error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("date QueryRunHistory() len = %d, want 1", len(results))
+	}
+
+	records, err := store.ListRunChangeRecords(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("ListRunChangeRecords() error = %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("len(records) = %d, want 1", len(records))
+	}
+	if records[0].Path != "web/src/features/history/RunHistoryPanel.tsx" {
+		t.Fatalf("records[0].Path = %q, want preserved file path", records[0].Path)
+	}
+
+	exportedAt := completedAt.Add(time.Minute)
+	if err := store.RecordRunExport(ctx, RunExportDocument{
+		RunID:            run.ID,
+		ExportPath:       "/Users/example/.relay/exports/review-approval-flow.md",
+		GeneratedAt:      exportedAt,
+		Title:            "Review approval flow",
+		FinalStatus:      "completed",
+		Participants:     []string{"reviewer"},
+		TimelineMarkdown: "# Review approval flow\n",
+		ChangesMarkdown:  "## Changes\n",
+		RequestedBy:      "developer",
+	}); err != nil {
+		t.Fatalf("RecordRunExport() error = %v", err)
+	}
+
+	exportDocument, err := store.GetLatestRunExport(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("GetLatestRunExport() error = %v", err)
+	}
+	if exportDocument.RequestedBy != "developer" {
+		t.Fatalf("exportDocument.RequestedBy = %q, want developer", exportDocument.RequestedBy)
+	}
+	if len(exportDocument.Participants) != 1 || exportDocument.Participants[0] != "reviewer" {
+		t.Fatalf("exportDocument.Participants = %+v, want [reviewer]", exportDocument.Participants)
+	}
+
+	updatedDocument, err := store.GetRunHistoryDocument(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("GetRunHistoryDocument() after export error = %v", err)
+	}
+	if updatedDocument.ExportedAt == nil || !updatedDocument.ExportedAt.Equal(exportedAt) {
+		t.Fatalf("updatedDocument.ExportedAt = %v, want %v", updatedDocument.ExportedAt, exportedAt)
+	}
+}
+
+func TestStore_ListApprovalRequestsForRunIncludesResolvedRecords(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	session, err := store.CreateSession(ctx, "Approval audit")
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	run, err := store.CreateAgentRun(ctx, session.ID, "Track approvals", RoleCoder, "coder-model")
+	if err != nil {
+		t.Fatalf("CreateAgentRun() error = %v", err)
+	}
+	approval, err := store.CreateApprovalRequest(ctx, ApprovalRequest{
+		SessionID:        session.ID,
+		RunID:            run.ID,
+		ToolCallID:       "call_1",
+		ToolName:         "write_file",
+		Role:             RoleCoder,
+		Model:            "coder-model",
+		InputPreviewJSON: `{"diff_preview":{"target_path":"README.md","original_content":"before\n","proposed_content":"after\n","base_content_hash":"sha256:abc"}}`,
+		Message:          "Need approval",
+		State:            ApprovalStateProposed,
+		OccurredAt:       time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("CreateApprovalRequest() error = %v", err)
+	}
+	reviewedAt := time.Now().UTC()
+	if err := store.UpdateApprovalRequestState(ctx, run.ID, approval.ToolCallID, ApprovalStateApplied, &reviewedAt, &reviewedAt); err != nil {
+		t.Fatalf("UpdateApprovalRequestState() error = %v", err)
+	}
+
+	approvals, err := store.ListApprovalRequestsForRun(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("ListApprovalRequestsForRun() error = %v", err)
+	}
+	if len(approvals) != 1 {
+		t.Fatalf("len(approvals) = %d, want 1", len(approvals))
+	}
+	if approvals[0].State != ApprovalStateApplied {
+		t.Fatalf("approvals[0].State = %q, want %q", approvals[0].State, ApprovalStateApplied)
+	}
+}
+
 func TestStore_ReturnsNotFoundErrorsForMissingRows(t *testing.T) {
 	store, err := NewStore(filepath.Join(t.TempDir(), "relay.db"))
 	if err != nil {

@@ -26,6 +26,10 @@ type Service interface {
 	SavePreferences(ctx context.Context, input workspaceorchestrator.PreferencesInput) (workspaceorchestrator.WorkspaceSnapshot, error)
 	SubmitRun(ctx context.Context, input workspaceorchestrator.SubmitRunInput, emit func(workspaceorchestrator.StreamEnvelope) error) (workspaceorchestrator.WorkspaceSnapshot, error)
 	OpenRun(ctx context.Context, input workspaceorchestrator.OpenRunInput, emit func(workspaceorchestrator.StreamEnvelope) error) (workspaceorchestrator.WorkspaceSnapshot, error)
+	ReplayControl(ctx context.Context, input workspaceorchestrator.ReplayControlInput, emit func(workspaceorchestrator.StreamEnvelope) error) error
+	QueryRunHistory(ctx context.Context, input workspaceorchestrator.RunHistoryQueryInput) ([]workspaceorchestrator.RunSummary, error)
+	GetRunHistoryDetails(ctx context.Context, sessionID string, runID string) (workspaceorchestrator.RunHistoryDetails, error)
+	ExportRunHistory(ctx context.Context, input workspaceorchestrator.RunHistoryExportRequest) (workspaceorchestrator.RunHistoryExportResult, error)
 	CancelRun(ctx context.Context, input workspaceorchestrator.CancelRunInput, emit func(workspaceorchestrator.StreamEnvelope) error) (workspaceorchestrator.WorkspaceSnapshot, error)
 	ResolveApproval(ctx context.Context, input workspaceorchestrator.ApprovalResponseInput) (workspaceorchestrator.WorkspaceSnapshot, error)
 }
@@ -243,6 +247,98 @@ func (h *Handler) handleMessage(ctx context.Context, envelope Envelope, write fu
 			return err
 		}
 		return write(TypeRepositoryGraphStatus, envelope.RequestID, repositoryGraphStatusPayload(snapshot))
+	case TypeRunHistoryQuery:
+		var payload RunHistoryQueryPayload
+		if err := decodePayload(envelope.Payload, &payload); err != nil {
+			return err
+		}
+		dateFrom, err := parseOptionalTimestamp(payload.DateFrom)
+		if err != nil {
+			return err
+		}
+		dateTo, err := parseOptionalTimestamp(payload.DateTo)
+		if err != nil {
+			return err
+		}
+		runs, err := h.service.QueryRunHistory(ctx, workspaceorchestrator.RunHistoryQueryInput{
+			SessionID: payload.SessionID,
+			Query:     payload.Query,
+			FilePath:  payload.FilePath,
+			DateFrom:  dateFrom,
+			DateTo:    dateTo,
+		})
+		if err != nil {
+			return write(TypeError, envelope.RequestID, ErrorPayload{Code: "run_history_query_failed", Message: err.Error()})
+		}
+		return write(TypeRunHistoryResult, envelope.RequestID, RunHistoryResultPayload{
+			SessionID: payload.SessionID,
+			Query:     payload.Query,
+			FilePath:  payload.FilePath,
+			DateFrom:  payload.DateFrom,
+			DateTo:    payload.DateTo,
+			Runs:      summarizeRunPayload(runs),
+		})
+	case TypeRunHistoryDetailsRequest:
+		var payload RunHistoryDetailsRequestPayload
+		if err := decodePayload(envelope.Payload, &payload); err != nil {
+			return err
+		}
+		details, err := h.service.GetRunHistoryDetails(ctx, payload.SessionID, payload.RunID)
+		if err != nil {
+			return write(TypeError, envelope.RequestID, ErrorPayload{Code: "run_history_details_failed", Message: err.Error()})
+		}
+		return write(TypeRunHistoryDetailsResult, envelope.RequestID, toRunHistoryDetailsPayload(details))
+	case TypeRunHistoryExportRequest:
+		var payload RunHistoryExportRequestPayload
+		if err := decodePayload(envelope.Payload, &payload); err != nil {
+			return err
+		}
+		if err := write(TypeRunHistoryExportResult, envelope.RequestID, RunHistoryExportResultPayload{
+			SessionID: payload.SessionID,
+			RunID:     payload.RunID,
+			Status:    "started",
+		}); err != nil {
+			return err
+		}
+		result, err := h.service.ExportRunHistory(ctx, workspaceorchestrator.RunHistoryExportRequest{
+			SessionID:   payload.SessionID,
+			RunID:       payload.RunID,
+			DirectUser:  true,
+			RequestedAt: time.Now().UTC(),
+		})
+		if err != nil {
+			_ = write(TypeRunHistoryExportResult, envelope.RequestID, RunHistoryExportResultPayload{
+				SessionID: payload.SessionID,
+				RunID:     payload.RunID,
+				Status:    "error",
+			})
+			return write(TypeError, envelope.RequestID, ErrorPayload{Code: "run_history_export_failed", Message: err.Error(), RunID: payload.RunID, SessionID: payload.SessionID})
+		}
+		return write(TypeRunHistoryExportResult, envelope.RequestID, RunHistoryExportResultPayload{
+			SessionID:   result.SessionID,
+			RunID:       result.RunID,
+			Status:      result.Status,
+			ExportPath:  result.ExportPath,
+			GeneratedAt: result.GeneratedAt.Format(time.RFC3339),
+		})
+	case TypeAgentRunReplayControl:
+		var payload AgentRunReplayControlPayload
+		if err := decodePayload(envelope.Payload, &payload); err != nil {
+			return err
+		}
+		if err := h.service.ReplayControl(ctx, workspaceorchestrator.ReplayControlInput{
+			SessionID:  payload.SessionID,
+			RunID:      payload.RunID,
+			Action:     workspaceorchestrator.ReplayAction(payload.Action),
+			CursorMS:   payload.CursorMS,
+			Speed:      payload.Speed,
+			DirectUser: true,
+		}, func(stream workspaceorchestrator.StreamEnvelope) error {
+			return write(stream.Type, envelope.RequestID, stream.Payload)
+		}); err != nil {
+			return write(TypeError, envelope.RequestID, ErrorPayload{Code: "agent_run_replay_control_failed", Message: err.Error()})
+		}
+		return nil
 	case TypeAgentRunCancel:
 		var payload AgentRunCancelPayload
 		if err := decodePayload(envelope.Payload, &payload); err != nil {
@@ -292,6 +388,20 @@ func (h *Handler) handleMessage(ctx context.Context, envelope Envelope, write fu
 			Message: "Relay did not recognize that workspace message type.",
 		})
 	}
+}
+
+func parseOptionalTimestamp(value string) (*time.Time, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, nil
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02"} {
+		parsed, err := time.Parse(layout, trimmed)
+		if err == nil {
+			return &parsed, nil
+		}
+	}
+	return nil, fmt.Errorf("invalid timestamp %q", value)
 }
 
 func toRepositoryBrowsePayload(result workspaceorchestrator.RepositoryBrowseResult) RepositoryBrowseResultPayload {
@@ -450,6 +560,7 @@ func summarizeRunPayload(runs []workspaceorchestrator.RunSummary) []AgentRunSumm
 	for _, run := range runs {
 		item := AgentRunSummary{
 			ID:              run.ID,
+			GeneratedTitle:  run.GeneratedTitle,
 			TaskTextPreview: run.TaskTextPreview,
 			Role:            string(run.Role),
 			Model:           run.Model,
@@ -457,6 +568,9 @@ func summarizeRunPayload(runs []workspaceorchestrator.RunSummary) []AgentRunSumm
 			ErrorCode:       run.ErrorCode,
 			StartedAt:       run.StartedAt.Format(time.RFC3339),
 			HasToolActivity: run.HasToolActivity,
+			AgentCount:      run.AgentCount,
+			FinalStatus:     run.FinalStatus,
+			HasFileChanges:  run.HasFileChanges,
 		}
 		if run.CompletedAt != nil {
 			item.CompletedAt = run.CompletedAt.Format(time.RFC3339)
@@ -465,6 +579,29 @@ func summarizeRunPayload(runs []workspaceorchestrator.RunSummary) []AgentRunSumm
 	}
 
 	return items
+}
+
+func toRunHistoryDetailsPayload(details workspaceorchestrator.RunHistoryDetails) RunHistoryDetailsResultPayload {
+	records := make([]RunChangeRecordPayload, 0, len(details.ChangeRecords))
+	for _, record := range details.ChangeRecords {
+		records = append(records, RunChangeRecordPayload{
+			ToolCallID:      record.ToolCallID,
+			Path:            record.Path,
+			OriginalContent: record.OriginalContent,
+			ProposedContent: record.ProposedContent,
+			BaseContentHash: record.BaseContentHash,
+			ApprovalState:   record.ApprovalState,
+			OccurredAt:      record.OccurredAt.Format(time.RFC3339),
+		})
+	}
+	return RunHistoryDetailsResultPayload{
+		SessionID:      details.SessionID,
+		RunID:          details.RunID,
+		GeneratedTitle: details.GeneratedTitle,
+		FinalStatus:    details.FinalStatus,
+		AgentCount:     details.AgentCount,
+		ChangeRecords:  records,
+	}
 }
 
 func summarizeApprovalPayload(approvals []workspaceorchestrator.ApprovalSummary) []ApprovalRequestPayload {
