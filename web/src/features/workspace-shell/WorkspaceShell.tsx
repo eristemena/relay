@@ -4,21 +4,30 @@ import { startTransition, useEffect, useMemo, useState } from "react";
 import { AgentCommandBar } from "@/features/agent-panel/AgentCommandBar";
 import { ApprovalReviewPanel } from "@/features/approvals/ApprovalReviewPanel";
 import { WorkspaceCanvas } from "@/features/canvas/WorkspaceCanvas";
+import { getSelectedCanvasNode } from "@/features/canvas/canvasModel";
 import {
   WorkspaceCanvasToolbar,
   type WorkspaceCanvasPanelId,
 } from "@/features/canvas/WorkspaceCanvasToolbar";
+import { RepositoryFileTreePanel } from "@/features/history/RepositoryFileTreePanel";
 import { RunHistoryPanel } from "@/features/history/RunHistoryPanel";
+import { SidebarTabs } from "@/features/history/SidebarTabs";
 import { ReplayDock } from "@/features/history/replay/ReplayDock";
 import { SessionSidebar } from "@/features/history/SessionSidebar";
 import { PreferencesPanel } from "@/features/preferences/PreferencesPanel";
 import { FormattedMarkdown } from "@/shared/lib/FormattedMarkdown";
+import type { AgentRunSummary } from "@/shared/lib/workspace-protocol";
 import {
   hasWorkspaceStatusBanner,
   WorkspaceStatusBanner,
 } from "@/features/workspace-shell/WorkspaceStatusBanner";
 import { useWorkspaceSocket } from "@/shared/lib/useWorkspaceSocket";
-import { useWorkspaceStore } from "@/shared/lib/workspace-store";
+import {
+  clearWorkspaceCanvasSelection,
+  setWorkspaceRepositoryTreeActiveTab,
+  toggleWorkspaceRepositoryTreePath,
+  useWorkspaceStore,
+} from "@/shared/lib/workspace-store";
 
 export function WorkspaceShell() {
   const [activePanel, setActivePanel] = useState<WorkspaceCanvasPanelId | null>(
@@ -33,6 +42,7 @@ export function WorkspaceShell() {
     openRun,
     openSession,
     queryRunHistory,
+    requestRepositoryTree,
     respondToApproval,
     savePreferences,
     submitRun,
@@ -64,6 +74,10 @@ export function WorkspaceShell() {
   const repositoryBrowser = useWorkspaceStore(
     (state) => state.repositoryBrowser,
   );
+  const connectedRepository = useWorkspaceStore(
+    (state) => state.connectedRepository,
+  );
+  const repositoryTree = useWorkspaceStore((state) => state.repositoryTree);
   const preferences = useWorkspaceStore((state) => state.preferences);
   const uiState = useWorkspaceStore((state) => state.uiState);
   const status = useWorkspaceStore((state) => state.status);
@@ -123,6 +137,14 @@ export function WorkspaceShell() {
   const selectedExportState = selectedHistoryRunId
     ? (exportStateByRunId[selectedHistoryRunId] ?? null)
     : null;
+  const selectedCanvasNode = visibleRunDocument
+    ? getSelectedCanvasNode(visibleRunDocument)
+    : null;
+  const repositoryTreeRunId = selectedHistoryRunId || activeRunId;
+  const selectedRunIsLive = isLiveRunState(selectedHistoryRun?.state);
+  const showRightRail = Boolean(activeSessionId && selectedHistoryRun);
+  const showRepositoryTreeOnly = showRightRail && selectedRunIsLive;
+  const showRightRailTabs = showRightRail && !selectedRunIsLive;
 
   useEffect(() => {
     if (selectedPendingApproval) {
@@ -143,7 +165,14 @@ export function WorkspaceShell() {
         date_to: runHistoryQuery?.date_to,
       });
     });
-  }, [activePanel, activeSessionId]);
+  }, [
+    activePanel,
+    activeSessionId,
+    runHistoryQuery?.date_from,
+    runHistoryQuery?.date_to,
+    runHistoryQuery?.file_path,
+    runHistoryQuery?.query,
+  ]);
 
   useEffect(() => {
     if (
@@ -161,9 +190,49 @@ export function WorkspaceShell() {
   }, [
     activePanel,
     activeSessionId,
-    getRunHistoryDetails,
     selectedHistoryRunDetails,
     selectedHistoryRunId,
+  ]);
+
+  useEffect(() => {
+    if (
+      connectionState !== "connected" ||
+      !activeSessionId ||
+      !repositoryTreeRunId ||
+      connectedRepository.status !== "connected"
+    ) {
+      return;
+    }
+
+    if (
+      !showRepositoryTreeOnly &&
+      repositoryTree.activeTab !== "repository_tree"
+    ) {
+      return;
+    }
+
+    if (
+      repositoryTree.requestRunId === repositoryTreeRunId &&
+      (repositoryTree.status === "loading" ||
+        repositoryTree.status === "ready" ||
+        repositoryTree.status === "empty")
+    ) {
+      return;
+    }
+
+    startTransition(() => {
+      requestRepositoryTree(activeSessionId, repositoryTreeRunId);
+    });
+  }, [
+    activeSessionId,
+    connectedRepository.status,
+    connectionState,
+    repositoryTreeRunId,
+    repositoryTree.activeTab,
+    repositoryTree.requestRunId,
+    repositoryTree.status,
+    requestRepositoryTree,
+    showRepositoryTreeOnly,
   ]);
 
   useEffect(() => {
@@ -323,13 +392,16 @@ export function WorkspaceShell() {
     createSession,
     openRun,
     openSession,
+    connectedRepository,
     pendingApprovalCount,
     preferences,
     repositoryBrowser,
+    repositoryTree,
     repositorySummaryMessage,
     repositorySummaryTitle,
     respondToApproval,
     queryRunHistory,
+    requestRepositoryTree,
     getRunHistoryDetails,
     controlReplay,
     exportRunHistory,
@@ -338,6 +410,7 @@ export function WorkspaceShell() {
     runHistoryQuery,
     runHistoryResults,
     savePreferences,
+    selectedCanvasNode,
     selectedExportState,
     selectedPendingApproval,
     selectedReplayState,
@@ -346,6 +419,7 @@ export function WorkspaceShell() {
     selectedHistoryRunId,
     selectedRunId,
     sessions,
+    toggleWorkspaceRepositoryTreePath,
     uiState.history_state,
     uiState.save_state,
     visibleRunDocument,
@@ -366,6 +440,33 @@ export function WorkspaceShell() {
     />
   );
   const commandBarDisabled = !activeSessionId || Boolean(activeRunId);
+  const repositoryTreePanel = (
+    <RepositoryFileTreePanel
+      connectedRepository={connectedRepository}
+      onClearSelectedAgent={() => {
+        if (!repositoryTreeRunId) {
+          return;
+        }
+        clearWorkspaceCanvasSelection(repositoryTreeRunId);
+      }}
+      onRetry={() => {
+        if (
+          !activeSessionId ||
+          !repositoryTreeRunId ||
+          connectedRepository.status !== "connected"
+        ) {
+          return;
+        }
+        startTransition(() => {
+          requestRepositoryTree(activeSessionId, repositoryTreeRunId);
+        });
+      }}
+      onTogglePath={(path) => toggleWorkspaceRepositoryTreePath(path)}
+      repositoryTree={repositoryTree}
+      selectedAgentId={selectedCanvasNode?.id ?? null}
+      selectedAgentLabel={selectedCanvasNode?.label ?? null}
+    />
+  );
 
   return (
     <div className="mx-auto flex h-[100dvh] w-full max-w-[120rem] flex-col overflow-hidden px-4 py-4 md:px-6 md:py-6">
@@ -407,7 +508,7 @@ export function WorkspaceShell() {
       >
         <section
           className={
-            selectedHistoryRun && activeSessionId
+            showRightRail
               ? "grid min-h-0 min-w-0 gap-4 overflow-hidden xl:grid-cols-[minmax(0,1.65fr)_minmax(24rem,0.75fr)]"
               : "grid min-h-0 min-w-0 gap-4 overflow-hidden"
           }
@@ -447,39 +548,75 @@ export function WorkspaceShell() {
               </section>
             </div>
           </div>
-          {selectedHistoryRun && activeSessionId ? (
-            <ReplayDock
-              exportState={selectedExportState}
-              onBrowseRuns={() => setActivePanel("history")}
-              onExport={() => {
-                if (!selectedHistoryRunId) {
-                  return;
-                }
-                startTransition(() => {
-                  exportRunHistory(activeSessionId, selectedHistoryRunId);
-                });
-              }}
-              onReplayControl={(payload) => {
-                if (!selectedHistoryRunId) {
-                  return;
-                }
-                startTransition(() => {
-                  controlReplay({
-                    session_id: activeSessionId,
-                    run_id: selectedHistoryRunId,
-                    action: payload.action,
-                    cursor_ms: payload.cursor_ms,
-                    speed: payload.speed,
-                  });
-                });
-              }}
-              replayState={selectedReplayState}
-              selectedRun={selectedHistoryRun}
-            />
+          {showRepositoryTreeOnly ? (
+            repositoryTreePanel
+          ) : showRightRailTabs && selectedHistoryRun ? (
+            <section className="flex min-h-0 flex-col gap-4">
+              <SidebarTabs
+                activeTab={repositoryTree.activeTab}
+                onChange={(tab) => setWorkspaceRepositoryTreeActiveTab(tab)}
+              />
+              {repositoryTree.activeTab === "replay" ? (
+                <div
+                  aria-labelledby="replay-tab"
+                  className="min-h-0 flex-1"
+                  id="replay-tabpanel"
+                  role="tabpanel"
+                >
+                  <ReplayDock
+                    exportState={selectedExportState}
+                    onBrowseRuns={() => setActivePanel("history")}
+                    onExport={() => {
+                      if (!selectedHistoryRunId) {
+                        return;
+                      }
+                      startTransition(() => {
+                        exportRunHistory(activeSessionId, selectedHistoryRunId);
+                      });
+                    }}
+                    onReplayControl={(payload) => {
+                      if (!selectedHistoryRunId) {
+                        return;
+                      }
+                      startTransition(() => {
+                        controlReplay({
+                          session_id: activeSessionId,
+                          run_id: selectedHistoryRunId,
+                          action: payload.action,
+                          cursor_ms: payload.cursor_ms,
+                          speed: payload.speed,
+                        });
+                      });
+                    }}
+                    replayState={selectedReplayState}
+                    selectedRun={selectedHistoryRun}
+                  />
+                </div>
+              ) : (
+                <div
+                  aria-labelledby="repository-tree-tab"
+                  className="min-h-0 flex-1 overflow-hidden"
+                  id="repository-tree-tabpanel"
+                  role="tabpanel"
+                >
+                  {repositoryTreePanel}
+                </div>
+              )}
+            </section>
           ) : null}
         </section>
       </main>
     </div>
+  );
+}
+
+function isLiveRunState(state: AgentRunSummary["state"] | undefined) {
+  return (
+    state === "accepted" ||
+    state === "active" ||
+    state === "thinking" ||
+    state === "tool_running" ||
+    state === "approval_required"
   );
 }
 

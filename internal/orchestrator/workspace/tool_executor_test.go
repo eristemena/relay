@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/erisristemena/relay/internal/agents"
+	"github.com/erisristemena/relay/internal/storage/sqlite"
 	toolspkg "github.com/erisristemena/relay/internal/tools"
 	git "github.com/go-git/go-git/v5"
 )
@@ -75,6 +76,41 @@ func TestCatalogToolExecutorExecutesReadFileWithinProjectRoot(t *testing.T) {
 	}
 	if result.ToolCallID != "call_123" {
 		t.Fatalf("result.ToolCallID = %q, want call_123", result.ToolCallID)
+	}
+}
+
+func TestCatalogToolExecutorRecordsReadTouchesFromToolMetadata(t *testing.T) {
+	projectRoot := initWorkspaceRepositoryRoot(t)
+	if err := os.MkdirAll(filepath.Join(projectRoot, "docs"), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, "docs", "guide.md"), []byte("alpha\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	approvals := &stubApprovalManager{}
+	executor := newCatalogToolExecutor(projectRoot, approvals)
+	ctx := withRunExecutionContext(context.Background(), runExecutionContext{
+		SessionID: "session_alpha",
+		RunID:     "run_1",
+		AgentID:   "agent_coder_1",
+		Role:      agents.NewCoder("model").Role,
+		Model:     "model",
+		Emit:      func(StreamEnvelope) error { return nil },
+	})
+
+	result, err := executor.ExecuteTool(ctx, "call_read_touch", agents.ToolReadFile, json.RawMessage(`{"path":"docs/guide.md"}`))
+	if err != nil {
+		t.Fatalf("ExecuteTool() error = %v", err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("result.Status = %q, want completed", result.Status)
+	}
+	if len(approvals.touches) != 1 {
+		t.Fatalf("len(approvals.touches) = %d, want 1", len(approvals.touches))
+	}
+	if approvals.touches[0].FilePath != "docs/guide.md" || approvals.touches[0].TouchType != sqlite.TouchTypeRead {
+		t.Fatalf("approvals.touches[0] = %#v, want docs/guide.md read touch", approvals.touches[0])
 	}
 }
 
@@ -340,6 +376,7 @@ func TestCatalogToolExecutorPreviewAndSchemaHelpers(t *testing.T) {
 type stubApprovalManager struct {
 	decision ApprovalDecision
 	request  ApprovalRequest
+	touches  []recordedTouch
 }
 
 func (s *stubApprovalManager) RequestApproval(_ context.Context, request ApprovalRequest) (ApprovalDecision, error) {
@@ -348,6 +385,16 @@ func (s *stubApprovalManager) RequestApproval(_ context.Context, request Approva
 	}
 	s.request = request
 	return s.decision, nil
+}
+
+func (s *stubApprovalManager) RecordFileTouch(_ context.Context, filePath string, touchType string) error {
+	s.touches = append(s.touches, recordedTouch{FilePath: filePath, TouchType: touchType})
+	return nil
+}
+
+type recordedTouch struct {
+	FilePath  string
+	TouchType string
 }
 
 func initWorkspaceRepositoryRoot(t *testing.T) string {

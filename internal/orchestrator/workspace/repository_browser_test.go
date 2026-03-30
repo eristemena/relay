@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	git "github.com/go-git/go-git/v5"
@@ -72,5 +74,72 @@ func TestService_BrowseRepositoryRejectsInvalidPaths(t *testing.T) {
 	}
 	if _, err := service.BrowseRepository(context.Background(), RepositoryBrowseInput{Path: filePath}); err == nil {
 		t.Fatal("BrowseRepository(file) error = nil, want validation failure")
+	}
+}
+
+func TestDefaultRepositoryTreeBuilderBuildsSortedRelativePaths(t *testing.T) {
+	repositoryRoot := t.TempDir()
+	if _, err := git.PlainInit(repositoryRoot, false); err != nil {
+		t.Fatalf("git.PlainInit() error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(repositoryRoot, "docs", "guides"), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repositoryRoot, "README.md"), []byte("relay\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(README.md) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repositoryRoot, "docs", "guides", "setup.md"), []byte("setup\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(setup.md) error = %v", err)
+	}
+
+	snapshot, err := defaultRepositoryTreeBuilder(context.Background(), repositoryRoot)
+	if err != nil {
+		t.Fatalf("defaultRepositoryTreeBuilder() error = %v", err)
+	}
+	if snapshot.RepositoryRoot != repositoryRoot {
+		t.Fatalf("snapshot.RepositoryRoot = %q, want %q", snapshot.RepositoryRoot, repositoryRoot)
+	}
+	wantPaths := []string{"README.md", "docs", "docs/guides", "docs/guides/setup.md"}
+	if !reflect.DeepEqual(snapshot.Paths, wantPaths) {
+		t.Fatalf("snapshot.Paths = %#v, want %#v", snapshot.Paths, wantPaths)
+	}
+}
+
+func TestDefaultRepositoryTreeBuilderSkipsGitIgnoredPaths(t *testing.T) {
+	repositoryRoot := t.TempDir()
+	if _, err := git.PlainInit(repositoryRoot, false); err != nil {
+		t.Fatalf("git.PlainInit() error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(repositoryRoot, "node_modules", "left-pad"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(node_modules) error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(repositoryRoot, "src"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(src) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repositoryRoot, ".gitignore"), []byte("node_modules/\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(.gitignore) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repositoryRoot, "node_modules", "left-pad", "index.js"), []byte("module.exports = {};\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(index.js) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repositoryRoot, "src", "app.ts"), []byte("export const app = true;\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(app.ts) error = %v", err)
+	}
+
+	snapshot, err := defaultRepositoryTreeBuilder(context.Background(), repositoryRoot)
+	if err != nil {
+		t.Fatalf("defaultRepositoryTreeBuilder() error = %v", err)
+	}
+	if reflect.DeepEqual(snapshot.Paths, []string{}) {
+		t.Fatal("snapshot.Paths is empty, want tracked paths")
+	}
+	for _, path := range snapshot.Paths {
+		if strings.HasPrefix(path, "node_modules") {
+			t.Fatalf("snapshot.Paths contains ignored path %q", path)
+		}
+	}
+	wantPaths := []string{".gitignore", "src", "src/app.ts"}
+	if !reflect.DeepEqual(snapshot.Paths, wantPaths) {
+		t.Fatalf("snapshot.Paths = %#v, want %#v", snapshot.Paths, wantPaths)
 	}
 }

@@ -279,6 +279,66 @@ func TestHandlerHandleMessage_RoutesServiceActionsAndMapsErrors(t *testing.T) {
 		}
 	})
 
+	t.Run("repository tree success and failure", func(t *testing.T) {
+		service.repositoryTreeResult = workspaceorchestrator.RepositoryTreeResult{
+			SessionID:      "session_alpha",
+			RunID:          "run_tree_1",
+			RepositoryRoot: "/tmp/repos/relay",
+			Status:         "ready",
+			Message:        "Repository tree is ready.",
+			Paths:          []string{"cmd", "cmd/relay", "cmd/relay/main.go"},
+			TouchedFiles: []workspaceorchestrator.TouchedFileSummary{{
+				RunID:     "run_tree_1",
+				AgentID:   "agent_coder_1",
+				FilePath:  "cmd/relay/main.go",
+				TouchType: "read",
+			}},
+		}
+
+		calls := make([]capturedWrite, 0, 1)
+		err := handler.handleMessage(context.Background(), Envelope{
+			Type:      TypeRepositoryTreeRequest,
+			RequestID: "req_tree",
+			Payload: mustMarshalJSON(t, RepositoryTreeRequestPayload{
+				SessionID: "session_alpha",
+				RunID:     "run_tree_1",
+			}),
+		}, captureWrites(&calls))
+		if err != nil {
+			t.Fatalf("handleMessage() repository tree error = %v", err)
+		}
+		assertWriteType(t, calls, TypeRepositoryTreeResult)
+		payload := calls[0].payload.(RepositoryTreeResultPayload)
+		if payload.RepositoryRoot != "/tmp/repos/relay" || len(payload.Paths) != 3 {
+			t.Fatalf("repository tree payload = %#v, want ready tree snapshot", payload)
+		}
+		if len(payload.TouchedFiles) != 1 {
+			t.Fatalf("len(payload.TouchedFiles) = %d, want 1", len(payload.TouchedFiles))
+		}
+		if payload.TouchedFiles[0].RunID != "run_tree_1" || payload.TouchedFiles[0].AgentID != "agent_coder_1" || payload.TouchedFiles[0].FilePath != "cmd/relay/main.go" || payload.TouchedFiles[0].TouchType != "read" {
+			t.Fatalf("payload.TouchedFiles[0] = %#v, want restored touched-file payload", payload.TouchedFiles[0])
+		}
+		if service.repositoryTreeInput.RunID != "run_tree_1" {
+			t.Fatalf("service.repositoryTreeInput.RunID = %q, want run_tree_1", service.repositoryTreeInput.RunID)
+		}
+
+		service.repositoryTreeErr = errors.New("tree failed")
+		defer func() { service.repositoryTreeErr = nil }()
+		calls = make([]capturedWrite, 0, 1)
+		err = handler.handleMessage(context.Background(), Envelope{
+			Type:      TypeRepositoryTreeRequest,
+			RequestID: "req_tree_fail",
+			Payload:   mustMarshalJSON(t, RepositoryTreeRequestPayload{SessionID: "session_alpha"}),
+		}, captureWrites(&calls))
+		if err != nil {
+			t.Fatalf("handleMessage() repository tree failure error = %v", err)
+		}
+		assertWriteType(t, calls, TypeError)
+		if calls[0].payload.(ErrorPayload).Code != "repository_tree_failed" {
+			t.Fatalf("repository tree failure payload = %#v, want repository_tree_failed", calls[0].payload)
+		}
+	})
+
 	t.Run("run history query and details", func(t *testing.T) {
 		service.runHistoryRuns = []workspaceorchestrator.RunSummary{{
 			ID:              "run_history_1",
@@ -554,6 +614,7 @@ type stubService struct {
 	cancelInput            workspaceorchestrator.CancelRunInput
 	approvalInput          workspaceorchestrator.ApprovalResponseInput
 	browseInput            workspaceorchestrator.RepositoryBrowseInput
+	repositoryTreeInput    workspaceorchestrator.RepositoryTreeRequestInput
 	runHistoryQueryInput   workspaceorchestrator.RunHistoryQueryInput
 	runHistoryRuns         []workspaceorchestrator.RunSummary
 	runHistoryDetails      workspaceorchestrator.RunHistoryDetails
@@ -561,10 +622,12 @@ type stubService struct {
 	runHistoryDetailsRunID string
 	runHistoryExportInput  workspaceorchestrator.RunHistoryExportRequest
 	runHistoryExportResult workspaceorchestrator.RunHistoryExportResult
+	repositoryTreeResult   workspaceorchestrator.RepositoryTreeResult
 	replayControlInput     workspaceorchestrator.ReplayControlInput
 	openErr                error
 	submitErr              error
 	browseErr              error
+	repositoryTreeErr      error
 }
 
 func (s *stubService) Bootstrap(_ context.Context, lastSessionID string) (workspaceorchestrator.WorkspaceSnapshot, error) {
@@ -581,6 +644,14 @@ func (s *stubService) BrowseRepository(_ context.Context, input workspaceorchest
 		return workspaceorchestrator.RepositoryBrowseResult{}, s.browseErr
 	}
 	return s.repositoryBrowseResult, nil
+}
+
+func (s *stubService) GetRepositoryTree(_ context.Context, input workspaceorchestrator.RepositoryTreeRequestInput) (workspaceorchestrator.RepositoryTreeResult, error) {
+	s.repositoryTreeInput = input
+	if s.repositoryTreeErr != nil {
+		return workspaceorchestrator.RepositoryTreeResult{}, s.repositoryTreeErr
+	}
+	return s.repositoryTreeResult, nil
 }
 
 func (s *stubService) CreateSession(_ context.Context, displayName string) (workspaceorchestrator.WorkspaceSnapshot, error) {

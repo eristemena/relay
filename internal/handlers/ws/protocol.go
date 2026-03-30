@@ -8,6 +8,9 @@ const (
 	TypeWorkspaceStatus           = "workspace.status"
 	TypeRepositoryBrowseRequest   = "repository.browse.request"
 	TypeRepositoryBrowseResult    = "repository.browse.result"
+	TypeRepositoryTreeRequest     = "repository.tree.request"
+	TypeRepositoryTreeResult      = "repository.tree.result"
+	TypeFileTouched               = "file_touched"
 	TypeRepositoryGraphStatus     = "repository_graph_status"
 	TypeSessionCreate             = "session.create"
 	TypeSessionCreated            = "session.created"
@@ -75,6 +78,38 @@ type RepositoryDirectoryPayload struct {
 type RepositoryBrowseResultPayload struct {
 	Path        string                       `json:"path"`
 	Directories []RepositoryDirectoryPayload `json:"directories"`
+}
+
+type RepositoryTreeRequestPayload struct {
+	SessionID string `json:"session_id"`
+	RunID     string `json:"run_id,omitempty"`
+}
+
+type TouchedFilePayload struct {
+	RunID     string `json:"run_id"`
+	AgentID   string `json:"agent_id"`
+	FilePath  string `json:"file_path"`
+	TouchType string `json:"touch_type"`
+}
+
+type RepositoryTreeResultPayload struct {
+	SessionID      string               `json:"session_id,omitempty"`
+	RunID          string               `json:"run_id,omitempty"`
+	RepositoryRoot string               `json:"repository_root,omitempty"`
+	Status         string               `json:"status"`
+	Message        string               `json:"message,omitempty"`
+	Paths          []string             `json:"paths,omitempty"`
+	TouchedFiles   []TouchedFilePayload `json:"touched_files,omitempty"`
+}
+
+type FileTouchedPayload struct {
+	SessionID string `json:"session_id"`
+	RunID     string `json:"run_id"`
+	AgentID   string `json:"agent_id"`
+	Role      string `json:"role"`
+	FilePath  string `json:"file_path"`
+	TouchType string `json:"touch_type"`
+	Replay    bool   `json:"replay"`
 }
 
 type RepositoryGraphStatusPayload struct {

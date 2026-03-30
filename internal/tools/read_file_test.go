@@ -41,6 +41,20 @@ func TestReadFileToolDefaultsToWholeFile(t *testing.T) {
 	}
 }
 
+func TestReadFileToolPreviewPreservesRelativePathMetadata(t *testing.T) {
+	projectRoot := initRepositoryRoot(t)
+	writeTextFile(t, filepath.Join(projectRoot, "docs", "guide.md"), "alpha\n")
+
+	tool := NewReadFileTool(projectRoot)
+	result, err := tool.Execute(context.Background(), json.RawMessage(`{"path":"docs/guide.md"}`))
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Preview["path"] != "docs/guide.md" {
+		t.Fatalf("result.Preview[path] = %v, want docs/guide.md", result.Preview["path"])
+	}
+}
+
 func TestReadFileToolRejectsPathsOutsideRoot(t *testing.T) {
 	tool := NewReadFileTool(initRepositoryRoot(t))
 	_, err := tool.Execute(context.Background(), json.RawMessage(`{"path":"../secrets.txt"}`))

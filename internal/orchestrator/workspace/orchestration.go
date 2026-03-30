@@ -194,6 +194,7 @@ func (s *Service) executeStage(ctx context.Context, run sqlite.AgentRun, cfg con
 	stageCtx := withRunExecutionContext(ctx, runExecutionContext{
 		SessionID: run.SessionID,
 		RunID:     run.ID,
+		AgentID:   storedExecution.ID,
 		Emit: func(envelope StreamEnvelope) error {
 			return s.dispatchRunEnvelope(run.ID, envelope)
 		},

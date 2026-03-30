@@ -83,6 +83,7 @@ func (s *Service) executeRun(runCtx context.Context, run sqlite.AgentRun, task s
 	runCtx = withRunExecutionContext(runCtx, runExecutionContext{
 		SessionID: run.SessionID,
 		RunID:     run.ID,
+		AgentID:   string(run.Role),
 		Emit: func(envelope StreamEnvelope) error {
 			return s.dispatchRunEnvelope(run.ID, envelope)
 		},
@@ -108,6 +109,7 @@ func (s *Service) executeLegacyRun(runCtx context.Context, run sqlite.AgentRun, 
 	runCtx = withRunExecutionContext(runCtx, runExecutionContext{
 		SessionID: run.SessionID,
 		RunID:     run.ID,
+		AgentID:   string(profile.Role),
 		Emit: func(envelope StreamEnvelope) error {
 			return s.dispatchRunEnvelope(run.ID, envelope)
 		},

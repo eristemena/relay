@@ -14,6 +14,8 @@ import {
 } from "@/shared/lib/test-helpers";
 import {
   resetWorkspaceStore,
+  selectWorkspaceCanvasNode,
+  startWorkspaceRepositoryTreeLoad,
   workspaceStore,
 } from "@/shared/lib/workspace-store";
 
@@ -56,6 +58,7 @@ const socketActions = {
   openRun: vi.fn(),
   openSession: vi.fn(),
   queryRunHistory: vi.fn(),
+  requestRepositoryTree: vi.fn(),
   respondToApproval: vi.fn(),
   savePreferences: vi.fn(),
   submitRun: vi.fn(),
@@ -266,6 +269,263 @@ describe("WorkspaceShell", () => {
     ).toBeInTheDocument();
   });
 
+  it("switches historical replay tabs with keyboard navigation", async () => {
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        active_run_id: "run_tree_keyboard",
+        preferences: {
+          ...buildWorkspaceSnapshot().preferences,
+          project_root: "/tmp/relay",
+          project_root_configured: true,
+          project_root_valid: true,
+        },
+        ui_state: {
+          history_state: "ready",
+          canvas_state: "ready",
+          save_state: "idle",
+        },
+        run_summaries: [
+          {
+            id: "run_tree_keyboard",
+            task_text_preview: "Review repository activity",
+            role: "coder",
+            model: "anthropic/claude-sonnet-4-5",
+            state: "completed",
+            started_at: "2026-03-24T12:00:00Z",
+            has_tool_activity: true,
+          },
+        ],
+      }),
+    );
+
+    render(<WorkspaceShell />);
+
+    const replayTab = await screen.findByRole("tab", {
+      name: /historical replay/i,
+    });
+    replayTab.focus();
+    fireEvent.keyDown(replayTab, { key: "ArrowRight" });
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("tab", { name: /repository tree/i }),
+      ).toHaveAttribute("aria-selected", "true");
+    });
+    expect(socketActions.requestRepositoryTree).toHaveBeenCalledWith(
+      "session_alpha",
+      "run_tree_keyboard",
+    );
+  });
+
+  it("does not repeatedly request the repository tree while the same run is already loading", async () => {
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        active_run_id: "run_tree_loading",
+        preferences: {
+          ...buildWorkspaceSnapshot().preferences,
+          project_root: "/tmp/relay",
+          project_root_configured: true,
+          project_root_valid: true,
+        },
+        ui_state: {
+          history_state: "ready",
+          canvas_state: "ready",
+          save_state: "idle",
+        },
+        run_summaries: [
+          {
+            id: "run_tree_loading",
+            task_text_preview: "Inspect repository load behavior",
+            role: "coder",
+            model: "anthropic/claude-sonnet-4-5",
+            state: "active",
+            started_at: "2026-03-24T12:00:00Z",
+            has_tool_activity: true,
+          },
+        ],
+      }),
+    );
+
+    render(<WorkspaceShell />);
+
+    await waitFor(() => {
+      expect(socketActions.requestRepositoryTree).toHaveBeenCalledTimes(1);
+    });
+
+    act(() => {
+      startWorkspaceRepositoryTreeLoad("run_tree_loading");
+    });
+
+    await waitFor(() => {
+      expect(socketActions.requestRepositoryTree).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("shows the disconnected repository tree state without requesting hydration", async () => {
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        active_run_id: "run_tree_disconnected",
+        preferences: {
+          ...buildWorkspaceSnapshot().preferences,
+          project_root: "",
+          project_root_configured: false,
+          project_root_valid: false,
+          project_root_message: "",
+        },
+        run_summaries: [
+          {
+            id: "run_tree_disconnected",
+            task_text_preview: "Inspect disconnected repository state",
+            role: "coder",
+            model: "anthropic/claude-sonnet-4-5",
+            state: "active",
+            started_at: "2026-03-24T12:00:00Z",
+            has_tool_activity: true,
+          },
+        ],
+        connected_repository: {
+          status: "not_configured",
+          path: "",
+          message: "Connect a local Git repository to browse its file tree.",
+        },
+      }),
+    );
+    render(<WorkspaceShell />);
+
+    const repositoryTreeRegion = await screen.findByRole("region", {
+      name: /connected files/i,
+    });
+
+    expect(socketActions.requestRepositoryTree).not.toHaveBeenCalled();
+    expect(
+      within(repositoryTreeRegion).getByText(/repository not connected/i),
+    ).toBeInTheDocument();
+    expect(
+      within(repositoryTreeRegion).getByText(
+        /connect a local git repository to browse its file tree/i,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the invalid repository tree state without requesting hydration", async () => {
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        active_run_id: "run_tree_invalid",
+        preferences: {
+          ...buildWorkspaceSnapshot().preferences,
+          project_root: "/tmp/not-a-repo",
+          project_root_configured: true,
+          project_root_valid: false,
+          project_root_message:
+            "Relay could not use the saved project root. Choose a valid local Git repository.",
+        },
+        run_summaries: [
+          {
+            id: "run_tree_invalid",
+            task_text_preview: "Inspect invalid repository state",
+            role: "coder",
+            model: "anthropic/claude-sonnet-4-5",
+            state: "active",
+            started_at: "2026-03-24T12:00:00Z",
+            has_tool_activity: true,
+          },
+        ],
+        connected_repository: {
+          status: "invalid",
+          path: "/tmp/not-a-repo",
+          message:
+            "Relay could not use the saved project root. Choose a valid local Git repository.",
+        },
+      }),
+    );
+    render(<WorkspaceShell />);
+
+    const repositoryTreeRegion = await screen.findByRole("region", {
+      name: /connected files/i,
+    });
+
+    expect(socketActions.requestRepositoryTree).not.toHaveBeenCalled();
+    expect(
+      within(repositoryTreeRegion).getByText(/repository needs attention/i),
+    ).toBeInTheDocument();
+    expect(
+      within(repositoryTreeRegion).getByText(
+        /relay could not use the saved project root/i,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("reveals deeper repository files only after folder expansion and keeps file rows read-only", async () => {
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        active_run_id: "run_tree_expand",
+        preferences: {
+          ...buildWorkspaceSnapshot().preferences,
+          project_root: "/tmp/relay",
+          project_root_configured: true,
+          project_root_valid: true,
+        },
+        ui_state: {
+          history_state: "ready",
+          canvas_state: "ready",
+          save_state: "idle",
+        },
+        run_summaries: [
+          {
+            id: "run_tree_expand",
+            task_text_preview: "Browse repository tree",
+            role: "coder",
+            model: "anthropic/claude-sonnet-4-5",
+            state: "active",
+            started_at: "2026-03-24T12:00:00Z",
+            has_tool_activity: true,
+          },
+        ],
+      }),
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "repository.tree.result",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_tree_expand",
+          repository_root: "/tmp/relay",
+          status: "ready",
+          message: "Repository tree is ready.",
+          paths: ["README.md", "docs", "docs/guides", "docs/guides/setup.md"],
+          touched_files: [
+            {
+              run_id: "run_tree_expand",
+              agent_id: "agent_coder_1",
+              file_path: "docs/guides/setup.md",
+              touch_type: "read",
+            },
+          ],
+        },
+      } as never);
+    });
+
+    render(<WorkspaceShell />);
+
+    expect(socketActions.requestRepositoryTree).not.toHaveBeenCalled();
+
+    expect(screen.getByText("guides")).toBeInTheDocument();
+    expect(screen.queryByText("setup.md")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^guides$/i }));
+
+    expect(await screen.findByText("setup.md")).toBeInTheDocument();
+
+    expect(
+      screen.queryByRole("button", { name: /^setup.md read$/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("setup.md")).toBeInTheDocument();
+    expect(socketActions.requestRepositoryTree).toHaveBeenCalledTimes(0);
+    expect(socketActions.openRun).not.toHaveBeenCalled();
+    expect(socketActions.browseRepository).not.toHaveBeenCalled();
+  });
+
   it("closes the history dialog after opening a saved run and keeps replay controls visible", async () => {
     primeWorkspaceStore(
       buildWorkspaceSnapshot({
@@ -409,6 +669,236 @@ describe("WorkspaceShell", () => {
 
     expect(slider).toHaveValue("1200");
     expect(screen.getByText("1200 ms")).toBeInTheDocument();
+  });
+
+  it("filters the repository tree to the selected canvas agent", async () => {
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        active_run_id: "run_tree_1",
+        preferences: {
+          ...buildWorkspaceSnapshot().preferences,
+          project_root: "/tmp/relay",
+          project_root_configured: true,
+          project_root_valid: true,
+        },
+        ui_state: {
+          history_state: "ready",
+          canvas_state: "ready",
+          save_state: "idle",
+        },
+        run_summaries: [
+          {
+            id: "run_tree_1",
+            task_text_preview: "Review repository activity",
+            role: "coder",
+            model: "anthropic/claude-sonnet-4-5",
+            state: "active",
+            started_at: "2026-03-24T12:00:00Z",
+            has_tool_activity: true,
+          },
+        ],
+      }),
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_tree_1",
+          sequence: 1,
+          replay: false,
+          role: "coder",
+          model: "anthropic/claude-sonnet-4-5",
+          agent_id: "agent_coder_1",
+          label: "Coder",
+          spawn_order: 1,
+          occurred_at: "2026-03-24T12:00:00Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_tree_1",
+          sequence: 2,
+          replay: false,
+          role: "reviewer",
+          model: "anthropic/claude-sonnet-4-5",
+          agent_id: "agent_reviewer_1",
+          label: "Reviewer",
+          spawn_order: 2,
+          occurred_at: "2026-03-24T12:00:01Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "repository.tree.result",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_tree_1",
+          repository_root: "/tmp/relay",
+          status: "ready",
+          message: "Repository tree is ready.",
+          paths: ["README.md", "docs", "docs/review.md"],
+          touched_files: [
+            {
+              run_id: "run_tree_1",
+              agent_id: "agent_coder_1",
+              file_path: "README.md",
+              touch_type: "read",
+            },
+            {
+              run_id: "run_tree_1",
+              agent_id: "agent_reviewer_1",
+              file_path: "docs/review.md",
+              touch_type: "proposed",
+            },
+          ],
+        },
+      } as never);
+      selectWorkspaceCanvasNode("run_tree_1", "agent_coder_1");
+    });
+
+    render(<WorkspaceShell />);
+
+    expect(socketActions.requestRepositoryTree).not.toHaveBeenCalled();
+
+    expect(await screen.findByText(/filtered to coder/i)).toBeInTheDocument();
+    expect(screen.getByText("README.md")).toBeInTheDocument();
+    expect(screen.queryByText("review.md")).not.toBeInTheDocument();
+  });
+
+  it("shows a filtered empty state and clears back to the workspace-wide tree", async () => {
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        active_run_id: "run_tree_2",
+        preferences: {
+          ...buildWorkspaceSnapshot().preferences,
+          project_root: "/tmp/relay",
+          project_root_configured: true,
+          project_root_valid: true,
+        },
+        ui_state: {
+          history_state: "ready",
+          canvas_state: "ready",
+          save_state: "idle",
+        },
+        run_summaries: [
+          {
+            id: "run_tree_2",
+            task_text_preview: "Review repository activity",
+            role: "coder",
+            model: "anthropic/claude-sonnet-4-5",
+            state: "active",
+            started_at: "2026-03-24T12:00:00Z",
+            has_tool_activity: true,
+          },
+        ],
+      }),
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_tree_2",
+          sequence: 1,
+          replay: false,
+          role: "coder",
+          model: "anthropic/claude-sonnet-4-5",
+          agent_id: "agent_coder_1",
+          label: "Coder",
+          spawn_order: 1,
+          occurred_at: "2026-03-24T12:00:00Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_tree_2",
+          sequence: 2,
+          replay: false,
+          role: "tester",
+          model: "deepseek/deepseek-chat",
+          agent_id: "agent_tester_1",
+          label: "Tester",
+          spawn_order: 2,
+          occurred_at: "2026-03-24T12:00:01Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "repository.tree.result",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_tree_2",
+          repository_root: "/tmp/relay",
+          status: "ready",
+          message: "Repository tree is ready.",
+          paths: ["README.md", "docs", "docs/review.md"],
+          touched_files: [
+            {
+              run_id: "run_tree_2",
+              agent_id: "agent_coder_1",
+              file_path: "README.md",
+              touch_type: "read",
+            },
+          ],
+        },
+      } as never);
+      selectWorkspaceCanvasNode("run_tree_2", "agent_tester_1");
+    });
+
+    render(<WorkspaceShell />);
+
+    expect(
+      await screen.findByText(
+        /tester has not touched any files in the current tree yet/i,
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /show all files/i }));
+
+    expect(await screen.findByText(/all agents/i)).toBeInTheDocument();
+    expect(screen.getByText("README.md")).toBeInTheDocument();
+  });
+
+  it("shows file tree only for live runs and top-level tabs for reopened saved runs", async () => {
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        active_run_id: "run_live_tree_only",
+        preferences: {
+          ...buildWorkspaceSnapshot().preferences,
+          project_root: "/tmp/relay",
+          project_root_configured: true,
+          project_root_valid: true,
+        },
+        run_summaries: [
+          {
+            id: "run_live_tree_only",
+            task_text_preview: "Inspect live repository tree",
+            role: "coder",
+            model: "anthropic/claude-sonnet-4-5",
+            state: "active",
+            started_at: "2026-03-24T12:00:00Z",
+            has_tool_activity: true,
+          },
+        ],
+      }),
+    );
+
+    render(<WorkspaceShell />);
+
+    expect(
+      await screen.findByRole("region", { name: /connected files/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("tablist", { name: /run detail tabs/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: /historical replay/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("forwards repository browse requests from the preferences panel", async () => {

@@ -43,6 +43,8 @@ type Store interface {
 	ListPendingApprovalRequests(ctx context.Context, sessionID string) ([]sqlite.ApprovalRequest, error)
 	ListPendingApprovalRequestsForRun(ctx context.Context, runID string) ([]sqlite.ApprovalRequest, error)
 	ListApprovalRequestsForRun(ctx context.Context, runID string) ([]sqlite.ApprovalRequest, error)
+	RecordTouchedFile(ctx context.Context, touchedFile sqlite.TouchedFile) error
+	ListTouchedFilesForRun(ctx context.Context, runID string) ([]sqlite.TouchedFile, error)
 	UpdateApprovalRequestState(ctx context.Context, runID string, toolCallID string, state string, reviewedAt *time.Time, appliedAt *time.Time) error
 	ResolvePendingApprovalRequestsForRun(ctx context.Context, runID string, state string, reviewedAt *time.Time) error
 	UpdateAgentRun(ctx context.Context, run sqlite.AgentRun) error
@@ -63,6 +65,8 @@ type Service struct {
 	repositoryGraphBuilds    map[string]context.CancelFunc
 	repositoryGraphBuilder   repositoryGraphBuilder
 	repositoryGraphSignature repositoryGraphSignatureFunc
+	repositoryTrees          map[string]repositoryTreeCacheEntry
+	repositoryTreeBuilder    repositoryTreeBuilder
 	workspaceSubscribers     map[string]func(StreamEnvelope) error
 	replaySessions           map[string]replaySessionRuntime
 	modelContextLimits       *modelContextLimitResolver
@@ -263,12 +267,14 @@ func NewService(store Store, paths config.Paths) *Service {
 		pendingApprovals:      make(map[string]pendingApproval),
 		repositoryGraphs:      make(map[string]repositoryGraphCacheEntry),
 		repositoryGraphBuilds: make(map[string]context.CancelFunc),
+		repositoryTrees:       make(map[string]repositoryTreeCacheEntry),
 		workspaceSubscribers:  make(map[string]func(StreamEnvelope) error),
 		replaySessions:        make(map[string]replaySessionRuntime),
 		modelContextLimits:    newModelContextLimitResolver(),
 	}
 	service.repositoryGraphBuilder = defaultRepositoryGraphBuilder
 	service.repositoryGraphSignature = defaultRepositoryGraphSignature
+	service.repositoryTreeBuilder = defaultRepositoryTreeBuilder
 	service.runnerFactory = func(cfg config.Config, task string) agents.Runner {
 		registry := agents.NewRegistry(cfg.Agents.WithDefaults())
 		return registry.NewRunner(cfg.OpenRouter.APIKey, task, newCatalogToolExecutor(cfg.ProjectRoot, service))
@@ -717,6 +723,9 @@ func (s *Service) RequestApproval(ctx context.Context, request ApprovalRequest) 
 	summary, err := approvalSummaryFromRecord(record)
 	if err != nil {
 		return ApprovalDecision{}, err
+	}
+	if filePath, ok := request.InputPreview["path"].(string); ok {
+		_ = s.RecordFileTouch(ctx, filePath, sqlite.TouchTypeProposed)
 	}
 	pending := pendingApproval{
 		RunID:      request.RunID,

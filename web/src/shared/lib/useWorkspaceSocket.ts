@@ -10,6 +10,7 @@ import {
   createBootstrapRequest,
   createPreferencesSaveRequest,
   createRepositoryBrowseRequest,
+  createRepositoryTreeRequest,
   createRunHistoryDetailsRequest,
   createRunHistoryExportRequest,
   createRunHistoryQueryRequest,
@@ -23,6 +24,7 @@ import {
 } from "@/shared/lib/workspace-protocol";
 import {
   startWorkspaceRepositoryBrowse,
+  startWorkspaceRepositoryTreeLoad,
   workspaceStore,
 } from "@/shared/lib/workspace-store";
 
@@ -180,6 +182,10 @@ export function useWorkspaceSocket() {
     browseRepository(path?: string, showHidden = false) {
       startWorkspaceRepositoryBrowse(path ?? "", showHidden);
       sendEnvelope(createRepositoryBrowseRequest(path, showHidden));
+    },
+    requestRepositoryTree(sessionId: string, runId?: string) {
+      startWorkspaceRepositoryTreeLoad(runId ?? "");
+      sendEnvelope(createRepositoryTreeRequest(sessionId, runId));
     },
     submitRun(sessionId: string, task: string) {
       sendEnvelope(createAgentRunSubmitRequest(sessionId, task));

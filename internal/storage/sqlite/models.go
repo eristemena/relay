@@ -53,6 +53,11 @@ const (
 	AgentExecutionStateBlocked   = "blocked"
 )
 
+const (
+	TouchTypeRead     = "read"
+	TouchTypeProposed = "proposed"
+)
+
 type AgentRole string
 
 const (
@@ -141,6 +146,14 @@ type ApprovalRequest struct {
 	OccurredAt       time.Time  `json:"occurred_at"`
 	ReviewedAt       *time.Time `json:"reviewed_at,omitempty"`
 	AppliedAt        *time.Time `json:"applied_at,omitempty"`
+}
+
+type TouchedFile struct {
+	RunID      string    `json:"run_id"`
+	AgentID    string    `json:"agent_id"`
+	FilePath   string    `json:"file_path"`
+	TouchType  string    `json:"touch_type"`
+	RecordedAt time.Time `json:"recorded_at"`
 }
 
 type RunSummary struct {

@@ -9,6 +9,7 @@ import (
 type runExecutionContext struct {
 	SessionID string
 	RunID     string
+	AgentID   string
 	Emit      func(StreamEnvelope) error
 	Role      sqlite.AgentRole
 	Model     string

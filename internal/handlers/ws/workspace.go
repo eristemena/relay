@@ -21,6 +21,7 @@ type Service interface {
 	Bootstrap(ctx context.Context, lastSessionID string) (workspaceorchestrator.WorkspaceSnapshot, error)
 	AttachWorkspaceSubscriber(ctx context.Context, emit func(workspaceorchestrator.StreamEnvelope) error)
 	BrowseRepository(ctx context.Context, input workspaceorchestrator.RepositoryBrowseInput) (workspaceorchestrator.RepositoryBrowseResult, error)
+	GetRepositoryTree(ctx context.Context, input workspaceorchestrator.RepositoryTreeRequestInput) (workspaceorchestrator.RepositoryTreeResult, error)
 	CreateSession(ctx context.Context, displayName string) (workspaceorchestrator.WorkspaceSnapshot, error)
 	OpenSession(ctx context.Context, sessionID string) (workspaceorchestrator.WorkspaceSnapshot, error)
 	SavePreferences(ctx context.Context, input workspaceorchestrator.PreferencesInput) (workspaceorchestrator.WorkspaceSnapshot, error)
@@ -127,6 +128,32 @@ func (h *Handler) handleMessage(ctx context.Context, envelope Envelope, write fu
 		}
 
 		return write(TypeRepositoryBrowseResult, envelope.RequestID, toRepositoryBrowsePayload(result))
+	case TypeRepositoryTreeRequest:
+		var payload RepositoryTreeRequestPayload
+		if err := decodePayload(envelope.Payload, &payload); err != nil {
+			return err
+		}
+
+		result, err := h.service.GetRepositoryTree(ctx, workspaceorchestrator.RepositoryTreeRequestInput{
+			SessionID: payload.SessionID,
+			RunID:     payload.RunID,
+		})
+		if err != nil {
+			return write(TypeError, envelope.RequestID, ErrorPayload{
+				Code:    "repository_tree_failed",
+				Message: err.Error(),
+			})
+		}
+
+		return write(TypeRepositoryTreeResult, envelope.RequestID, RepositoryTreeResultPayload{
+			SessionID:      result.SessionID,
+			RunID:          result.RunID,
+			RepositoryRoot: result.RepositoryRoot,
+			Status:         result.Status,
+			Message:        result.Message,
+			Paths:          result.Paths,
+			TouchedFiles:   toTouchedFilePayloads(result.TouchedFiles),
+		})
 	case TypeSessionCreate:
 		var payload SessionCreatePayload
 		if err := decodePayload(envelope.Payload, &payload); err != nil {
@@ -414,6 +441,19 @@ func toRepositoryBrowsePayload(result workspaceorchestrator.RepositoryBrowseResu
 		})
 	}
 	return RepositoryBrowseResultPayload{Path: result.Path, Directories: directories}
+}
+
+func toTouchedFilePayloads(items []workspaceorchestrator.TouchedFileSummary) []TouchedFilePayload {
+	payloads := make([]TouchedFilePayload, 0, len(items))
+	for _, item := range items {
+		payloads = append(payloads, TouchedFilePayload{
+			RunID:     item.RunID,
+			AgentID:   item.AgentID,
+			FilePath:  item.FilePath,
+			TouchType: item.TouchType,
+		})
+	}
+	return payloads
 }
 
 func repositoryGraphStatusPayload(snapshot workspaceorchestrator.WorkspaceSnapshot) RepositoryGraphStatusPayload {

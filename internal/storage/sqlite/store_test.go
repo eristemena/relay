@@ -506,6 +506,73 @@ func TestStore_ListApprovalRequestsForRunIncludesResolvedRecords(t *testing.T) {
 	}
 }
 
+func TestStore_RecordTouchedFileDeduplicatesByRunAgentPathAndTouchType(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	session, err := store.CreateSession(ctx, "Touched files")
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	run, err := store.CreateAgentRun(ctx, session.ID, "Track repository activity", RoleCoder, "coder-model")
+	if err != nil {
+		t.Fatalf("CreateAgentRun() error = %v", err)
+	}
+
+	firstRecordedAt := time.Now().UTC().Add(-time.Minute)
+	if err := store.RecordTouchedFile(ctx, TouchedFile{
+		RunID:      run.ID,
+		AgentID:    "agent_coder_1",
+		FilePath:   "README.md",
+		TouchType:  TouchTypeRead,
+		RecordedAt: firstRecordedAt,
+	}); err != nil {
+		t.Fatalf("RecordTouchedFile(read) error = %v", err)
+	}
+	if err := store.RecordTouchedFile(ctx, TouchedFile{
+		RunID:      run.ID,
+		AgentID:    "agent_coder_1",
+		FilePath:   "README.md",
+		TouchType:  TouchTypeRead,
+		RecordedAt: firstRecordedAt.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("RecordTouchedFile(read duplicate) error = %v", err)
+	}
+	if err := store.RecordTouchedFile(ctx, TouchedFile{
+		RunID:      run.ID,
+		AgentID:    "agent_coder_1",
+		FilePath:   "README.md",
+		TouchType:  TouchTypeProposed,
+		RecordedAt: firstRecordedAt.Add(2 * time.Minute),
+	}); err != nil {
+		t.Fatalf("RecordTouchedFile(proposed) error = %v", err)
+	}
+
+	touchedFiles, err := store.ListTouchedFilesForRun(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("ListTouchedFilesForRun() error = %v", err)
+	}
+	if len(touchedFiles) != 2 {
+		t.Fatalf("len(touchedFiles) = %d, want 2", len(touchedFiles))
+	}
+	if touchedFiles[0].TouchType != TouchTypeRead {
+		t.Fatalf("touchedFiles[0].TouchType = %q, want %q", touchedFiles[0].TouchType, TouchTypeRead)
+	}
+	if touchedFiles[1].TouchType != TouchTypeProposed {
+		t.Fatalf("touchedFiles[1].TouchType = %q, want %q", touchedFiles[1].TouchType, TouchTypeProposed)
+	}
+	if !touchedFiles[0].RecordedAt.After(firstRecordedAt) {
+		t.Fatalf("touchedFiles[0].RecordedAt = %v, want updated timestamp after %v", touchedFiles[0].RecordedAt, firstRecordedAt)
+	}
+	if touchedFiles[0].FilePath != "README.md" || touchedFiles[1].FilePath != "README.md" {
+		t.Fatalf("touchedFiles paths = %#v, want README.md records", touchedFiles)
+	}
+}
+
 func TestStore_ReturnsNotFoundErrorsForMissingRows(t *testing.T) {
 	store, err := NewStore(filepath.Join(t.TempDir(), "relay.db"))
 	if err != nil {

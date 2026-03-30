@@ -176,6 +176,15 @@ func (e *catalogToolExecutor) ExecuteTool(ctx context.Context, toolCallID string
 			ResultPreview: toolspkg.SafePreview("Tool failed.", map[string]any{"message": message}),
 		}, nil
 	}
+	if name == agents.ToolReadFile {
+		if recorder, ok := e.approvals.(interface {
+			RecordFileTouch(ctx context.Context, filePath string, touchType string) error
+		}); ok {
+			if filePath, ok := result.Preview["path"].(string); ok {
+				_ = recorder.RecordFileTouch(ctx, filePath, sqlite.TouchTypeRead)
+			}
+		}
+	}
 
 	return agents.ToolExecutionResult{
 		ToolCallID:    toolCallID,

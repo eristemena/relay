@@ -404,6 +404,112 @@ func TestService_BootstrapSchedulesRepositoryGraphBuildAndCachesResult(t *testin
 	}
 }
 
+func TestService_GetRepositoryTreeRestoresTouchedSnapshotsForRun(t *testing.T) {
+	paths, store := newTestServiceStore(t)
+	defer store.Close()
+
+	service := NewService(store, paths)
+	repositoryRoot := initWorkspaceRepositoryRoot(t)
+	if err := os.MkdirAll(filepath.Join(repositoryRoot, "docs"), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repositoryRoot, "README.md"), []byte("relay\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(README.md) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repositoryRoot, "docs", "review.md"), []byte("notes\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(review.md) error = %v", err)
+	}
+
+	cfg, _, err := config.Load(paths)
+	if err != nil {
+		t.Fatalf("config.Load() error = %v", err)
+	}
+	cfg.ProjectRoot = repositoryRoot
+	if err := config.Save(paths, cfg); err != nil {
+		t.Fatalf("config.Save() error = %v", err)
+	}
+
+	ctx := context.Background()
+	session, err := store.CreateSession(ctx, "Repository tree restoration")
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	run, err := store.CreateAgentRun(ctx, session.ID, "Inspect repository tree", sqlite.RoleCoder, config.DefaultCoderModel)
+	if err != nil {
+		t.Fatalf("CreateAgentRun() error = %v", err)
+	}
+	if err := store.RecordTouchedFile(ctx, sqlite.TouchedFile{
+		RunID:      run.ID,
+		AgentID:    "agent_coder_1",
+		FilePath:   "README.md",
+		TouchType:  sqlite.TouchTypeRead,
+		RecordedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("RecordTouchedFile(README.md) error = %v", err)
+	}
+	if err := store.RecordTouchedFile(ctx, sqlite.TouchedFile{
+		RunID:      run.ID,
+		AgentID:    "agent_reviewer_1",
+		FilePath:   "docs/review.md",
+		TouchType:  sqlite.TouchTypeProposed,
+		RecordedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("RecordTouchedFile(docs/review.md) error = %v", err)
+	}
+
+	result, err := service.GetRepositoryTree(ctx, RepositoryTreeRequestInput{
+		SessionID: session.ID,
+		RunID:     run.ID,
+	})
+	if err != nil {
+		t.Fatalf("GetRepositoryTree() error = %v", err)
+	}
+	if result.RepositoryRoot != repositoryRoot {
+		t.Fatalf("result.RepositoryRoot = %q, want %q", result.RepositoryRoot, repositoryRoot)
+	}
+	if result.Status != repositoryTreeStatusReady {
+		t.Fatalf("result.Status = %q, want %q", result.Status, repositoryTreeStatusReady)
+	}
+	if !slices.Contains(result.Paths, "README.md") || !slices.Contains(result.Paths, "docs/review.md") {
+		t.Fatalf("result.Paths = %#v, want README.md and docs/review.md", result.Paths)
+	}
+	if len(result.TouchedFiles) != 2 {
+		t.Fatalf("len(result.TouchedFiles) = %d, want 2", len(result.TouchedFiles))
+	}
+	if !slices.ContainsFunc(result.TouchedFiles, func(item TouchedFileSummary) bool {
+		return item.AgentID == "agent_coder_1" && item.FilePath == "README.md" && item.TouchType == sqlite.TouchTypeRead
+	}) {
+		t.Fatalf("result.TouchedFiles = %#v, want coder README read entry", result.TouchedFiles)
+	}
+	if !slices.ContainsFunc(result.TouchedFiles, func(item TouchedFileSummary) bool {
+		return item.AgentID == "agent_reviewer_1" && item.FilePath == "docs/review.md" && item.TouchType == sqlite.TouchTypeProposed
+	}) {
+		t.Fatalf("result.TouchedFiles = %#v, want reviewer docs/review.md proposed entry", result.TouchedFiles)
+	}
+}
+
+func TestNormalizeRepositoryTreePath(t *testing.T) {
+	testCases := []struct {
+		name     string
+		input    string
+		wantPath string
+	}{
+		{name: "trims whitespace", input: " README.md ", wantPath: "README.md"},
+		{name: "normalizes current directory", input: "./docs/guide.md", wantPath: "docs/guide.md"},
+		{name: "rejects parent traversal", input: "../secret.txt", wantPath: ""},
+		{name: "rejects empty path", input: "   ", wantPath: ""},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := normalizeRepositoryTreePath(testCase.input)
+			if got != testCase.wantPath {
+				t.Fatalf("normalizeRepositoryTreePath(%q) = %q, want %q", testCase.input, got, testCase.wantPath)
+			}
+		})
+	}
+}
+
 func TestService_SavePreferencesInvalidatesRepositoryGraphWhenRepositoryChanges(t *testing.T) {
 	paths, store := newTestServiceStore(t)
 	defer store.Close()

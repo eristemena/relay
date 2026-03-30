@@ -35,11 +35,13 @@ import type {
   ConnectionMessageType,
   Envelope,
   ErrorPayload,
+  FileTouchedPayload,
   HandoffPayload,
   PreferencesView,
   RepositoryBrowseResultPayload,
   RepositoryDirectoryPayload,
   RepositoryGraphStatusPayload,
+  RepositoryTreeResultPayload,
   RealtimeRunMessage,
   RunChangeRecordPayload,
   RunEventPayload,
@@ -51,6 +53,7 @@ import type {
   SessionSummary,
   StateChangePayload,
   TaskAssignedPayload,
+  TouchedFilePayload,
   ToolCallPayload,
   ToolResultPayload,
   TokenPayload,
@@ -80,6 +83,7 @@ export interface WorkspaceState {
   connectedRepository: ConnectedRepositoryView;
   repositoryGraph: RepositoryGraphSnapshot;
   repositoryBrowser: RepositoryBrowserState;
+  repositoryTree: RepositoryTreeState;
   preferences: PreferencesView;
   uiState: WorkspaceUIState;
   status: WorkspaceStatusPayload | null;
@@ -99,6 +103,18 @@ export interface RepositoryBrowserState {
   isLoading: boolean;
   showHidden: boolean;
   errorMessage: string;
+}
+
+export interface RepositoryTreeState {
+  activeTab: "replay" | "repository_tree";
+  status: "idle" | "loading" | "ready" | "empty" | "error";
+  repositoryRoot: string;
+  requestRunId: string;
+  paths: string[];
+  touchedFiles: TouchedFilePayload[];
+  expandedPaths: string[];
+  message: string;
+  syncErrorMessage: string;
 }
 
 export interface PendingApproval {
@@ -201,6 +217,17 @@ const defaultState: WorkspaceState = {
     isLoading: false,
     showHidden: false,
     errorMessage: "",
+  },
+  repositoryTree: {
+    activeTab: "replay",
+    status: "idle",
+    repositoryRoot: "",
+    requestRunId: "",
+    paths: [],
+    touchedFiles: [],
+    expandedPaths: [],
+    message: "",
+    syncErrorMessage: "",
   },
   preferences: defaultPreferences,
   uiState: defaultUIState,
@@ -318,6 +345,21 @@ class WorkspaceStore {
               errorMessage: "",
             }
           : this.state.repositoryBrowser,
+      repositoryTree: repositoryChanged
+        ? {
+            ...this.state.repositoryTree,
+            status: "idle",
+            repositoryRoot: nextConnectedRepository.path,
+            requestRunId: "",
+            paths: [],
+            touchedFiles: [],
+            message: "",
+            syncErrorMessage: "",
+          }
+        : {
+            ...this.state.repositoryTree,
+            repositoryRoot: nextConnectedRepository.path,
+          },
       preferences: payload.preferences,
       uiState: payload.ui_state,
       status: null,
@@ -348,6 +390,21 @@ class WorkspaceStore {
       error: payload,
       runEvents: nextRunEvents,
       pendingApprovals: nextPendingApprovals,
+      repositoryTree:
+        payload.code === "repository_tree_failed"
+          ? {
+              ...this.state.repositoryTree,
+              status: "error",
+              message: payload.message,
+              requestRunId:
+                payload.run_id ?? this.state.repositoryTree.requestRunId,
+            }
+          : payload.code === "repository_tree_sync_failed"
+            ? {
+                ...this.state.repositoryTree,
+                syncErrorMessage: payload.message,
+              }
+            : this.state.repositoryTree,
       repositoryBrowser:
         payload.code === "repository_browse_failed"
           ? {
@@ -520,6 +577,111 @@ class WorkspaceStore {
     this.emit();
   };
 
+  setRepositoryTreeActiveTab = (
+    activeTab: RepositoryTreeState["activeTab"],
+  ) => {
+    if (this.state.repositoryTree.activeTab === activeTab) {
+      return;
+    }
+
+    this.state = {
+      ...this.state,
+      repositoryTree: {
+        ...this.state.repositoryTree,
+        activeTab,
+      },
+    };
+    this.emit();
+  };
+
+  startRepositoryTreeLoad = (runId: string) => {
+    if (
+      this.state.repositoryTree.requestRunId === runId &&
+      this.state.repositoryTree.status === "loading"
+    ) {
+      return;
+    }
+
+    this.state = {
+      ...this.state,
+      repositoryTree: {
+        ...this.state.repositoryTree,
+        status: "loading",
+        requestRunId: runId,
+        message: "Loading the connected repository tree.",
+        syncErrorMessage: "",
+      },
+    };
+    this.emit();
+  };
+
+  toggleRepositoryTreePath = (path: string) => {
+    const normalizedPath = path.trim();
+    if (!normalizedPath) {
+      return;
+    }
+
+    const expandedPaths = new Set(this.state.repositoryTree.expandedPaths);
+    if (expandedPaths.has(normalizedPath)) {
+      expandedPaths.delete(normalizedPath);
+    } else {
+      expandedPaths.add(normalizedPath);
+    }
+
+    this.state = {
+      ...this.state,
+      repositoryTree: {
+        ...this.state.repositoryTree,
+        expandedPaths: Array.from(expandedPaths).sort(),
+      },
+    };
+    this.emit();
+  };
+
+  private setRepositoryTreeResult(payload: RepositoryTreeResultPayload) {
+    const paths = payload.paths ?? [];
+    this.state = {
+      ...this.state,
+      repositoryTree: {
+        ...this.state.repositoryTree,
+        status: paths.length > 0 ? "ready" : "empty",
+        repositoryRoot:
+          payload.repository_root ?? this.state.repositoryTree.repositoryRoot,
+        requestRunId: payload.run_id ?? this.state.repositoryTree.requestRunId,
+        paths,
+        touchedFiles: payload.touched_files ?? [],
+        message:
+          payload.message ??
+          (paths.length > 0
+            ? "Repository tree is ready."
+            : "This repository does not have any tracked files to display yet."),
+        syncErrorMessage: "",
+      },
+      error:
+        this.state.error?.code === "repository_tree_failed"
+          ? null
+          : this.state.error,
+      status: null,
+    };
+    this.emit();
+  }
+
+  private recordTouchedFile(payload: FileTouchedPayload) {
+    this.state = {
+      ...this.state,
+      repositoryTree: {
+        ...this.state.repositoryTree,
+        requestRunId: payload.run_id,
+        touchedFiles: upsertTouchedFile(
+          this.state.repositoryTree.touchedFiles,
+          payload,
+        ),
+        syncErrorMessage: "",
+      },
+    };
+    this.emit();
+  }
+
   handleEnvelope = (message: Envelope<unknown>) => {
     switch (message.type) {
       case "workspace.bootstrap":
@@ -547,6 +709,14 @@ class WorkspaceStore {
         this.setRepositoryBrowseResult(
           message.payload as RepositoryBrowseResultPayload,
         );
+        return;
+      case "repository.tree.result":
+        this.setRepositoryTreeResult(
+          message.payload as RepositoryTreeResultPayload,
+        );
+        return;
+      case "file_touched":
+        this.recordTouchedFile(message.payload as FileTouchedPayload);
         return;
       case "run.history.result":
         this.setRunHistoryResult(message.payload as RunHistoryResultPayload);
@@ -849,6 +1019,20 @@ export function startWorkspaceRepositoryBrowse(
   workspaceStore.startRepositoryBrowse(path, showHidden);
 }
 
+export function setWorkspaceRepositoryTreeActiveTab(
+  activeTab: RepositoryTreeState["activeTab"],
+) {
+  workspaceStore.setRepositoryTreeActiveTab(activeTab);
+}
+
+export function startWorkspaceRepositoryTreeLoad(runId: string) {
+  workspaceStore.startRepositoryTreeLoad(runId);
+}
+
+export function toggleWorkspaceRepositoryTreePath(path: string) {
+  workspaceStore.toggleRepositoryTreePath(path);
+}
+
 function syncRunSummaries(
   runSummaries: AgentRunSummary[],
   message: RealtimeRunMessage,
@@ -937,6 +1121,33 @@ function syncRunSummaries(
     (run) => run.id !== nextSummary.id,
   );
   return dedupeRunSummaries([nextSummary, ...nextRunSummaries]);
+}
+
+function upsertTouchedFile(
+  touchedFiles: TouchedFilePayload[],
+  payload: FileTouchedPayload,
+) {
+  const nextTouchedFiles = touchedFiles.filter(
+    (item) =>
+      !(
+        item.run_id === payload.run_id &&
+        item.agent_id === payload.agent_id &&
+        item.file_path === payload.file_path &&
+        item.touch_type === payload.touch_type
+      ),
+  );
+  nextTouchedFiles.push({
+    run_id: payload.run_id,
+    agent_id: payload.agent_id,
+    file_path: payload.file_path,
+    touch_type: payload.touch_type,
+  });
+
+  return nextTouchedFiles.sort((left, right) =>
+    `${left.agent_id}:${left.file_path}:${left.touch_type}`.localeCompare(
+      `${right.agent_id}:${right.file_path}:${right.touch_type}`,
+    ),
+  );
 }
 
 function dedupeRunSummaries(runSummaries: AgentRunSummary[]) {

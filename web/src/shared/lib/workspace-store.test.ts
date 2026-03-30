@@ -2,6 +2,8 @@ import { act } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import {
   resetWorkspaceStore,
+  selectWorkspaceCanvasNode,
+  toggleWorkspaceRepositoryTreePath,
   workspaceStore,
 } from "@/shared/lib/workspace-store";
 import { buildWorkspaceSnapshot, primeWorkspaceStore } from "@/shared/lib/test-helpers";
@@ -993,6 +995,279 @@ describe("workspaceStore", () => {
       tone: "warning",
       summary: "800 / 1,000",
     });
+
+    resetWorkspaceStore();
+  });
+
+  it("retains selected agent filtering context after the active run completes", () => {
+    resetWorkspaceStore();
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        active_run_id: "run_tree_1",
+        preferences: {
+          ...buildWorkspaceSnapshot().preferences,
+          project_root: "/tmp/relay",
+          project_root_configured: true,
+          project_root_valid: true,
+        },
+      }),
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_tree_1",
+          sequence: 1,
+          replay: false,
+          role: "coder",
+          model: "anthropic/claude-sonnet-4-5",
+          agent_id: "agent_coder_1",
+          label: "Coder",
+          spawn_order: 1,
+          occurred_at: "2026-03-24T12:00:00Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "repository.tree.result",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_tree_1",
+          repository_root: "/tmp/relay",
+          status: "ready",
+          message: "Repository tree is ready.",
+          paths: ["README.md"],
+          touched_files: [
+            {
+              run_id: "run_tree_1",
+              agent_id: "agent_coder_1",
+              file_path: "README.md",
+              touch_type: "read",
+            },
+          ],
+        },
+      } as never);
+      selectWorkspaceCanvasNode("run_tree_1", "agent_coder_1");
+      workspaceStore.handleEnvelope({
+        type: "run_complete",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_tree_1",
+          sequence: 2,
+          replay: false,
+          role: "coder",
+          model: "anthropic/claude-sonnet-4-5",
+          agent_id: "agent_coder_1",
+          summary: "Run complete.",
+          occurred_at: "2026-03-24T12:00:02Z",
+        },
+      } as never);
+    });
+
+    const state = workspaceStore.getSnapshot();
+    expect(state.activeRunId).toBe("");
+    expect(state.selectedRunId).toBe("run_tree_1");
+    expect(state.orchestrationDocuments.run_tree_1?.selectedNodeId).toBe(
+      "agent_coder_1",
+    );
+    expect(state.repositoryTree.touchedFiles).toEqual([
+      {
+        run_id: "run_tree_1",
+        agent_id: "agent_coder_1",
+        file_path: "README.md",
+        touch_type: "read",
+      },
+    ]);
+
+    resetWorkspaceStore();
+  });
+
+  it("stores repository tree failures without clearing the last loaded snapshot", () => {
+    resetWorkspaceStore();
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        active_run_id: "run_tree_error",
+        preferences: {
+          ...buildWorkspaceSnapshot().preferences,
+          project_root: "/tmp/relay",
+          project_root_configured: true,
+          project_root_valid: true,
+        },
+      }),
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "repository.tree.result",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_tree_error",
+          repository_root: "/tmp/relay",
+          status: "ready",
+          message: "Repository tree is ready.",
+          paths: ["README.md"],
+          touched_files: [],
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "error",
+        payload: {
+          code: "repository_tree_failed",
+          message: "Relay could not load the connected repository tree.",
+          occurred_at: "2026-03-24T12:00:03Z",
+        },
+      } as never);
+    });
+
+    const state = workspaceStore.getSnapshot();
+    expect(state.repositoryTree.status).toBe("error");
+    expect(state.repositoryTree.message).toBe(
+      "Relay could not load the connected repository tree.",
+    );
+    expect(state.repositoryTree.paths).toEqual(["README.md"]);
+
+    resetWorkspaceStore();
+  });
+
+  it("deduplicates reconnect-hydrated touched files when repeated live events arrive", () => {
+    resetWorkspaceStore();
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        active_run_id: "run_tree_reconnect",
+        preferences: {
+          ...buildWorkspaceSnapshot().preferences,
+          project_root: "/tmp/relay",
+          project_root_configured: true,
+          project_root_valid: true,
+        },
+      }),
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "repository.tree.result",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_tree_reconnect",
+          repository_root: "/tmp/relay",
+          status: "ready",
+          message: "Repository tree is ready.",
+          paths: ["README.md"],
+          touched_files: [
+            {
+              run_id: "run_tree_reconnect",
+              agent_id: "agent_coder_1",
+              file_path: "README.md",
+              touch_type: "read",
+            },
+          ],
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "file_touched",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_tree_reconnect",
+          agent_id: "agent_coder_1",
+          role: "coder",
+          file_path: "README.md",
+          touch_type: "read",
+          replay: false,
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "file_touched",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_tree_reconnect",
+          agent_id: "agent_reviewer_1",
+          role: "reviewer",
+          file_path: "README.md",
+          touch_type: "proposed",
+          replay: false,
+        },
+      } as never);
+    });
+
+    const state = workspaceStore.getSnapshot();
+    expect(state.repositoryTree.touchedFiles).toEqual([
+      {
+        run_id: "run_tree_reconnect",
+        agent_id: "agent_coder_1",
+        file_path: "README.md",
+        touch_type: "read",
+      },
+      {
+        run_id: "run_tree_reconnect",
+        agent_id: "agent_reviewer_1",
+        file_path: "README.md",
+        touch_type: "proposed",
+      },
+    ]);
+
+    resetWorkspaceStore();
+  });
+
+  it("preserves expanded repository folders across refreshed tree snapshots", () => {
+    resetWorkspaceStore();
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        active_run_id: "run_tree_refresh",
+        preferences: {
+          ...buildWorkspaceSnapshot().preferences,
+          project_root: "/tmp/relay",
+          project_root_configured: true,
+          project_root_valid: true,
+        },
+      }),
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "repository.tree.result",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_tree_refresh",
+          repository_root: "/tmp/relay",
+          status: "ready",
+          message: "Repository tree is ready.",
+          paths: ["docs", "docs/guides", "docs/guides/setup.md"],
+          touched_files: [],
+        },
+      } as never);
+      toggleWorkspaceRepositoryTreePath("docs/guides");
+      workspaceStore.handleEnvelope({
+        type: "repository.tree.result",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_tree_refresh",
+          repository_root: "/tmp/relay",
+          status: "ready",
+          message: "Repository tree is ready.",
+          paths: ["docs", "docs/guides", "docs/guides/setup.md"],
+          touched_files: [
+            {
+              run_id: "run_tree_refresh",
+              agent_id: "agent_coder_1",
+              file_path: "docs/guides/setup.md",
+              touch_type: "read",
+            },
+          ],
+        },
+      } as never);
+    });
+
+    const state = workspaceStore.getSnapshot();
+    expect(state.repositoryTree.expandedPaths).toEqual(["docs/guides"]);
+    expect(state.repositoryTree.touchedFiles).toEqual([
+      {
+        run_id: "run_tree_refresh",
+        agent_id: "agent_coder_1",
+        file_path: "docs/guides/setup.md",
+        touch_type: "read",
+      },
+    ]);
 
     resetWorkspaceStore();
   });

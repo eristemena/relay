@@ -22,12 +22,21 @@ func TestBuildWriteFilePreviewIncludesDiffMetadata(t *testing.T) {
 	if preview["request_kind"] != RequestKindFileWrite {
 		t.Fatalf("preview[request_kind] = %v, want %q", preview["request_kind"], RequestKindFileWrite)
 	}
+	if preview["path"] != "README.md" {
+		t.Fatalf("preview[path] = %v, want %q", preview["path"], "README.md")
+	}
 	if preview["repository_root"] != projectRoot {
 		t.Fatalf("preview[repository_root] = %v, want %q", preview["repository_root"], projectRoot)
+	}
+	if preview["target_path"] != "README.md" {
+		t.Fatalf("preview[target_path] = %v, want %q", preview["target_path"], "README.md")
 	}
 	diffPreview, ok := preview["diff_preview"].(map[string]any)
 	if !ok {
 		t.Fatalf("preview[diff_preview] = %#v, want diff preview map", preview["diff_preview"])
+	}
+	if diffPreview["target_path"] != "README.md" {
+		t.Fatalf("diffPreview[target_path] = %#v, want README.md", diffPreview["target_path"])
 	}
 	if diffPreview["original_content"] != "before\n" {
 		t.Fatalf("diffPreview[original_content] = %#v, want original file content", diffPreview["original_content"])

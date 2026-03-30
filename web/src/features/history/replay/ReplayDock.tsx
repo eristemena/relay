@@ -61,7 +61,10 @@ export function ReplayDock({
           Status: <span className="text-text">{replayStatus}</span>
         </p>
         <p>
-          Cursor: <span className="text-text">{selectedTimestamp || "Not selected"}</span>
+          Cursor:{" "}
+          <span className="text-text">
+            {selectedTimestamp || "Not selected"}
+          </span>
         </p>
       </div>
 

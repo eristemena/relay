@@ -4,6 +4,8 @@ export type ConnectionMessageType =
   | "workspace.status"
   | "repository.browse.request"
   | "repository.browse.result"
+  | "repository.tree.request"
+  | "repository.tree.result"
   | "repository_graph_status"
   | "session.create"
   | "session.created"
@@ -25,6 +27,7 @@ export type ConnectionMessageType =
   | "agent.run.approval.respond"
   | "approval_request"
   | "approval_state_changed"
+  | "file_touched"
   | "state_change"
   | "token"
   | "tool_call"
@@ -64,6 +67,38 @@ export interface RepositoryDirectoryPayload {
 export interface RepositoryBrowseResultPayload {
   path: string;
   directories: RepositoryDirectoryPayload[];
+}
+
+export interface RepositoryTreeRequestPayload {
+  session_id: string;
+  run_id?: string;
+}
+
+export interface TouchedFilePayload {
+  run_id: string;
+  agent_id: string;
+  file_path: string;
+  touch_type: "read" | "proposed";
+}
+
+export interface RepositoryTreeResultPayload {
+  session_id?: string;
+  run_id?: string;
+  repository_root?: string;
+  status: "ready";
+  message?: string;
+  paths?: string[];
+  touched_files?: TouchedFilePayload[];
+}
+
+export interface FileTouchedPayload {
+  session_id: string;
+  run_id: string;
+  agent_id: string;
+  role: AgentRunSummary["role"];
+  file_path: string;
+  touch_type: "read" | "proposed";
+  replay: boolean;
 }
 
 export interface RepositoryGraphStatusPayload {
@@ -490,11 +525,13 @@ export type IncomingEnvelope =
   | Envelope<AgentRunReplayStatePayload>
   | Envelope<RunHistoryExportResultPayload>
   | Envelope<RepositoryBrowseResultPayload>
+  | Envelope<RepositoryTreeResultPayload>
   | Envelope<RepositoryGraphStatusPayload>
   | Envelope<WorkspaceStatusPayload>
   | Envelope<ErrorPayload>
   | Envelope<ApprovalRequestPayload>
   | Envelope<ApprovalStateChangedPayload>
+  | Envelope<FileTouchedPayload>
   | Envelope<StateChangePayload>
   | Envelope<TokenPayload>
   | Envelope<ToolCallPayload>
@@ -532,6 +569,20 @@ export function createRepositoryBrowseRequest(
     payload: {
       ...(path ? { path } : {}),
       show_hidden: showHidden,
+    },
+  };
+}
+
+export function createRepositoryTreeRequest(
+  sessionId: string,
+  runId?: string,
+): Envelope<RepositoryTreeRequestPayload> {
+  return {
+    type: "repository.tree.request",
+    request_id: crypto.randomUUID(),
+    payload: {
+      session_id: sessionId,
+      ...(runId ? { run_id: runId } : {}),
     },
   };
 }

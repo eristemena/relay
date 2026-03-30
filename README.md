@@ -68,6 +68,14 @@ Relay keeps the prompts and tool allowlists fixed in code per role. The config f
 - Relay uses `monaco-editor` for side-by-side approval diff review and keeps background repository-context state available for backend-driven activity tracking.
 - Repository inspection stays inside the Go process through `go-git`, so Relay does not shell out to the system `git` binary for repository validation, history, or working-tree diff reads.
 
+## Repository Tree Sidebar
+
+- The right-side workspace detail rail shows `File Tree` directly during live runs and exposes top-level `Historical replay` and `File Tree` tabs when a saved run is reopened.
+- Relay hydrates the tree over the workspace WebSocket using `repository.tree.request` and `repository.tree.result`; live file activity is streamed with `file_touched`.
+- The initial tree stays shallow by default, shows only top-level entries plus one nested level before expansion, excludes `.gitignore`d paths such as `node_modules`, and only expands deeper folders client-side from the cached flat path list.
+- Touched file indicators are preserved for the current run, survive reconnect hydration, and can be narrowed to the currently selected agent from the canvas.
+- Clearing the selected canvas node restores the workspace-wide tree without dropping the current touched-file snapshot.
+
 ## Live Agent Orchestration
 
 Relay now includes a live orchestration canvas inside the workspace shell.
@@ -89,6 +97,7 @@ This orchestration mode is intentionally prompt-only. It does not read the repos
 - `npm --prefix web run typecheck`: run the frontend TypeScript checker
 - `npm --prefix web test`: run the frontend component and store tests, including the live canvas suite
 - `npm --prefix web test -- src/features/preferences/PreferencesPanel.test.tsx src/features/approvals/ApprovalReviewPanel.test.tsx src/features/canvas/AgentCanvasNode.test.tsx src/shared/lib/workspace-store.test.ts`: run the focused repository-awareness UI and store validation suite
+- `npm --prefix web test -- workspace-store.test.ts WorkspaceShell.test.tsx treeModel.test.ts`: run the focused repository-tree sidebar and selected-agent filtering suite
 - `npm --prefix web test -- src/features/canvas/AgentCanvas.test.tsx src/features/workspace-shell/WorkspaceShell.test.tsx`: run the focused orchestration canvas coverage
 - `npm --prefix web test -- src/features/canvas/AgentCanvas.test.tsx src/features/canvas/AnimatedHandoffEdge.test.tsx src/features/canvas/AgentNodeDetailPanel.test.tsx src/features/canvas/AgentCanvasNode.test.tsx src/features/canvas/canvasModel.test.ts src/features/canvas/layoutGraph.test.ts src/shared/lib/workspace-store.test.ts`: run the focused canvas animation and motion-regression suite
 - If `make dev` opens Relay with a "frontend dev server is unavailable" page, start the Relay Next.js app on any free port from `3000` to `3010` and restart the backend so the dev proxy can rediscover it.
@@ -113,6 +122,7 @@ This orchestration mode is intentionally prompt-only. It does not read the repos
 ## Orchestration Validation
 
 - `go test -cover ./internal/agents ./internal/orchestrator/workspace ./internal/handlers/ws ./internal/storage/sqlite`: verify the current orchestration coverage threshold across the touched core packages
+- `go test ./internal/orchestrator/workspace ./internal/handlers/ws ./tests/integration -run 'TestRepositoryFileTree_'`: run the focused repository-tree backend and integration suite
 - `go test ./tests/integration -run 'TestAgentStreaming_|TestWorkspaceWebSocket_' -count=1`: run the broader orchestration ordering, replay, and reconnect regressions
 - `go test ./tests/integration/run_history_replay_test.go`: run the replay-focused integration file directly
 - `go test ./internal/orchestrator/workspace ./internal/handlers/ws -run 'Test.*(Replay|Seek|Export|HistoryQuery)'`: run focused replay-control, export, and history-query coverage

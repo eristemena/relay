@@ -94,6 +94,84 @@ textarea {
   border: 1px solid var(--color-border);
 }
 
+.repository-tabs {
+  align-items: stretch;
+}
+
+.repository-tab {
+  display: flex;
+  min-height: 4.25rem;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.2rem;
+  text-align: left;
+}
+
+.repository-tab-caption {
+  letter-spacing: 0.02em;
+}
+
+.repository-tab:focus-visible,
+.repository-tree-row-action:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 3px;
+}
+
+.repository-tree-helper {
+  max-width: 42rem;
+}
+
+.repository-tree-row {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  transition:
+    border-color 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.repository-tree-row-action {
+  cursor: pointer;
+}
+
+.repository-tree-row-static {
+  background: color-mix(in srgb, var(--color-raised) 42%, transparent);
+}
+
+.repository-tree-badge {
+  display: inline-flex;
+  align-items: center;
+  border-color: var(--color-border);
+  background: color-mix(in srgb, var(--color-raised) 55%, transparent);
+}
+
+.repository-tree-badge[data-touch-kind="read"] {
+  border-color: color-mix(in srgb, var(--color-success) 35%, var(--color-border));
+}
+
+.repository-tree-badge[data-touch-kind="proposed"] {
+  border-color: color-mix(in srgb, var(--color-brand-mid) 55%, var(--color-border));
+}
+
+.repository-tree-badge-muted {
+  color: var(--color-text-muted);
+}
+
+.repository-tree-missing {
+  overflow-wrap: anywhere;
+}
+
+.repository-tree-missing-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .replay-control-button,
 .replay-speed-button {
   display: inline-flex;
@@ -1371,6 +1449,23 @@ textarea {
     overflow-wrap: anywhere;
   }
 
+  .repository-tabs {
+    flex-direction: column;
+  }
+
+  .repository-tab {
+    min-height: 0;
+  }
+
+  .repository-tree-row,
+  .repository-tree-row-static {
+    align-items: flex-start;
+  }
+
+  .repository-tree-badge {
+    justify-content: center;
+  }
+
   .workspace-task-dock {
     padding: 0;
   }
@@ -1468,7 +1563,11 @@ textarea {
 
   .agent-command-row,
   .agent-command-cancel,
-  .agent-command-submit {
+  .agent-command-submit,
+  .repository-tab,
+  .repository-tree-row,
+  .repository-tree-badge,
+  .repository-tree-missing-badge {
     border-color: ButtonBorder;
     background: Canvas;
     color: ButtonText;
@@ -1518,7 +1617,9 @@ textarea {
 
   :focus-visible,
   .agent-canvas-node-button:focus-visible,
-  .skip-link:focus-visible {
+  .skip-link:focus-visible,
+  .repository-tab:focus-visible,
+  .repository-tree-row-action:focus-visible {
     outline: 2px solid Highlight;
     outline-offset: 3px;
   }

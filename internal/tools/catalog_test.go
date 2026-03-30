@@ -107,6 +107,9 @@ func TestToolDefinitionsDescribeParametersAndApproval(t *testing.T) {
 	if definitions[0].Name != ReadFileName || definitions[0].RequiresApproval {
 		t.Fatalf("read_file definition = %#v, want read-only tool", definitions[0])
 	}
+	if definitions[0].Parameters["path"] != "string" {
+		t.Fatalf("read_file parameters = %#v, want path metadata", definitions[0].Parameters)
+	}
 	if definitions[1].Name != ListFilesName || definitions[1].RequiresApproval {
 		t.Fatalf("list_files definition = %#v, want read-only tool", definitions[1])
 	}
@@ -121,6 +124,9 @@ func TestToolDefinitionsDescribeParametersAndApproval(t *testing.T) {
 	}
 	if definitions[5].Name != WriteFileName || !definitions[5].RequiresApproval {
 		t.Fatalf("write_file definition = %#v, want approval-gated tool", definitions[5])
+	}
+	if definitions[5].Parameters["path"] != "string" || definitions[5].Parameters["content"] != "string" {
+		t.Fatalf("write_file parameters = %#v, want path/content metadata", definitions[5].Parameters)
 	}
 	if definitions[6].Name != RunCommandName || !definitions[6].RequiresApproval {
 		t.Fatalf("run_command definition = %#v, want approval-gated tool", definitions[6])

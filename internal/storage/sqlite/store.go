@@ -916,6 +916,60 @@ func (s *Store) ListApprovalRequestsForRun(ctx context.Context, runID string) ([
 	return approvals, nil
 }
 
+func (s *Store) RecordTouchedFile(ctx context.Context, touchedFile TouchedFile) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	runID := strings.TrimSpace(touchedFile.RunID)
+	agentID := strings.TrimSpace(touchedFile.AgentID)
+	filePath := strings.TrimSpace(touchedFile.FilePath)
+	touchType := strings.TrimSpace(touchedFile.TouchType)
+	if runID == "" || agentID == "" || filePath == "" || touchType == "" {
+		return fmt.Errorf("record touched file: run, agent, path, and touch type are required")
+	}
+	recordedAt := touchedFile.RecordedAt.UTC()
+	if recordedAt.IsZero() {
+		recordedAt = time.Now().UTC()
+	}
+
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO touched_files (run_id, agent_id, file_path, touch_type, recorded_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(run_id, agent_id, file_path, touch_type)
+		DO UPDATE SET recorded_at = excluded.recorded_at
+	`, runID, agentID, filePath, touchType, recordedAt.Format(time.RFC3339)); err != nil {
+		return fmt.Errorf("record touched file: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Store) ListTouchedFilesForRun(ctx context.Context, runID string) ([]TouchedFile, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT run_id, agent_id, file_path, touch_type, recorded_at
+		FROM touched_files
+		WHERE run_id = ?
+		ORDER BY datetime(recorded_at) ASC, agent_id ASC, file_path ASC, touch_type ASC
+	`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("list touched files for run: %w", err)
+	}
+	defer rows.Close()
+
+	touchedFiles := make([]TouchedFile, 0)
+	for rows.Next() {
+		touchedFile, err := scanTouchedFile(rows)
+		if err != nil {
+			return nil, err
+		}
+		touchedFiles = append(touchedFiles, touchedFile)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate touched files for run: %w", err)
+	}
+	return touchedFiles, nil
+}
+
 func (s *Store) UpdateApprovalRequestState(ctx context.Context, runID string, toolCallID string, state string, reviewedAt *time.Time, appliedAt *time.Time) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -1233,6 +1287,24 @@ func scanApprovalRequest(scanner rowScanner) (ApprovalRequest, error) {
 	}
 
 	return approval, nil
+}
+
+func scanTouchedFile(scanner rowScanner) (TouchedFile, error) {
+	var (
+		touchedFile TouchedFile
+		recordedAt  string
+	)
+
+	if err := scanner.Scan(&touchedFile.RunID, &touchedFile.AgentID, &touchedFile.FilePath, &touchedFile.TouchType, &recordedAt); err != nil {
+		return TouchedFile{}, err
+	}
+
+	parsedRecordedAt, err := time.Parse(time.RFC3339, recordedAt)
+	if err != nil {
+		return TouchedFile{}, fmt.Errorf("parse touched file recorded_at: %w", err)
+	}
+	touchedFile.RecordedAt = parsedRecordedAt
+	return touchedFile, nil
 }
 
 func scanAgentRun(scanner rowScanner) (AgentRun, error) {
