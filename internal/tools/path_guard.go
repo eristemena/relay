@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/erisristemena/relay/internal/repository"
+	"github.com/eristemena/relay/internal/repository"
 )
 
 func resolveWithinRoot(projectRoot string, requestedPath string) (string, error) {

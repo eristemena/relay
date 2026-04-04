@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/erisristemena/relay/internal/config"
+	"github.com/eristemena/relay/internal/config"
 )
 
 const (

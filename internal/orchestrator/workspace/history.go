@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/erisristemena/relay/internal/storage/sqlite"
+	"github.com/eristemena/relay/internal/storage/sqlite"
 )
 
 const replaySyntheticStepMS = 25

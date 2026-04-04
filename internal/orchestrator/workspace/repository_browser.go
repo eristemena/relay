@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/erisristemena/relay/internal/repository"
+	"github.com/eristemena/relay/internal/repository"
 )
 
 type RepositoryBrowseInput struct {

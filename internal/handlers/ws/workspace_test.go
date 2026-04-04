@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/erisristemena/relay/internal/config"
-	workspaceorchestrator "github.com/erisristemena/relay/internal/orchestrator/workspace"
-	"github.com/erisristemena/relay/internal/storage/sqlite"
+	"github.com/eristemena/relay/internal/config"
+	workspaceorchestrator "github.com/eristemena/relay/internal/orchestrator/workspace"
+	"github.com/eristemena/relay/internal/storage/sqlite"
 	"nhooyr.io/websocket"
 	"nhooyr.io/websocket/wsjson"
 )

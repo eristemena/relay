@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/erisristemena/relay/internal/repository"
+	"github.com/eristemena/relay/internal/repository"
 	toml "github.com/pelletier/go-toml/v2"
 )
 

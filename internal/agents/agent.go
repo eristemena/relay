@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/erisristemena/relay/internal/storage/sqlite"
+	"github.com/eristemena/relay/internal/storage/sqlite"
 )
 
 type ToolName string

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/erisristemena/relay/internal/config"
+	"github.com/eristemena/relay/internal/config"
 )
 
 func TestService_SavePreferencesKeepsValidValuesOnInvalidInput(t *testing.T) {

@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/erisristemena/relay/internal/agents/openrouter"
-	"github.com/erisristemena/relay/internal/config"
-	"github.com/erisristemena/relay/internal/storage/sqlite"
+	"github.com/eristemena/relay/internal/agents/openrouter"
+	"github.com/eristemena/relay/internal/config"
+	"github.com/eristemena/relay/internal/storage/sqlite"
 	"github.com/sashabaranov/go-openai/jsonschema"
 )
 

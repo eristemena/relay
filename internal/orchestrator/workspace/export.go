@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/erisristemena/relay/internal/storage/sqlite"
+	"github.com/eristemena/relay/internal/storage/sqlite"
 )
 
 type RunHistoryExportRequest struct {

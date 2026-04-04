@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/erisristemena/relay/internal/config"
+	"github.com/eristemena/relay/internal/config"
 	billy "github.com/go-git/go-billy/v5"
 	git "github.com/go-git/go-git/v5"
 	gitignore "github.com/go-git/go-git/v5/plumbing/format/gitignore"

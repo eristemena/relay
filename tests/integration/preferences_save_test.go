@@ -3,8 +3,8 @@ package integration_test
 import (
 	"testing"
 
-	"github.com/erisristemena/relay/internal/app"
-	"github.com/erisristemena/relay/internal/config"
+	"github.com/eristemena/relay/internal/app"
+	"github.com/eristemena/relay/internal/config"
 )
 
 func TestWorkspacePreferences_SavePersistsToConfig(t *testing.T) {

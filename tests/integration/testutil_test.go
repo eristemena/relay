@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/erisristemena/relay/internal/app"
-	"github.com/erisristemena/relay/internal/config"
+	"github.com/eristemena/relay/internal/app"
+	"github.com/eristemena/relay/internal/config"
 	"nhooyr.io/websocket"
 	"nhooyr.io/websocket/wsjson"
 )

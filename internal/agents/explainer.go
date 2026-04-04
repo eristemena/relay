@@ -1,8 +1,8 @@
 package agents
 
 import (
-	"github.com/erisristemena/relay/internal/agents/openrouter"
-	"github.com/erisristemena/relay/internal/storage/sqlite"
+	"github.com/eristemena/relay/internal/agents/openrouter"
+	"github.com/eristemena/relay/internal/storage/sqlite"
 )
 
 func NewExplainer(model string) Profile {

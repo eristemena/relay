@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/erisristemena/relay/internal/agents"
-	"github.com/erisristemena/relay/internal/app"
-	"github.com/erisristemena/relay/internal/config"
-	"github.com/erisristemena/relay/internal/storage/sqlite"
+	"github.com/eristemena/relay/internal/agents"
+	"github.com/eristemena/relay/internal/app"
+	"github.com/eristemena/relay/internal/config"
+	"github.com/eristemena/relay/internal/storage/sqlite"
 )
 
 func TestRepositoryFileTree_RequestHydratesConnectedRepositoryTree(t *testing.T) {

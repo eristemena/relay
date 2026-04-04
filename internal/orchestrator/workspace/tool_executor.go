@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/erisristemena/relay/internal/agents"
-	"github.com/erisristemena/relay/internal/storage/sqlite"
-	toolspkg "github.com/erisristemena/relay/internal/tools"
+	"github.com/eristemena/relay/internal/agents"
+	"github.com/eristemena/relay/internal/storage/sqlite"
+	toolspkg "github.com/eristemena/relay/internal/tools"
 	"github.com/sashabaranov/go-openai/jsonschema"
 )
 

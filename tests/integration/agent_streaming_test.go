@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/erisristemena/relay/internal/agents"
-	"github.com/erisristemena/relay/internal/config"
-	ws "github.com/erisristemena/relay/internal/handlers/ws"
-	workspaceorchestrator "github.com/erisristemena/relay/internal/orchestrator/workspace"
-	"github.com/erisristemena/relay/internal/storage/sqlite"
+	"github.com/eristemena/relay/internal/agents"
+	"github.com/eristemena/relay/internal/config"
+	ws "github.com/eristemena/relay/internal/handlers/ws"
+	workspaceorchestrator "github.com/eristemena/relay/internal/orchestrator/workspace"
+	"github.com/eristemena/relay/internal/storage/sqlite"
 	"nhooyr.io/websocket"
 	"nhooyr.io/websocket/wsjson"
 )

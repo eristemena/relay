@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/erisristemena/relay/internal/agents/openrouter"
-	"github.com/erisristemena/relay/internal/config"
-	"github.com/erisristemena/relay/internal/storage/sqlite"
+	"github.com/eristemena/relay/internal/agents/openrouter"
+	"github.com/eristemena/relay/internal/config"
+	"github.com/eristemena/relay/internal/storage/sqlite"
 )
 
 func TestRegistrySelectProfileUsesRoleSpecificPromptsModelsAndToolAllowlists(t *testing.T) {

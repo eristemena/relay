@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	workspaceorchestrator "github.com/erisristemena/relay/internal/orchestrator/workspace"
-	"github.com/erisristemena/relay/internal/storage/sqlite"
+	workspaceorchestrator "github.com/eristemena/relay/internal/orchestrator/workspace"
+	"github.com/eristemena/relay/internal/storage/sqlite"
 	"nhooyr.io/websocket"
 	"nhooyr.io/websocket/wsjson"
 )

@@ -17,10 +17,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/erisristemena/relay/internal/agents"
-	"github.com/erisristemena/relay/internal/config"
-	"github.com/erisristemena/relay/internal/storage/sqlite"
-	toolspkg "github.com/erisristemena/relay/internal/tools"
+	"github.com/eristemena/relay/internal/agents"
+	"github.com/eristemena/relay/internal/config"
+	"github.com/eristemena/relay/internal/storage/sqlite"
+	toolspkg "github.com/eristemena/relay/internal/tools"
 )
 
 func TestService_BootstrapUsesSavedSession(t *testing.T) {

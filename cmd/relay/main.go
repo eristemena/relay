@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/erisristemena/relay/internal/app"
+	"github.com/eristemena/relay/internal/app"
 	"github.com/spf13/cobra"
 )
 

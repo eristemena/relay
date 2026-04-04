@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/erisristemena/relay/internal/agents"
-	"github.com/erisristemena/relay/internal/storage/sqlite"
-	toolspkg "github.com/erisristemena/relay/internal/tools"
+	"github.com/eristemena/relay/internal/agents"
+	"github.com/eristemena/relay/internal/storage/sqlite"
+	toolspkg "github.com/eristemena/relay/internal/tools"
 	git "github.com/go-git/go-git/v5"
 )
 

@@ -1,4 +1,4 @@
-module github.com/erisristemena/relay
+module github.com/eristemena/relay
 
 go 1.26
 

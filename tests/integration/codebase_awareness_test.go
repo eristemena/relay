@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/erisristemena/relay/internal/agents"
-	"github.com/erisristemena/relay/internal/app"
-	"github.com/erisristemena/relay/internal/config"
-	"github.com/erisristemena/relay/internal/storage/sqlite"
-	toolspkg "github.com/erisristemena/relay/internal/tools"
+	"github.com/eristemena/relay/internal/agents"
+	"github.com/eristemena/relay/internal/app"
+	"github.com/eristemena/relay/internal/config"
+	"github.com/eristemena/relay/internal/storage/sqlite"
+	toolspkg "github.com/eristemena/relay/internal/tools"
 	git "github.com/go-git/go-git/v5"
 )
 

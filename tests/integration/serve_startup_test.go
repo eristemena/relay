@@ -5,7 +5,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/erisristemena/relay/internal/app"
+	"github.com/eristemena/relay/internal/app"
 )
 
 func TestServeStartup_FallsBackToFreePort(t *testing.T) {

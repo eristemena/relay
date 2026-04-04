@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/erisristemena/relay/internal/config"
-	"github.com/erisristemena/relay/internal/repository"
+	"github.com/eristemena/relay/internal/config"
+	"github.com/eristemena/relay/internal/repository"
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 )

@@ -12,13 +12,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/erisristemena/relay/internal/browser"
-	"github.com/erisristemena/relay/internal/config"
-	frontendpkg "github.com/erisristemena/relay/internal/frontend"
-	healthhandler "github.com/erisristemena/relay/internal/handlers/http"
-	ws "github.com/erisristemena/relay/internal/handlers/ws"
-	workspaceorchestrator "github.com/erisristemena/relay/internal/orchestrator/workspace"
-	"github.com/erisristemena/relay/internal/storage/sqlite"
+	"github.com/eristemena/relay/internal/browser"
+	"github.com/eristemena/relay/internal/config"
+	frontendpkg "github.com/eristemena/relay/internal/frontend"
+	healthhandler "github.com/eristemena/relay/internal/handlers/http"
+	ws "github.com/eristemena/relay/internal/handlers/ws"
+	workspaceorchestrator "github.com/eristemena/relay/internal/orchestrator/workspace"
+	"github.com/eristemena/relay/internal/storage/sqlite"
 )
 
 type Options struct {

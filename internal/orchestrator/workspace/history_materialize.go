@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/erisristemena/relay/internal/storage/sqlite"
+	"github.com/eristemena/relay/internal/storage/sqlite"
 )
 
 func (s *Service) refreshSessionRunHistory(ctx context.Context, sessionID string) error {
