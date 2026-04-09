@@ -20,10 +20,21 @@ The browser never receives the saved OpenRouter API key. Relay persists configur
 ## Commands
 
 - `make dev`: run the Next.js dev server and Relay together
+- `make dev ROOT=/absolute/path/to/project`: run the dev stack while forcing Relay to start against a specific project root
 - `make build`: export the frontend, copy the assets into the embed directory, and build the binary
 - `make test`: run Go unit and integration tests
 - `make test-web`: run frontend component tests
 - `npm --prefix web run typecheck`: run the frontend TypeScript checker
+
+## Project Roots
+
+- `./bin/relay serve --no-browser`: start Relay against the current working directory when you want the shell to bind itself to the repo you launched from
+- `./bin/relay serve --no-browser --root /absolute/path/to/project`: start Relay against an explicit project root when that root should win over the current working directory
+- The first time Relay sees a project root, it creates that root's persisted workspace context automatically; reconnecting to the same root reuses the existing project-scoped state instead of asking you to create or open a session manually
+- The workspace header always shows the active project root, and the header switcher lists known roots so you can move between them without restarting Relay
+- Switching projects rehydrates the target root's canvas, history, and repository tree while clearing stale state from the previous root
+- The History tab shows runs from the active project by default and offers an explicit all-project mode that keeps the active root unchanged
+- Relay blocks project switches while the current project still has a non-terminal run so one Relay instance never owns multiple active project contexts at once
 
 ## Local Data
 
@@ -33,7 +44,7 @@ The browser never receives the saved OpenRouter API key. Relay persists configur
 
 ## Live Agent Setup
 
-Add the OpenRouter API key and a manual project root to `~/.relay/config.toml` before using repository-aware runs:
+Add the OpenRouter API key and an optional default project root to `~/.relay/config.toml` before using repository-aware runs:
 
 ```toml
 project_root = "/absolute/path/to/your/repository"
@@ -49,7 +60,7 @@ tester = "deepseek/deepseek-chat"
 explainer = "google/gemini-2.0-flash-001"
 ```
 
-Relay keeps the key server-side, exposes only configuration status to the browser, and stores run history in SQLite for replay.
+Relay keeps the key server-side, exposes only configuration status to the browser, and stores project-scoped run history in SQLite for replay.
 
 ## Built-In Roles
 

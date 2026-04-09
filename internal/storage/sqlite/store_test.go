@@ -53,6 +53,42 @@ func TestStore_CreateListAndOpenSession(t *testing.T) {
 	}
 }
 
+func TestStore_ProjectSessionQueries(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	projectSession, err := store.CreateProjectSession(ctx, "Relay", "/tmp/relay")
+	if err != nil {
+		t.Fatalf("CreateProjectSession() error = %v", err)
+	}
+	if projectSession.ProjectRoot != "/tmp/relay" {
+		t.Fatalf("projectSession.ProjectRoot = %q, want /tmp/relay", projectSession.ProjectRoot)
+	}
+
+	loaded, err := store.GetSessionByProjectRoot(ctx, "/tmp/relay")
+	if err != nil {
+		t.Fatalf("GetSessionByProjectRoot() error = %v", err)
+	}
+	if loaded.ID != projectSession.ID {
+		t.Fatalf("loaded.ID = %q, want %q", loaded.ID, projectSession.ID)
+	}
+
+	projects, err := store.ListKnownProjects(ctx)
+	if err != nil {
+		t.Fatalf("ListKnownProjects() error = %v", err)
+	}
+	if len(projects) != 1 {
+		t.Fatalf("len(projects) = %d, want 1", len(projects))
+	}
+	if projects[0].ProjectRoot != "/tmp/relay" {
+		t.Fatalf("projects[0].ProjectRoot = %q, want /tmp/relay", projects[0].ProjectRoot)
+	}
+}
+
 func TestStore_ListRunSummariesAndReplayEvents(t *testing.T) {
 	store, err := NewStore(filepath.Join(t.TempDir(), "relay.db"))
 	if err != nil {
@@ -455,6 +491,89 @@ func TestStore_RunHistoryDocumentsQueriesAndExports(t *testing.T) {
 	}
 	if updatedDocument.ExportedAt == nil || !updatedDocument.ExportedAt.Equal(exportedAt) {
 		t.Fatalf("updatedDocument.ExportedAt = %v, want %v", updatedDocument.ExportedAt, exportedAt)
+	}
+}
+
+func TestStore_QueryRunHistoryScopesByProjectRootUnlessAllProjects(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "relay.db"))
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	projectARoot := t.TempDir()
+	projectBRoot := t.TempDir()
+	sessionA, err := store.CreateProjectSession(ctx, "project-a", projectARoot)
+	if err != nil {
+		t.Fatalf("CreateProjectSession(project-a) error = %v", err)
+	}
+	sessionB, err := store.CreateProjectSession(ctx, "project-b", projectBRoot)
+	if err != nil {
+		t.Fatalf("CreateProjectSession(project-b) error = %v", err)
+	}
+	runA, err := store.CreateAgentRun(ctx, sessionA.ID, "Review project A", RoleReviewer, "reviewer-model")
+	if err != nil {
+		t.Fatalf("CreateAgentRun(project-a) error = %v", err)
+	}
+	completedAt := time.Date(2026, 4, 5, 8, 59, 0, 0, time.UTC)
+	runA.State = RunStateCompleted
+	runA.CompletedAt = &completedAt
+	if err := store.UpdateAgentRun(ctx, runA); err != nil {
+		t.Fatalf("UpdateAgentRun(project-a) error = %v", err)
+	}
+	runB, err := store.CreateAgentRun(ctx, sessionB.ID, "Review project B", RoleReviewer, "reviewer-model")
+	if err != nil {
+		t.Fatalf("CreateAgentRun(project-b) error = %v", err)
+	}
+	startedAt := time.Date(2026, 4, 5, 9, 0, 0, 0, time.UTC)
+
+	for _, item := range []struct {
+		runID     string
+		sessionID string
+		title     string
+		goal      string
+		offset    time.Duration
+	}{
+		{runID: runA.ID, sessionID: sessionA.ID, title: "Project A audit", goal: "Inspect README in project A", offset: 0},
+		{runID: runB.ID, sessionID: sessionB.ID, title: "Project B audit", goal: "Inspect README in project B", offset: time.Minute},
+	} {
+		started := startedAt.Add(item.offset)
+		if err := store.UpsertRunHistoryDocument(ctx, RunHistoryDocument{
+			RunID:          item.runID,
+			SessionID:      item.sessionID,
+			GeneratedTitle: item.title,
+			GoalText:       item.goal,
+			FinalStatus:    "completed",
+			AgentCount:     1,
+			StartedAt:      started,
+			HasFileChanges: false,
+		}); err != nil {
+			t.Fatalf("UpsertRunHistoryDocument(%s) error = %v", item.runID, err)
+		}
+	}
+
+	projectScoped, err := store.QueryRunHistory(ctx, RunHistoryQuery{
+		SessionID:   sessionA.ID,
+		ProjectRoot: projectARoot,
+	})
+	if err != nil {
+		t.Fatalf("QueryRunHistory(project scoped) error = %v", err)
+	}
+	if len(projectScoped) != 1 || projectScoped[0].RunID != runA.ID {
+		t.Fatalf("projectScoped = %+v, want only project A run", projectScoped)
+	}
+
+	allProjects, err := store.QueryRunHistory(ctx, RunHistoryQuery{
+		SessionID:   sessionA.ID,
+		ProjectRoot: projectARoot,
+		AllProjects: true,
+	})
+	if err != nil {
+		t.Fatalf("QueryRunHistory(all projects) error = %v", err)
+	}
+	if len(allProjects) != 2 {
+		t.Fatalf("len(allProjects) = %d, want 2", len(allProjects))
 	}
 }
 

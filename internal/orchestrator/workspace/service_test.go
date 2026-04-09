@@ -117,6 +117,60 @@ func TestService_BootstrapRecoversOrphanedActiveRun(t *testing.T) {
 	}
 }
 
+func TestService_BootstrapCreatesAndReusesProjectSessionForConfiguredRoot(t *testing.T) {
+	paths, store := newTestServiceStore(t)
+	defer store.Close()
+
+	service := NewService(store, paths)
+	ctx := context.Background()
+	projectRoot := initWorkspaceRepositoryRoot(t)
+
+	cfg, _, err := config.Load(paths)
+	if err != nil {
+		t.Fatalf("config.Load() error = %v", err)
+	}
+	cfg.ProjectRoot = projectRoot
+	if err := config.Save(paths, cfg); err != nil {
+		t.Fatalf("config.Save() error = %v", err)
+	}
+
+	firstSnapshot, err := service.Bootstrap(ctx, "")
+	if err != nil {
+		t.Fatalf("first Bootstrap() error = %v", err)
+	}
+	if firstSnapshot.ActiveProjectRoot != projectRoot {
+		t.Fatalf("firstSnapshot.ActiveProjectRoot = %q, want %q", firstSnapshot.ActiveProjectRoot, projectRoot)
+	}
+	if firstSnapshot.ActiveSessionID == "" {
+		t.Fatal("expected bootstrap to create a project session")
+	}
+	if len(firstSnapshot.KnownProjects) != 1 {
+		t.Fatalf("len(firstSnapshot.KnownProjects) = %d, want 1", len(firstSnapshot.KnownProjects))
+	}
+
+	storedSession, err := store.GetSessionByProjectRoot(ctx, projectRoot)
+	if err != nil {
+		t.Fatalf("GetSessionByProjectRoot() error = %v", err)
+	}
+	if storedSession.ID != firstSnapshot.ActiveSessionID {
+		t.Fatalf("storedSession.ID = %q, want %q", storedSession.ID, firstSnapshot.ActiveSessionID)
+	}
+
+	secondSnapshot, err := service.Bootstrap(ctx, "")
+	if err != nil {
+		t.Fatalf("second Bootstrap() error = %v", err)
+	}
+	if secondSnapshot.ActiveSessionID != firstSnapshot.ActiveSessionID {
+		t.Fatalf("secondSnapshot.ActiveSessionID = %q, want %q", secondSnapshot.ActiveSessionID, firstSnapshot.ActiveSessionID)
+	}
+	if len(secondSnapshot.Sessions) != 1 {
+		t.Fatalf("len(secondSnapshot.Sessions) = %d, want 1", len(secondSnapshot.Sessions))
+	}
+	if secondSnapshot.KnownProjects[0].ProjectRoot != projectRoot {
+		t.Fatalf("secondSnapshot.KnownProjects[0].ProjectRoot = %q, want %q", secondSnapshot.KnownProjects[0].ProjectRoot, projectRoot)
+	}
+}
+
 func TestService_CreateSessionAndOpenSessionPersistSelection(t *testing.T) {
 	paths, store := newTestServiceStore(t)
 	defer store.Close()
@@ -151,6 +205,164 @@ func TestService_CreateSessionAndOpenSessionPersistSelection(t *testing.T) {
 	}
 	if cfg.LastSessionID != archived.ID {
 		t.Fatalf("cfg.LastSessionID = %q, want %q", cfg.LastSessionID, archived.ID)
+	}
+}
+
+func TestService_SwitchProjectOpensKnownProject(t *testing.T) {
+	paths, store := newTestServiceStore(t)
+	defer store.Close()
+
+	service := NewService(store, paths)
+	ctx := context.Background()
+	firstRoot := initWorkspaceRepositoryRoot(t)
+	secondRoot := initWorkspaceRepositoryRoot(t)
+	firstSession, err := store.CreateProjectSession(ctx, "first", firstRoot)
+	if err != nil {
+		t.Fatalf("CreateProjectSession(first) error = %v", err)
+	}
+	secondSession, err := store.CreateProjectSession(ctx, "second", secondRoot)
+	if err != nil {
+		t.Fatalf("CreateProjectSession(second) error = %v", err)
+	}
+
+	cfg, _, err := config.Load(paths)
+	if err != nil {
+		t.Fatalf("config.Load() error = %v", err)
+	}
+	cfg.ProjectRoot = firstRoot
+	cfg.LastSessionID = firstSession.ID
+	if err := config.Save(paths, cfg); err != nil {
+		t.Fatalf("config.Save() error = %v", err)
+	}
+
+	snapshot, err := service.SwitchProject(ctx, secondRoot)
+	if err != nil {
+		t.Fatalf("SwitchProject() error = %v", err)
+	}
+	if snapshot.ActiveSessionID != secondSession.ID {
+		t.Fatalf("snapshot.ActiveSessionID = %q, want %q", snapshot.ActiveSessionID, secondSession.ID)
+	}
+	if snapshot.ActiveProjectRoot != secondRoot {
+		t.Fatalf("snapshot.ActiveProjectRoot = %q, want %q", snapshot.ActiveProjectRoot, secondRoot)
+	}
+	if len(snapshot.KnownProjects) != 2 {
+		t.Fatalf("len(snapshot.KnownProjects) = %d, want 2", len(snapshot.KnownProjects))
+	}
+
+	cfg, _, err = config.Load(paths)
+	if err != nil {
+		t.Fatalf("config.Load() after switch error = %v", err)
+	}
+	if cfg.ProjectRoot != secondRoot {
+		t.Fatalf("cfg.ProjectRoot = %q, want %q", cfg.ProjectRoot, secondRoot)
+	}
+	if cfg.LastSessionID != secondSession.ID {
+		t.Fatalf("cfg.LastSessionID = %q, want %q", cfg.LastSessionID, secondSession.ID)
+	}
+}
+
+func TestService_SwitchProjectBlocksWhenActiveRunExists(t *testing.T) {
+	paths, store := newTestServiceStore(t)
+	defer store.Close()
+
+	service := NewService(store, paths)
+	ctx := context.Background()
+	firstRoot := initWorkspaceRepositoryRoot(t)
+	secondRoot := initWorkspaceRepositoryRoot(t)
+	firstSession, err := store.CreateProjectSession(ctx, "first", firstRoot)
+	if err != nil {
+		t.Fatalf("CreateProjectSession(first) error = %v", err)
+	}
+	_, err = store.CreateProjectSession(ctx, "second", secondRoot)
+	if err != nil {
+		t.Fatalf("CreateProjectSession(second) error = %v", err)
+	}
+
+	run, err := store.CreateAgentRun(ctx, firstSession.ID, "Inspect project state", sqlite.RolePlanner, config.DefaultPlannerModel)
+	if err != nil {
+		t.Fatalf("CreateAgentRun() error = %v", err)
+	}
+	run.State = sqlite.RunStateThinking
+	if err := store.UpdateAgentRun(ctx, run); err != nil {
+		t.Fatalf("UpdateAgentRun() error = %v", err)
+	}
+
+	cfg, _, err := config.Load(paths)
+	if err != nil {
+		t.Fatalf("config.Load() error = %v", err)
+	}
+	cfg.ProjectRoot = firstRoot
+	cfg.LastSessionID = firstSession.ID
+	if err := config.Save(paths, cfg); err != nil {
+		t.Fatalf("config.Save() error = %v", err)
+	}
+
+	_, err = service.SwitchProject(ctx, secondRoot)
+	if err == nil {
+		t.Fatal("SwitchProject() error = nil, want blocked error")
+	}
+	var switchErr *ProjectSwitchError
+	if !errors.As(err, &switchErr) {
+		t.Fatalf("SwitchProject() error = %v, want ProjectSwitchError", err)
+	}
+	if switchErr.Code != "project_switch_blocked" {
+		t.Fatalf("switchErr.Code = %q, want project_switch_blocked", switchErr.Code)
+	}
+
+	snapshot, err := service.Bootstrap(ctx, firstSession.ID)
+	if err != nil {
+		t.Fatalf("Bootstrap() error = %v", err)
+	}
+	blocked := false
+	for _, project := range snapshot.KnownProjects {
+		if project.ProjectRoot == secondRoot {
+			blocked = project.BlockedReason == "Finish or stop the active run before switching projects."
+		}
+	}
+	if !blocked {
+		t.Fatal("expected inactive known project to carry a blocked switch reason")
+	}
+}
+
+func TestService_SwitchProjectRejectsUnknownProject(t *testing.T) {
+	paths, store := newTestServiceStore(t)
+	defer store.Close()
+
+	service := NewService(store, paths)
+	ctx := context.Background()
+	firstRoot := initWorkspaceRepositoryRoot(t)
+	firstSession, err := store.CreateProjectSession(ctx, "first", firstRoot)
+	if err != nil {
+		t.Fatalf("CreateProjectSession(first) error = %v", err)
+	}
+
+	cfg, _, err := config.Load(paths)
+	if err != nil {
+		t.Fatalf("config.Load() error = %v", err)
+	}
+	cfg.ProjectRoot = firstRoot
+	cfg.LastSessionID = firstSession.ID
+	if err := config.Save(paths, cfg); err != nil {
+		t.Fatalf("config.Save() error = %v", err)
+	}
+
+	missingRoot := initWorkspaceRepositoryRoot(t)
+	_, err = service.SwitchProject(ctx, missingRoot)
+	if err == nil {
+		t.Fatal("SwitchProject() error = nil, want unknown-project error")
+	}
+	var switchErr *ProjectSwitchError
+	if !errors.As(err, &switchErr) {
+		t.Fatalf("SwitchProject() error = %v, want ProjectSwitchError", err)
+	}
+	if switchErr.Code != "project_not_found" {
+		t.Fatalf("switchErr.Code = %q, want project_not_found", switchErr.Code)
+	}
+	if switchErr.ProjectRoot != missingRoot {
+		t.Fatalf("switchErr.ProjectRoot = %q, want %q", switchErr.ProjectRoot, missingRoot)
+	}
+	if switchErr.Message == "" {
+		t.Fatal("expected missing project switch message")
 	}
 }
 
@@ -2154,6 +2366,79 @@ func TestService_QueryRunHistoryMaterializesDocumentsFromRecordedRun(t *testing.
 	}
 	if document.FinalStatus != "completed" {
 		t.Fatalf("document.FinalStatus = %q, want completed", document.FinalStatus)
+	}
+}
+
+func TestService_QueryRunHistoryIncludesProjectMetadataInAllProjectsMode(t *testing.T) {
+	paths, store := newTestServiceStore(t)
+	defer store.Close()
+
+	service := NewService(store, paths)
+	ctx := context.Background()
+	projectARoot := initWorkspaceRepositoryRoot(t)
+	projectBRoot := initWorkspaceRepositoryRoot(t)
+	sessionA, err := store.CreateProjectSession(ctx, "project-a", projectARoot)
+	if err != nil {
+		t.Fatalf("CreateProjectSession(project-a) error = %v", err)
+	}
+	sessionB, err := store.CreateProjectSession(ctx, "project-b", projectBRoot)
+	if err != nil {
+		t.Fatalf("CreateProjectSession(project-b) error = %v", err)
+	}
+
+	for _, item := range []struct {
+		session sqlite.Session
+		goal    string
+		title   string
+	}{
+		{session: sessionA, goal: "Inspect project A history", title: "Project A history"},
+		{session: sessionB, goal: "Inspect project B history", title: "Project B history"},
+	} {
+		run, err := store.CreateAgentRun(ctx, item.session.ID, item.goal, sqlite.RoleReviewer, config.DefaultReviewerModel)
+		if err != nil {
+			t.Fatalf("CreateAgentRun(%s) error = %v", item.title, err)
+		}
+		completedAt := time.Now().UTC()
+		run.State = sqlite.RunStateCompleted
+		run.CompletedAt = &completedAt
+		if err := store.UpdateAgentRun(ctx, run); err != nil {
+			t.Fatalf("UpdateAgentRun(%s) error = %v", item.title, err)
+		}
+		if err := store.UpsertRunHistoryDocument(ctx, sqlite.RunHistoryDocument{
+			RunID:          run.ID,
+			SessionID:      item.session.ID,
+			GeneratedTitle: item.title,
+			GoalText:       item.goal,
+			FinalStatus:    "completed",
+			AgentCount:     1,
+			StartedAt:      completedAt.Add(-time.Minute),
+			CompletedAt:    &completedAt,
+		}); err != nil {
+			t.Fatalf("UpsertRunHistoryDocument(%s) error = %v", item.title, err)
+		}
+		if err := store.UpsertRunHistorySearchDocument(ctx, sqlite.RunHistorySearchDocument{
+			RunID:      run.ID,
+			SessionID:  item.session.ID,
+			TitleText:  item.title,
+			GoalText:   item.goal,
+		}); err != nil {
+			t.Fatalf("UpsertRunHistorySearchDocument(%s) error = %v", item.title, err)
+		}
+	}
+
+	runs, err := service.QueryRunHistory(ctx, RunHistoryQueryInput{
+		SessionID:   sessionA.ID,
+		AllProjects: true,
+		Query:       "project",
+	})
+	if err != nil {
+		t.Fatalf("QueryRunHistory() error = %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("len(runs) = %d, want 2", len(runs))
+	}
+	if runs[0].ProjectRoot == "" || runs[0].ProjectLabel == "" {
+		t.Fatalf("runs[0] = %+v, want project metadata", runs[0])
 	}
 }
 

@@ -21,12 +21,58 @@ describe("RunHistoryPanel", () => {
       />,
     );
 
-    expect(screen.getByText(/no saved runs yet/i)).toBeInTheDocument();
     expect(
-      screen.getByText(
-        /completed, clarification-required, and errored agent tasks will appear here for replay/i,
-      ),
+      screen.getByText(/no saved runs found for the active project/i),
     ).toBeInTheDocument();
+  });
+
+  it("toggles all-project mode and renders project labels", () => {
+    const onQuery = vi.fn();
+
+    render(
+      <RunHistoryPanel
+        activeRunId=""
+        historyState="ready"
+        onExport={() => undefined}
+        onOpen={() => undefined}
+        onQuery={onQuery}
+        onReplayControl={() => undefined}
+        replayState={null}
+        runHistoryQuery={{ all_projects: true }}
+        runSummaries={[
+          {
+            id: "run_1",
+            task_text_preview: "Review project history",
+            role: "reviewer",
+            model: "anthropic/claude-sonnet-4-5",
+            state: "completed",
+            started_at: "2026-03-23T12:00:00Z",
+            has_tool_activity: false,
+            project_label: "relay",
+            project_root: "/tmp/relay",
+          },
+        ]}
+        selectedRun={null}
+        selectedRunDetails={null}
+        selectedRunId=""
+      />,
+    );
+
+    const toggle = screen.getByRole("checkbox", {
+      name: /include runs from all known projects/i,
+    });
+    expect(toggle).toBeChecked();
+    expect(screen.getByText(/project relay/i)).toBeInTheDocument();
+
+    fireEvent.click(toggle);
+
+    expect(onQuery).toHaveBeenCalledWith({
+      all_projects: false,
+      query: undefined,
+      file_path: undefined,
+      date_from: undefined,
+      date_to: undefined,
+    });
   });
 
   it("opens a saved run when selected", () => {
@@ -207,6 +253,7 @@ describe("RunHistoryPanel", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /apply filters/i }));
     expect(onQuery).toHaveBeenCalledWith({
+      all_projects: false,
       query: "approval",
       file_path: undefined,
       date_from: undefined,

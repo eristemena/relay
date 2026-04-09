@@ -30,7 +30,7 @@ interface ToolbarButtonDefinition {
 const toolbarButtons: ToolbarButtonDefinition[] = [
   {
     id: "sessions",
-    label: "Sessions",
+    label: "Project context",
     icon: (
       <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
         <path

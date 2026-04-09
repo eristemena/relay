@@ -9,6 +9,16 @@ import { resetWorkspaceStore, workspaceStore } from "@/shared/lib/workspace-stor
 export function buildWorkspaceSnapshot(overrides: Partial<WorkspaceSnapshotPayload> = {}): WorkspaceSnapshotPayload {
   const baseSnapshot: WorkspaceSnapshotPayload = {
     active_session_id: "session_alpha",
+    active_project_root: "/tmp/relay",
+    known_projects: [
+      {
+        project_root: "/tmp/relay",
+        label: "relay",
+        is_active: true,
+        is_available: true,
+        last_opened_at: "2026-03-23T12:15:00Z",
+      },
+    ],
     sessions: [
       {
         id: "session_alpha",

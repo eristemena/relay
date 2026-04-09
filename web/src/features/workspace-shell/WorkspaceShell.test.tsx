@@ -61,6 +61,7 @@ const socketActions = {
   requestRepositoryTree: vi.fn(),
   respondToApproval: vi.fn(),
   savePreferences: vi.fn(),
+  switchProject: vi.fn(),
   submitRun: vi.fn(),
 };
 
@@ -96,10 +97,7 @@ describe("WorkspaceShell", () => {
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /open sessions/i }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /open run history/i }),
+      screen.getByRole("button", { name: /open project context/i }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /open preferences/i }),
@@ -110,12 +108,227 @@ describe("WorkspaceShell", () => {
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("navigation", {
-        name: /session history and switching/i,
+        name: /project context and switching/i,
       }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByText(/saved workspace defaults/i),
     ).not.toBeInTheDocument();
+  });
+
+  it("renders the active project root in the workspace header", () => {
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        active_project_root: "/tmp/relay-project",
+        known_projects: [
+          {
+            project_root: "/tmp/relay-project",
+            label: "relay-project",
+            is_active: true,
+            is_available: true,
+            last_opened_at: "2026-03-23T12:15:00Z",
+          },
+          {
+            project_root: "/tmp/another-project",
+            label: "another-project",
+            is_active: false,
+            is_available: true,
+            last_opened_at: "2026-03-23T12:20:00Z",
+          },
+        ],
+      }),
+    );
+
+    render(<WorkspaceShell />);
+
+    const activeProjectSection = screen.getByLabelText(/active project/i);
+    expect(activeProjectSection).toBeInTheDocument();
+    expect(
+      within(activeProjectSection).getByText("/tmp/relay-project"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/2 known projects/i)).toBeInTheDocument();
+  });
+
+  it("renders the empty active-project state when no root is selected yet", () => {
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        active_project_root: "",
+        known_projects: [],
+        preferences: {
+          ...buildWorkspaceSnapshot().preferences,
+          project_root: "",
+          project_root_configured: false,
+          project_root_valid: false,
+          project_root_message: "",
+        },
+      }),
+    );
+
+    render(<WorkspaceShell />);
+
+    const activeProjectSection = screen.getByLabelText(/active project/i);
+    expect(
+      within(activeProjectSection).getByText(/no active project selected yet/i),
+    ).toBeInTheDocument();
+    expect(
+      within(activeProjectSection).getByText(/single known project/i),
+    ).toBeInTheDocument();
+  });
+
+  it("dispatches project switches from the project context panel", async () => {
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        active_project_root: "/tmp/relay-project",
+        known_projects: [
+          {
+            project_root: "/tmp/relay-project",
+            label: "relay-project",
+            is_active: true,
+            is_available: true,
+            last_opened_at: "2026-03-23T12:15:00Z",
+          },
+          {
+            project_root: "/tmp/another-project",
+            label: "another-project",
+            is_active: false,
+            is_available: true,
+            last_opened_at: "2026-03-23T12:20:00Z",
+          },
+        ],
+      }),
+    );
+
+    render(<WorkspaceShell />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /open project context/i }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /another-project/i }),
+    );
+
+    expect(socketActions.switchProject).toHaveBeenCalledWith(
+      "/tmp/another-project",
+    );
+  });
+
+  it("renders blocked and unavailable project switcher states in project context", async () => {
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        active_project_root: "/tmp/relay-project",
+        known_projects: [
+          {
+            project_root: "/tmp/relay-project",
+            label: "relay-project",
+            is_active: true,
+            is_available: true,
+            last_opened_at: "2026-03-23T12:15:00Z",
+          },
+          {
+            project_root: "/tmp/busy-project",
+            label: "busy-project",
+            is_active: false,
+            is_available: true,
+            blocked_reason:
+              "Finish or stop the active run before switching projects.",
+            last_opened_at: "2026-03-23T12:20:00Z",
+          },
+          {
+            project_root: "/tmp/missing-project",
+            label: "missing-project",
+            is_active: false,
+            is_available: false,
+            last_opened_at: "2026-03-23T12:25:00Z",
+          },
+        ],
+      }),
+    );
+
+    render(<WorkspaceShell />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /open project context/i }),
+    );
+
+    expect(
+      await screen.findByRole("button", { name: /busy-project/i }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /missing-project/i }),
+    ).toBeDisabled();
+    expect(
+      screen.getAllByText(
+        /finish or stop the active run before switching projects/i,
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getByText(
+        /relay cannot switch to this project until the path becomes available again/i,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("clears stale history selection after a project switch snapshot", async () => {
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        active_project_root: "/tmp/relay-project",
+        active_run_id: "run_project_a",
+        run_summaries: [
+          {
+            id: "run_project_a",
+            task_text_preview: "Inspect relay project A",
+            role: "reviewer",
+            model: "anthropic/claude-sonnet-4-5",
+            state: "completed",
+            started_at: "2026-03-24T12:00:00Z",
+            has_tool_activity: true,
+          },
+        ],
+      }),
+    );
+
+    render(<WorkspaceShell />);
+    fireEvent.click(screen.getByRole("button", { name: /open run history/i }));
+
+    expect(
+      screen.getAllByText(/inspect relay project a/i).length,
+    ).toBeGreaterThan(0);
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "workspace.bootstrap",
+        payload: buildWorkspaceSnapshot({
+          active_session_id: "session_beta",
+          active_project_root: "/tmp/relay-project-b",
+          run_summaries: [],
+          known_projects: [
+            {
+              project_root: "/tmp/relay-project",
+              label: "relay-project",
+              is_active: false,
+              is_available: true,
+              last_opened_at: "2026-03-23T12:15:00Z",
+            },
+            {
+              project_root: "/tmp/relay-project-b",
+              label: "relay-project-b",
+              is_active: true,
+              is_available: true,
+              last_opened_at: "2026-03-23T12:20:00Z",
+            },
+          ],
+          preferences: {
+            ...buildWorkspaceSnapshot().preferences,
+            project_root: "/tmp/relay-project-b",
+            project_root_configured: true,
+            project_root_valid: true,
+          },
+        }),
+      } as never);
+    });
+
+    expect(screen.queryAllByText(/inspect relay project a/i)).toHaveLength(0);
+    expect(
+      screen.getByText(/choose a saved run to inspect its recorded timeline/i),
+    ).toBeInTheDocument();
   });
 
   it("does not show the historical replay rail on first load without an active run", () => {
@@ -138,8 +351,24 @@ describe("WorkspaceShell", () => {
     render(<WorkspaceShell />);
 
     expect(
-      screen.queryByRole("heading", { name: /historical replay/i }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("tab", { name: /historical replay/i }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("tab", { name: /repository tree/i }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText(
+        /historical replay appears here after you reopen a saved run from run history/i,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /choose a saved run to inspect its recorded timeline, replay controls, and export actions/i,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /browse saved runs/i }),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(
         /submit a goal or reopen a saved run to populate the orchestration canvas/i,
@@ -147,39 +376,50 @@ describe("WorkspaceShell", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps session creation reachable on a clean install with no saved sessions", async () => {
+  it("routes empty project context to local settings instead of manual sessions", async () => {
     primeWorkspaceStore(
       buildWorkspaceSnapshot({
         active_session_id: "",
-        sessions: [],
+        active_project_root: "",
+        known_projects: [],
       }),
     );
     render(<WorkspaceShell />);
 
     expect(
-      screen.getByRole("button", { name: /open sessions/i }),
+      screen.getByRole("button", { name: /open project context/i }),
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /open sessions/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /open project context/i }),
+    );
 
     expect(
-      await screen.findByRole("button", { name: /start new session/i }),
+      await screen.findByRole("button", { name: /open local settings/i }),
     ).toBeInTheDocument();
+    expect(screen.queryByText(/start new session/i)).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /start new session/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /open local settings/i }),
+    );
 
-    expect(socketActions.createSession).toHaveBeenCalledTimes(1);
+    expect(
+      await screen.findByRole("heading", { name: /local settings/i }),
+    ).toBeInTheDocument();
+    expect(socketActions.createSession).not.toHaveBeenCalled();
   });
 
   it("switches workspace panels from the graph toolbar", async () => {
     primeWorkspaceStore(buildWorkspaceSnapshot());
     render(<WorkspaceShell />);
 
-    fireEvent.click(screen.getByRole("button", { name: /open sessions/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /open project context/i }),
+    );
 
     expect(
       await screen.findByRole("navigation", {
-        name: /session history and switching/i,
+        name: /project context and switching/i,
       }),
     ).toBeInTheDocument();
 
@@ -236,6 +476,25 @@ describe("WorkspaceShell", () => {
         ],
       }),
     );
+    act(() => {
+      workspaceStore.setRunHistoryResult({
+        session_id: "session_alpha",
+        all_projects: true,
+        runs: [
+          {
+            id: "run_history_1",
+            task_text_preview: "Audit approval review flow",
+            role: "reviewer",
+            model: "anthropic/claude-sonnet-4-5",
+            state: "completed",
+            started_at: "2026-03-24T12:00:00Z",
+            has_tool_activity: true,
+            project_root: "/tmp/relay",
+            project_label: "relay",
+          },
+        ],
+      });
+    });
 
     render(<WorkspaceShell />);
 
@@ -245,6 +504,7 @@ describe("WorkspaceShell", () => {
       expect(socketActions.queryRunHistory).toHaveBeenCalledWith(
         "session_alpha",
         {
+          all_projects: true,
           query: undefined,
           file_path: undefined,
           date_from: undefined,

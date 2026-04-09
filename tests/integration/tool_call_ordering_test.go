@@ -269,9 +269,13 @@ func TestToolCallOrdering_PendingApprovalRehydratesOnBootstrapReconnect(t *testi
 		t.Fatalf("config.Save() error = %v", err)
 	}
 
-	session, err := store.CreateSession(context.Background(), "Approval reconnect session")
+	session, err := store.CreateProjectSession(
+		context.Background(),
+		"Approval reconnect session",
+		repoRoot,
+	)
 	if err != nil {
-		t.Fatalf("CreateSession() error = %v", err)
+		t.Fatalf("CreateProjectSession() error = %v", err)
 	}
 
 	runner := &approvalFlowRunner{

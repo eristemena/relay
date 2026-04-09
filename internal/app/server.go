@@ -21,6 +21,8 @@ import (
 	"github.com/eristemena/relay/internal/storage/sqlite"
 )
 
+var getWorkingDirectory = os.Getwd
+
 type Options struct {
 	PreferredPort int
 	DevMode       bool
@@ -81,8 +83,16 @@ func NewServer(ctx context.Context, options Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	if root := strings.TrimSpace(options.ProjectRoot); root != "" {
-		loadedConfig.ProjectRoot = root
+	workingDir, err := getWorkingDirectory()
+	if err != nil {
+		return nil, fmt.Errorf("resolve working directory: %w", err)
+	}
+	resolvedRoot, err := workspaceorchestrator.ResolveProjectRoot(options.ProjectRoot, workingDir)
+	if err != nil {
+		return nil, fmt.Errorf("relay could not start with the selected project root: %w", err)
+	}
+	if loadedConfig.ProjectRoot != resolvedRoot {
+		loadedConfig.ProjectRoot = resolvedRoot
 		if err := config.Save(paths, loadedConfig); err != nil {
 			return nil, err
 		}

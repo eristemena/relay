@@ -7,6 +7,7 @@ export type ConnectionMessageType =
   | "repository.tree.request"
   | "repository.tree.result"
   | "repository_graph_status"
+  | "project.switch.request"
   | "session.create"
   | "session.created"
   | "session.open"
@@ -51,6 +52,19 @@ export interface Envelope<TPayload> {
 
 export interface WorkspaceBootstrapRequestPayload {
   last_session_id?: string;
+}
+
+export interface KnownProjectPayload {
+  project_root: string;
+  label: string;
+  is_active: boolean;
+  is_available: boolean;
+  last_opened_at: string;
+  blocked_reason?: string;
+}
+
+export interface ProjectSwitchRequestPayload {
+  project_root: string;
 }
 
 export interface RepositoryBrowseRequestPayload {
@@ -162,7 +176,8 @@ export interface AgentRunOpenPayload {
 }
 
 export interface RunHistoryQueryPayload {
-  session_id: string;
+  session_id?: string;
+  all_projects?: boolean;
   query?: string;
   file_path?: string;
   date_from?: string;
@@ -237,6 +252,8 @@ export interface WorkspaceUIState {
 
 export interface WorkspaceSnapshotPayload {
   active_session_id: string;
+  active_project_root?: string;
+  known_projects?: KnownProjectPayload[];
   sessions: SessionSummary[];
   preferences: PreferencesView;
   connected_repository: ConnectedRepositoryView;
@@ -280,6 +297,8 @@ export interface AgentRunSummary {
   id: string;
   generated_title?: string;
   task_text_preview: string;
+  project_root?: string;
+  project_label?: string;
   role: "planner" | "coder" | "reviewer" | "tester" | "explainer";
   model: string;
   state:
@@ -312,7 +331,8 @@ export interface RunChangeRecordPayload {
 }
 
 export interface RunHistoryResultPayload {
-  session_id: string;
+  session_id?: string;
+  all_projects?: boolean;
   query?: string;
   file_path?: string;
   date_from?: string;
@@ -489,6 +509,7 @@ export interface WorkspaceStatusPayload {
 export interface ErrorPayload {
   code: string;
   message: string;
+  project_root?: string;
   session_id?: string;
   run_id?: string;
   agent_id?: string;
@@ -559,6 +580,16 @@ export function createSessionCreateRequest(displayName?: string): Envelope<Sessi
   };
 }
 
+export function createProjectSwitchRequest(
+  projectRoot: string,
+): Envelope<ProjectSwitchRequestPayload> {
+  return {
+    type: "project.switch.request",
+    request_id: crypto.randomUUID(),
+    payload: { project_root: projectRoot },
+  };
+}
+
 export function createRepositoryBrowseRequest(
   path?: string,
   showHidden = false,
@@ -626,13 +657,13 @@ export function createAgentRunOpenRequest(
 }
 
 export function createRunHistoryQueryRequest(
-  sessionId: string,
+  sessionId: string | undefined,
   payload: Omit<RunHistoryQueryPayload, "session_id"> = {},
 ): Envelope<RunHistoryQueryPayload> {
   return {
     type: "run.history.query",
     request_id: crypto.randomUUID(),
-    payload: { session_id: sessionId, ...payload },
+    payload: { ...(sessionId ? { session_id: sessionId } : {}), ...payload },
   };
 }
 

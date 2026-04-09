@@ -10,7 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -63,7 +65,7 @@ func (s *Store) Close() error {
 
 func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, display_name, created_at, updated_at, last_opened_at, status, snapshot_json
+		SELECT id, display_name, project_root, created_at, updated_at, last_opened_at, status, snapshot_json
 		FROM sessions
 		ORDER BY datetime(last_opened_at) DESC, datetime(created_at) DESC
 	`)
@@ -90,7 +92,7 @@ func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
 
 func (s *Store) GetSession(ctx context.Context, sessionID string) (Session, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, display_name, created_at, updated_at, last_opened_at, status, snapshot_json
+		SELECT id, display_name, project_root, created_at, updated_at, last_opened_at, status, snapshot_json
 		FROM sessions
 		WHERE id = ?
 	`, sessionID)
@@ -107,12 +109,17 @@ func (s *Store) GetSession(ctx context.Context, sessionID string) (Session, erro
 }
 
 func (s *Store) CreateSession(ctx context.Context, displayName string) (Session, error) {
+	return s.CreateProjectSession(ctx, displayName, "")
+}
+
+func (s *Store) CreateProjectSession(ctx context.Context, displayName string, projectRoot string) (Session, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
 	if strings.TrimSpace(displayName) == "" {
 		displayName = fmt.Sprintf("Session %s", time.Now().Format("2006-01-02 15:04"))
 	}
+	projectRoot = strings.TrimSpace(projectRoot)
 
 	now := time.Now().UTC()
 	sessionID, err := generateSessionID()
@@ -137,9 +144,9 @@ func (s *Store) CreateSession(ctx context.Context, displayName string) (Session,
 	}
 
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO sessions (id, display_name, created_at, updated_at, last_opened_at, status, snapshot_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, sessionID, strings.TrimSpace(displayName), now.Format(time.RFC3339), now.Format(time.RFC3339), now.Format(time.RFC3339), StatusActive, string(snapshotJSON)); err != nil {
+		INSERT INTO sessions (id, display_name, project_root, created_at, updated_at, last_opened_at, status, snapshot_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, sessionID, strings.TrimSpace(displayName), projectRoot, now.Format(time.RFC3339), now.Format(time.RFC3339), now.Format(time.RFC3339), StatusActive, string(snapshotJSON)); err != nil {
 		return Session{}, fmt.Errorf("insert session: %w", err)
 	}
 
@@ -150,12 +157,74 @@ func (s *Store) CreateSession(ctx context.Context, displayName string) (Session,
 	return Session{
 		ID:           sessionID,
 		DisplayName:  strings.TrimSpace(displayName),
+		ProjectRoot:  projectRoot,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 		LastOpenedAt: now,
 		Status:       StatusActive,
 		Snapshot:     snapshot,
 	}, nil
+}
+
+func (s *Store) GetSessionByProjectRoot(ctx context.Context, projectRoot string) (Session, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, display_name, project_root, created_at, updated_at, last_opened_at, status, snapshot_json
+		FROM sessions
+		WHERE project_root = ?
+		ORDER BY datetime(last_opened_at) DESC, datetime(created_at) DESC
+		LIMIT 1
+	`, strings.TrimSpace(projectRoot))
+
+	session, err := scanSession(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Session{}, ErrSessionNotFound
+	}
+	if err != nil {
+		return Session{}, err
+	}
+
+	return session, nil
+}
+
+func (s *Store) ListKnownProjects(ctx context.Context) ([]KnownProject, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, display_name, project_root, last_opened_at, status
+		FROM sessions
+		WHERE project_root <> ''
+		ORDER BY datetime(last_opened_at) DESC, datetime(created_at) DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list known projects: %w", err)
+	}
+	defer rows.Close()
+
+	projects := make([]KnownProject, 0)
+	for rows.Next() {
+		var project KnownProject
+		var displayName string
+		var lastOpenedAt string
+		var status string
+		if err := rows.Scan(&project.SessionID, &displayName, &project.ProjectRoot, &lastOpenedAt, &status); err != nil {
+			return nil, fmt.Errorf("scan known project: %w", err)
+		}
+		parsedLastOpenedAt, err := time.Parse(time.RFC3339, lastOpenedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse known project last_opened_at: %w", err)
+		}
+		project.LastOpenedAt = parsedLastOpenedAt
+		project.Label = strings.TrimSpace(displayName)
+		if project.Label == "" {
+			project.Label = filepath.Base(project.ProjectRoot)
+		}
+		project.IsActive = status == StatusActive
+		info, err := os.Stat(project.ProjectRoot)
+		project.IsAvailable = err == nil && info.IsDir()
+		projects = append(projects, project)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate known projects: %w", err)
+	}
+	return projects, nil
 }
 
 func (s *Store) OpenSession(ctx context.Context, sessionID string) (Session, error) {
@@ -191,7 +260,7 @@ func (s *Store) OpenSession(ctx context.Context, sessionID string) (Session, err
 	}
 
 	session, err := scanSession(tx.QueryRowContext(ctx, `
-		SELECT id, display_name, created_at, updated_at, last_opened_at, status, snapshot_json
+		SELECT id, display_name, project_root, created_at, updated_at, last_opened_at, status, snapshot_json
 		FROM sessions
 		WHERE id = ?
 	`, sessionID))
@@ -548,9 +617,18 @@ func (s *Store) GetRunHistoryDocument(ctx context.Context, runID string) (RunHis
 }
 
 func (s *Store) QueryRunHistory(ctx context.Context, query RunHistoryQuery) ([]RunHistoryDocument, error) {
-	clauses := []string{"d.session_id = ?"}
-	args := []any{query.SessionID}
+	clauses := make([]string, 0, 5)
+	args := make([]any, 0, 5)
 	joinFTS := false
+	joinSessions := false
+
+	if query.AllProjects {
+		clauses = append(clauses, "d.session_id IS NOT NULL")
+	} else {
+		joinSessions = true
+		clauses = append(clauses, "s.project_root = ?")
+		args = append(args, query.ProjectRoot)
+	}
 
 	if strings.TrimSpace(query.Query) != "" {
 		joinFTS = true
@@ -576,6 +654,9 @@ func (s *Store) QueryRunHistory(ctx context.Context, query RunHistoryQuery) ([]R
 		       d.has_file_changes, d.exported_at
 		FROM run_history_documents d
 	`
+	if joinSessions {
+		statement += ` JOIN sessions s ON s.id = d.session_id `
+	}
 	if joinFTS {
 		statement += ` JOIN run_history_search_fts fts ON fts.run_id = d.run_id `
 	}
@@ -1185,13 +1266,14 @@ type rowScanner interface {
 func scanSession(scanner rowScanner) (Session, error) {
 	var (
 		session      Session
+		projectRoot  string
 		createdAt    string
 		updatedAt    string
 		lastOpenedAt string
 		snapshotJSON string
 	)
 
-	if err := scanner.Scan(&session.ID, &session.DisplayName, &createdAt, &updatedAt, &lastOpenedAt, &session.Status, &snapshotJSON); err != nil {
+	if err := scanner.Scan(&session.ID, &session.DisplayName, &projectRoot, &createdAt, &updatedAt, &lastOpenedAt, &session.Status, &snapshotJSON); err != nil {
 		return Session{}, err
 	}
 
@@ -1211,6 +1293,7 @@ func scanSession(scanner rowScanner) (Session, error) {
 	session.CreatedAt = parsedCreatedAt
 	session.UpdatedAt = parsedUpdatedAt
 	session.LastOpenedAt = parsedLastOpenedAt
+	session.ProjectRoot = strings.TrimSpace(projectRoot)
 	session.Snapshot = EmptySnapshot()
 	if strings.TrimSpace(snapshotJSON) != "" {
 		if err := json.Unmarshal([]byte(snapshotJSON), &session.Snapshot); err != nil {
@@ -1446,7 +1529,7 @@ func nullableRFC3339(value *time.Time) any {
 
 func (s *Store) updateSessionActivity(ctx context.Context, tx *sql.Tx, sessionID string, hasActivity bool) error {
 	session, err := scanSession(tx.QueryRowContext(ctx, `
-		SELECT id, display_name, created_at, updated_at, last_opened_at, status, snapshot_json
+		SELECT id, display_name, project_root, created_at, updated_at, last_opened_at, status, snapshot_json
 		FROM sessions
 		WHERE id = ?
 	`, sessionID))

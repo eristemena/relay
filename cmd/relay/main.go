@@ -16,6 +16,7 @@ var (
 	version = "dev"
 	commit  = "unknown"
 	date    = "unknown"
+	runRelay = app.Run
 )
 
 func main() {
@@ -50,7 +51,7 @@ func newServeCommand(logger *slog.Logger) *cobra.Command {
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
-			return app.Run(ctx, app.Options{
+			return runRelay(ctx, app.Options{
 				PreferredPort: preferredPort,
 				DevMode:       devMode,
 				NoBrowser:     noBrowser,
@@ -64,7 +65,9 @@ func newServeCommand(logger *slog.Logger) *cobra.Command {
 	command.Flags().IntVar(&preferredPort, "port", 4747, "Preferred Relay port for this run")
 	command.Flags().BoolVar(&devMode, "dev", false, "Proxy browser routes to a local Next.js dev server")
 	command.Flags().BoolVar(&noBrowser, "no-browser", false, "Start Relay without opening the browser automatically")
-	command.Flags().StringVar(&projectRoot, "project-root", "", "Absolute path to the local Git repository Relay should connect on startup")
+	command.Flags().StringVar(&projectRoot, "root", "", "Path to the local project root Relay should connect on startup")
+	command.Flags().StringVar(&projectRoot, "project-root", "", "Path to the local project root Relay should connect on startup")
+	_ = command.Flags().MarkDeprecated("project-root", "use --root instead")
 
 	return command
 }

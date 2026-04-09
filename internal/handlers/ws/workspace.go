@@ -23,6 +23,7 @@ type Service interface {
 	BrowseRepository(ctx context.Context, input workspaceorchestrator.RepositoryBrowseInput) (workspaceorchestrator.RepositoryBrowseResult, error)
 	GetRepositoryTree(ctx context.Context, input workspaceorchestrator.RepositoryTreeRequestInput) (workspaceorchestrator.RepositoryTreeResult, error)
 	CreateSession(ctx context.Context, displayName string) (workspaceorchestrator.WorkspaceSnapshot, error)
+	SwitchProject(ctx context.Context, projectRoot string) (workspaceorchestrator.WorkspaceSnapshot, error)
 	OpenSession(ctx context.Context, sessionID string) (workspaceorchestrator.WorkspaceSnapshot, error)
 	SavePreferences(ctx context.Context, input workspaceorchestrator.PreferencesInput) (workspaceorchestrator.WorkspaceSnapshot, error)
 	SubmitRun(ctx context.Context, input workspaceorchestrator.SubmitRunInput, emit func(workspaceorchestrator.StreamEnvelope) error) (workspaceorchestrator.WorkspaceSnapshot, error)
@@ -169,6 +170,29 @@ func (h *Handler) handleMessage(ctx context.Context, envelope Envelope, write fu
 			return err
 		}
 		return write(TypeRepositoryGraphStatus, envelope.RequestID, repositoryGraphStatusPayload(snapshot))
+	case TypeProjectSwitchRequest:
+		var payload ProjectSwitchRequestPayload
+		if err := decodePayload(envelope.Payload, &payload); err != nil {
+			return err
+		}
+
+		snapshot, err := h.service.SwitchProject(ctx, payload.ProjectRoot)
+		if err != nil {
+			var projectErr *workspaceorchestrator.ProjectSwitchError
+			if errors.As(err, &projectErr) {
+				return write(TypeError, envelope.RequestID, ErrorPayload{
+					Code:        projectErr.Code,
+					Message:     projectErr.Message,
+					ProjectRoot: projectErr.ProjectRoot,
+				})
+			}
+			return err
+		}
+
+		if err := write(TypeWorkspaceBootstrap, envelope.RequestID, toPayload(snapshot)); err != nil {
+			return err
+		}
+		return write(TypeRepositoryGraphStatus, envelope.RequestID, repositoryGraphStatusPayload(snapshot))
 	case TypeSessionOpen:
 		var payload SessionOpenPayload
 		if err := decodePayload(envelope.Payload, &payload); err != nil {
@@ -289,6 +313,7 @@ func (h *Handler) handleMessage(ctx context.Context, envelope Envelope, write fu
 		}
 		runs, err := h.service.QueryRunHistory(ctx, workspaceorchestrator.RunHistoryQueryInput{
 			SessionID: payload.SessionID,
+			AllProjects: payload.AllProjects,
 			Query:     payload.Query,
 			FilePath:  payload.FilePath,
 			DateFrom:  dateFrom,
@@ -298,12 +323,13 @@ func (h *Handler) handleMessage(ctx context.Context, envelope Envelope, write fu
 			return write(TypeError, envelope.RequestID, ErrorPayload{Code: "run_history_query_failed", Message: err.Error()})
 		}
 		return write(TypeRunHistoryResult, envelope.RequestID, RunHistoryResultPayload{
-			SessionID: payload.SessionID,
-			Query:     payload.Query,
-			FilePath:  payload.FilePath,
-			DateFrom:  payload.DateFrom,
-			DateTo:    payload.DateTo,
-			Runs:      summarizeRunPayload(runs),
+			SessionID:   payload.SessionID,
+			AllProjects: payload.AllProjects,
+			Query:       payload.Query,
+			FilePath:    payload.FilePath,
+			DateFrom:    payload.DateFrom,
+			DateTo:      payload.DateTo,
+			Runs:        summarizeRunPayload(runs),
 		})
 	case TypeRunHistoryDetailsRequest:
 		var payload RunHistoryDetailsRequestPayload
@@ -557,8 +583,10 @@ func toPayload(snapshot workspaceorchestrator.WorkspaceSnapshot) WorkspaceSnapsh
 	}
 
 	return WorkspaceSnapshotPayload{
-		ActiveSessionID: snapshot.ActiveSessionID,
-		Sessions:        sessions,
+		ActiveSessionID:   snapshot.ActiveSessionID,
+		ActiveProjectRoot: snapshot.ActiveProjectRoot,
+		KnownProjects:     summarizeKnownProjectPayload(snapshot.KnownProjects),
+		Sessions:          sessions,
 		Preferences: PreferencesView{
 			PreferredPort:         snapshot.Preferences.PreferredPort,
 			AppearanceVariant:     snapshot.Preferences.AppearanceVariant,
@@ -595,6 +623,21 @@ func toPayload(snapshot workspaceorchestrator.WorkspaceSnapshot) WorkspaceSnapsh
 	}
 }
 
+func summarizeKnownProjectPayload(projects []workspaceorchestrator.KnownProjectSummary) []KnownProjectPayload {
+	items := make([]KnownProjectPayload, 0, len(projects))
+	for _, project := range projects {
+		items = append(items, KnownProjectPayload{
+			ProjectRoot:   project.ProjectRoot,
+			Label:         project.Label,
+			IsActive:      project.IsActive,
+			IsAvailable:   project.IsAvailable,
+			LastOpenedAt:  project.LastOpenedAt.Format(time.RFC3339),
+			BlockedReason: project.BlockedReason,
+		})
+	}
+	return items
+}
+
 func summarizeRunPayload(runs []workspaceorchestrator.RunSummary) []AgentRunSummary {
 	items := make([]AgentRunSummary, 0, len(runs))
 	for _, run := range runs {
@@ -602,6 +645,8 @@ func summarizeRunPayload(runs []workspaceorchestrator.RunSummary) []AgentRunSumm
 			ID:              run.ID,
 			GeneratedTitle:  run.GeneratedTitle,
 			TaskTextPreview: run.TaskTextPreview,
+			ProjectRoot:     run.ProjectRoot,
+			ProjectLabel:    run.ProjectLabel,
 			Role:            string(run.Role),
 			Model:           run.Model,
 			State:           run.State,

@@ -37,6 +37,7 @@ import type {
   ErrorPayload,
   FileTouchedPayload,
   HandoffPayload,
+  KnownProjectPayload,
   PreferencesView,
   RepositoryBrowseResultPayload,
   RepositoryDirectoryPayload,
@@ -67,8 +68,10 @@ export type ConnectionState = "connecting" | "connected" | "closed";
 export interface WorkspaceState {
   connectionState: ConnectionState;
   activeSessionId: string;
+  activeProjectRoot: string;
   activeRunId: string;
   selectedRunId: string;
+  knownProjects: KnownProjectPayload[];
   sessions: SessionSummary[];
   runSummaries: AgentRunSummary[];
   runEvents: Record<string, StoredRunEvent[]>;
@@ -196,8 +199,10 @@ const defaultUIState: WorkspaceUIState = {
 const defaultState: WorkspaceState = {
   connectionState: "connecting",
   activeSessionId: "",
+  activeProjectRoot: "",
   activeRunId: "",
   selectedRunId: "",
+  knownProjects: [],
   sessions: [],
   runSummaries: [],
   runEvents: {},
@@ -297,6 +302,12 @@ class WorkspaceStore {
   };
 
   applySnapshot = (payload: WorkspaceSnapshotPayload) => {
+    const nextActiveProjectRoot =
+      payload.active_project_root ?? payload.preferences.project_root ?? "";
+    const projectChanged =
+      this.state.activeProjectRoot !== "" &&
+      nextActiveProjectRoot !== "" &&
+      this.state.activeProjectRoot !== nextActiveProjectRoot;
     const nextRunSummaries = dedupeRunSummaries(payload.run_summaries ?? []);
     const nextPendingApprovals = buildPendingApprovalMap(
       payload.pending_approvals ?? [],
@@ -321,17 +332,22 @@ class WorkspaceStore {
       ...this.state,
       connectionState: "connected",
       activeSessionId: payload.active_session_id,
+      activeProjectRoot: nextActiveProjectRoot,
       activeRunId: payload.active_run_id ?? "",
       selectedRunId,
+      knownProjects: payload.known_projects ?? [],
       sessions: payload.sessions,
       runSummaries: nextRunSummaries,
-      runTranscripts: this.state.runTranscripts,
-      runHistoryResults: this.state.runHistoryResults,
+      runEvents: projectChanged ? {} : this.state.runEvents,
+      runTranscripts: projectChanged ? {} : this.state.runTranscripts,
+      runHistoryResults: projectChanged ? [] : this.state.runHistoryResults,
       runHistoryQuery: this.state.runHistoryQuery,
-      runHistoryDetails: this.state.runHistoryDetails,
-      replayStateByRunId: this.state.replayStateByRunId,
-      exportStateByRunId: this.state.exportStateByRunId,
-      orchestrationDocuments: this.state.orchestrationDocuments,
+      runHistoryDetails: projectChanged ? {} : this.state.runHistoryDetails,
+      replayStateByRunId: projectChanged ? {} : this.state.replayStateByRunId,
+      exportStateByRunId: projectChanged ? {} : this.state.exportStateByRunId,
+      orchestrationDocuments: projectChanged
+        ? {}
+        : this.state.orchestrationDocuments,
       pendingApprovals: nextPendingApprovals,
       connectedRepository: nextConnectedRepository,
       repositoryGraph: repositoryChanged
@@ -356,10 +372,22 @@ class WorkspaceStore {
             message: "",
             syncErrorMessage: "",
           }
-        : {
-            ...this.state.repositoryTree,
-            repositoryRoot: nextConnectedRepository.path,
-          },
+        : projectChanged
+          ? {
+              ...this.state.repositoryTree,
+              status: "idle",
+              repositoryRoot: nextConnectedRepository.path,
+              requestRunId: "",
+              paths: [],
+              touchedFiles: [],
+              expandedPaths: [],
+              message: "",
+              syncErrorMessage: "",
+            }
+          : {
+              ...this.state.repositoryTree,
+              repositoryRoot: nextConnectedRepository.path,
+            },
       preferences: payload.preferences,
       uiState: payload.ui_state,
       status: null,
@@ -512,6 +540,7 @@ class WorkspaceStore {
       ...this.state,
       runHistoryQuery: {
         session_id: payload.session_id,
+        all_projects: payload.all_projects,
         query: payload.query,
         file_path: payload.file_path,
         date_from: payload.date_from,

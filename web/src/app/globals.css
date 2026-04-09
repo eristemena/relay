@@ -1199,11 +1199,11 @@ textarea {
 }
 
 .workspace-header-cluster {
-  min-width: min(100%, 34rem);
+  min-width: min(100%, 18rem);
 }
 
 .workspace-status-embedded {
-  min-width: min(100%, 24rem);
+  min-width: min(100%, 16rem);
 }
 
 .workspace-menu-trigger {
@@ -1388,6 +1388,7 @@ textarea {
 
   .workspace-header-cluster {
     width: 100%;
+    min-width: 0;
   }
 
   .workspace-status-embedded {

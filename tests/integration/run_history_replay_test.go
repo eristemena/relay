@@ -34,10 +34,10 @@ func TestRunHistoryReplay_RestartHydratesBootstrapAndReplaysRun(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	session, err := store.CreateSession(ctx, "Replay after restart")
+	session, err := store.CreateProjectSession(ctx, "Replay after restart", repoDir)
 	if err != nil {
 		store.Close()
-		t.Fatalf("CreateSession() error = %v", err)
+		t.Fatalf("CreateProjectSession() error = %v", err)
 	}
 	run, err := store.CreateAgentRun(ctx, session.ID, "Review the saved run", sqlite.RoleReviewer, config.DefaultReviewerModel)
 	if err != nil {

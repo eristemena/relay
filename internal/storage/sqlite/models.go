@@ -83,11 +83,22 @@ type SnapshotError struct {
 type Session struct {
 	ID           string    `json:"id"`
 	DisplayName  string    `json:"display_name"`
+	ProjectRoot  string    `json:"project_root,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 	LastOpenedAt time.Time `json:"last_opened_at"`
 	Status       string    `json:"status"`
 	Snapshot     Snapshot  `json:"snapshot"`
+}
+
+type KnownProject struct {
+	ProjectRoot  string    `json:"project_root"`
+	SessionID    string    `json:"session_id"`
+	Label        string    `json:"label"`
+	IsActive     bool      `json:"is_active"`
+	IsAvailable  bool      `json:"is_available"`
+	LastOpenedAt time.Time `json:"last_opened_at"`
+	BlockedReason string   `json:"blocked_reason,omitempty"`
 }
 
 type AgentRun struct {
@@ -160,6 +171,8 @@ type RunSummary struct {
 	ID              string     `json:"id"`
 	GeneratedTitle  string     `json:"generated_title,omitempty"`
 	TaskTextPreview string     `json:"task_text_preview"`
+	ProjectRoot     string     `json:"project_root,omitempty"`
+	ProjectLabel    string     `json:"project_label,omitempty"`
 	Role            AgentRole  `json:"role"`
 	Model           string     `json:"model"`
 	State           string     `json:"state"`
@@ -201,11 +214,13 @@ type RunHistorySearchDocument struct {
 }
 
 type RunHistoryQuery struct {
-	SessionID string
-	Query     string
-	FilePath  string
-	DateFrom  *time.Time
-	DateTo    *time.Time
+	SessionID   string
+	ProjectRoot string
+	AllProjects bool
+	Query       string
+	FilePath    string
+	DateFrom    *time.Time
+	DateTo      *time.Time
 }
 
 type RunChangeRecord struct {

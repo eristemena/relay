@@ -19,8 +19,11 @@ import (
 
 type Store interface {
 	ListSessions(ctx context.Context) ([]sqlite.Session, error)
+	ListKnownProjects(ctx context.Context) ([]sqlite.KnownProject, error)
 	GetSession(ctx context.Context, sessionID string) (sqlite.Session, error)
+	GetSessionByProjectRoot(ctx context.Context, projectRoot string) (sqlite.Session, error)
 	CreateSession(ctx context.Context, displayName string) (sqlite.Session, error)
+	CreateProjectSession(ctx context.Context, displayName string, projectRoot string) (sqlite.Session, error)
 	OpenSession(ctx context.Context, sessionID string) (sqlite.Session, error)
 	CreateAgentRun(ctx context.Context, sessionID string, taskText string, role sqlite.AgentRole, model string) (sqlite.AgentRun, error)
 	CreateAgentExecution(ctx context.Context, execution sqlite.AgentExecution) (sqlite.AgentExecution, error)
@@ -123,6 +126,16 @@ type pendingApproval struct {
 
 var ErrApprovalRejected = errors.New("Relay blocked the tool call because approval was rejected")
 
+type ProjectSwitchError struct {
+	Code        string
+	Message     string
+	ProjectRoot string
+}
+
+func (e *ProjectSwitchError) Error() string {
+	return e.Message
+}
+
 type SessionSummary struct {
 	ID           string    `json:"id"`
 	DisplayName  string    `json:"display_name"`
@@ -138,8 +151,19 @@ type UIState struct {
 	SaveState    string `json:"save_state"`
 }
 
+type KnownProjectSummary struct {
+	ProjectRoot   string    `json:"project_root"`
+	Label         string    `json:"label"`
+	IsActive      bool      `json:"is_active"`
+	IsAvailable   bool      `json:"is_available"`
+	LastOpenedAt  time.Time `json:"last_opened_at"`
+	BlockedReason string    `json:"blocked_reason,omitempty"`
+}
+
 type WorkspaceSnapshot struct {
 	ActiveSessionID     string                     `json:"active_session_id"`
+	ActiveProjectRoot   string                     `json:"active_project_root,omitempty"`
+	KnownProjects       []KnownProjectSummary      `json:"known_projects,omitempty"`
 	Sessions            []SessionSummary           `json:"sessions"`
 	Preferences         config.SafePreferences     `json:"preferences"`
 	ConnectedRepository ConnectedRepositorySummary `json:"connected_repository"`
@@ -183,6 +207,8 @@ type RunSummary struct {
 	ID              string           `json:"id"`
 	GeneratedTitle  string           `json:"generated_title,omitempty"`
 	TaskTextPreview string           `json:"task_text_preview"`
+	ProjectRoot     string           `json:"project_root,omitempty"`
+	ProjectLabel    string           `json:"project_label,omitempty"`
 	Role            sqlite.AgentRole `json:"role"`
 	Model           string           `json:"model"`
 	State           string           `json:"state"`
@@ -196,11 +222,12 @@ type RunSummary struct {
 }
 
 type RunHistoryQueryInput struct {
-	SessionID string
-	Query     string
-	FilePath  string
-	DateFrom  *time.Time
-	DateTo    *time.Time
+	SessionID   string
+	AllProjects bool
+	Query       string
+	FilePath    string
+	DateFrom    *time.Time
+	DateTo      *time.Time
 }
 
 type RunChangeRecord struct {
@@ -908,14 +935,28 @@ func (s *Service) Bootstrap(ctx context.Context, lastSessionID string) (Workspac
 	s.warmModelContextLimits(ctx, cfg)
 	s.syncRepositoryGraph(ctx, cfg)
 
-	sessions, err := s.store.ListSessions(ctx)
-	if err != nil {
-		return WorkspaceSnapshot{}, fmt.Errorf("load saved sessions: %w", err)
-	}
-
 	activeSessionID := strings.TrimSpace(lastSessionID)
 	if activeSessionID == "" {
 		activeSessionID = strings.TrimSpace(cfg.LastSessionID)
+	}
+	activeProjectRoot := strings.TrimSpace(cfg.ProjectRoot)
+	if activeProjectRoot != "" {
+		projectSession, err := s.ensureProjectSession(ctx, activeProjectRoot)
+		if err != nil {
+			return WorkspaceSnapshot{}, err
+		}
+		activeSessionID = projectSession.ID
+		if cfg.LastSessionID != projectSession.ID {
+			cfg.LastSessionID = projectSession.ID
+			if err := config.Save(s.paths, cfg); err != nil {
+				return WorkspaceSnapshot{}, err
+			}
+		}
+	}
+
+	sessions, err := s.store.ListSessions(ctx)
+	if err != nil {
+		return WorkspaceSnapshot{}, fmt.Errorf("load saved sessions: %w", err)
 	}
 
 	if activeSessionID != "" {
@@ -928,9 +969,23 @@ func (s *Service) Bootstrap(ctx context.Context, lastSessionID string) (Workspac
 	if activeSessionID == "" && len(sessions) > 0 {
 		activeSessionID = sessions[0].ID
 	}
+	if activeProjectRoot == "" {
+		for _, session := range sessions {
+			if session.ID == activeSessionID {
+				activeProjectRoot = session.ProjectRoot
+				break
+			}
+		}
+	}
+
+	knownProjects, err := s.store.ListKnownProjects(ctx)
+	if err != nil {
+		return WorkspaceSnapshot{}, fmt.Errorf("load known projects: %w", err)
+	}
 
 	runSummaries := make([]RunSummary, 0)
 	activeRunID := ""
+	switchBlockedReason := ""
 	pendingApprovals := make([]ApprovalSummary, 0)
 	if activeSessionID != "" {
 		activeRun, hasActiveRun, err := s.reconcileActiveRun(ctx)
@@ -945,6 +1000,7 @@ func (s *Service) Bootstrap(ctx context.Context, lastSessionID string) (Workspac
 		runSummaries = summarizeRuns(storedRuns)
 		if hasActiveRun && activeRun.SessionID == activeSessionID {
 			activeRunID = activeRun.ID
+			switchBlockedReason = "Finish or stop the active run before switching projects."
 		}
 
 		storedApprovals, err := s.store.ListPendingApprovalRequests(ctx, activeSessionID)
@@ -966,6 +1022,8 @@ func (s *Service) Bootstrap(ctx context.Context, lastSessionID string) (Workspac
 
 	return WorkspaceSnapshot{
 		ActiveSessionID:     activeSessionID,
+		ActiveProjectRoot:   activeProjectRoot,
+		KnownProjects:       summarizeKnownProjects(knownProjects, activeProjectRoot, switchBlockedReason),
 		Sessions:            summarizeSessions(sessions),
 		Preferences:         cfg.SafePreferences(),
 		ConnectedRepository: connectedRepository,
@@ -981,6 +1039,21 @@ func (s *Service) Bootstrap(ctx context.Context, lastSessionID string) (Workspac
 		CredentialStatus: CredentialStatus{Configured: cfg.HasOpenRouterKey()},
 		Warnings:         warnings,
 	}, nil
+}
+
+func (s *Service) ensureProjectSession(ctx context.Context, projectRoot string) (sqlite.Session, error) {
+	session, err := s.store.GetSessionByProjectRoot(ctx, projectRoot)
+	if err == nil {
+		return s.store.OpenSession(ctx, session.ID)
+	}
+	if !errors.Is(err, sqlite.ErrSessionNotFound) {
+		return sqlite.Session{}, fmt.Errorf("load project session: %w", err)
+	}
+	created, err := s.store.CreateProjectSession(ctx, ProjectRootLabel(projectRoot), projectRoot)
+	if err != nil {
+		return sqlite.Session{}, fmt.Errorf("create project session: %w", err)
+	}
+	return created, nil
 }
 
 func (s *Service) currentRepositoryGraph(connected ConnectedRepositorySummary) RepositoryGraphState {
@@ -1063,6 +1136,69 @@ func (s *Service) CreateSession(ctx context.Context, displayName string) (Worksp
 	}
 
 	snapshot, err := s.Bootstrap(ctx, session.ID)
+	if err != nil {
+		return WorkspaceSnapshot{}, err
+	}
+	snapshot.Warnings = append(snapshot.Warnings, warnings...)
+	return snapshot, nil
+}
+
+func (s *Service) SwitchProject(ctx context.Context, projectRoot string) (WorkspaceSnapshot, error) {
+	resolvedRoot, err := ResolveProjectRoot(projectRoot, "")
+	if err != nil {
+		return WorkspaceSnapshot{}, &ProjectSwitchError{
+			Code:        "project_root_invalid",
+			Message:     err.Error(),
+			ProjectRoot: strings.TrimSpace(projectRoot),
+		}
+	}
+
+	activeRun, hasActiveRun, err := s.reconcileActiveRun(ctx)
+	if err != nil {
+		return WorkspaceSnapshot{}, fmt.Errorf("reconcile active run: %w", err)
+	}
+	if hasActiveRun {
+		activeSession, err := s.store.GetSession(ctx, activeRun.SessionID)
+		if err != nil {
+			return WorkspaceSnapshot{}, fmt.Errorf("load active session for switch: %w", err)
+		}
+		if activeSession.ProjectRoot != resolvedRoot {
+			return WorkspaceSnapshot{}, &ProjectSwitchError{
+				Code:        "project_switch_blocked",
+				Message:     "Finish or stop the active run before switching projects.",
+				ProjectRoot: resolvedRoot,
+			}
+		}
+	}
+
+	session, err := s.store.GetSessionByProjectRoot(ctx, resolvedRoot)
+	if errors.Is(err, sqlite.ErrSessionNotFound) {
+		return WorkspaceSnapshot{}, &ProjectSwitchError{
+			Code:        "project_not_found",
+			Message:     "That known project is no longer available. Choose another project or restart Relay from the target root.",
+			ProjectRoot: resolvedRoot,
+		}
+	}
+	if err != nil {
+		return WorkspaceSnapshot{}, fmt.Errorf("load project session: %w", err)
+	}
+
+	opened, err := s.store.OpenSession(ctx, session.ID)
+	if err != nil {
+		return WorkspaceSnapshot{}, fmt.Errorf("open project session: %w", err)
+	}
+
+	cfg, warnings, err := config.Load(s.paths)
+	if err != nil {
+		return WorkspaceSnapshot{}, err
+	}
+	cfg.ProjectRoot = resolvedRoot
+	cfg.LastSessionID = opened.ID
+	if err := config.Save(s.paths, cfg); err != nil {
+		return WorkspaceSnapshot{}, err
+	}
+
+	snapshot, err := s.Bootstrap(ctx, opened.ID)
 	if err != nil {
 		return WorkspaceSnapshot{}, err
 	}
@@ -1190,12 +1326,18 @@ func (s *Service) QueryRunHistory(ctx context.Context, input RunHistoryQueryInpu
 	if err := s.refreshSessionRunHistory(ctx, input.SessionID); err != nil {
 		return nil, err
 	}
+	activeSession, err := s.store.GetSession(ctx, input.SessionID)
+	if err != nil {
+		return nil, fmt.Errorf("load active session: %w", err)
+	}
 	documents, err := s.store.QueryRunHistory(ctx, sqlite.RunHistoryQuery{
-		SessionID: input.SessionID,
-		Query:     input.Query,
-		FilePath:  input.FilePath,
-		DateFrom:  input.DateFrom,
-		DateTo:    input.DateTo,
+		SessionID:   input.SessionID,
+		ProjectRoot: activeSession.ProjectRoot,
+		AllProjects: input.AllProjects,
+		Query:       input.Query,
+		FilePath:    input.FilePath,
+		DateFrom:    input.DateFrom,
+		DateTo:      input.DateTo,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("query run history: %w", err)
@@ -1206,6 +1348,10 @@ func (s *Service) QueryRunHistory(ctx context.Context, input RunHistoryQueryInpu
 		if err != nil {
 			return nil, fmt.Errorf("load run for history summary: %w", err)
 		}
+		runSession, err := s.store.GetSession(ctx, document.SessionID)
+		if err != nil {
+			return nil, fmt.Errorf("load session for history summary: %w", err)
+		}
 		state := document.FinalStatus
 		if strings.TrimSpace(state) == "" {
 			state = sqlite.RunStateCompleted
@@ -1214,6 +1360,8 @@ func (s *Service) QueryRunHistory(ctx context.Context, input RunHistoryQueryInpu
 			ID:              document.RunID,
 			GeneratedTitle:  document.GeneratedTitle,
 			TaskTextPreview: truncateSingleLine(document.GoalText, 96),
+			ProjectRoot:     runSession.ProjectRoot,
+			ProjectLabel:    ProjectRootLabel(runSession.ProjectRoot),
 			Role:            run.Role,
 			Model:           run.Model,
 			State:           state,
@@ -1279,6 +1427,25 @@ func summarizeSessions(sessions []sqlite.Session) []SessionSummary {
 		})
 	}
 
+	return items
+}
+
+func summarizeKnownProjects(projects []sqlite.KnownProject, activeProjectRoot string, switchBlockedReason string) []KnownProjectSummary {
+	items := make([]KnownProjectSummary, 0, len(projects))
+	for _, project := range projects {
+		blockedReason := project.BlockedReason
+		if blockedReason == "" && switchBlockedReason != "" && project.ProjectRoot != activeProjectRoot {
+			blockedReason = switchBlockedReason
+		}
+		items = append(items, KnownProjectSummary{
+			ProjectRoot:   project.ProjectRoot,
+			Label:         project.Label,
+			IsActive:      project.ProjectRoot == activeProjectRoot || project.IsActive,
+			IsAvailable:   project.IsAvailable,
+			LastOpenedAt:  project.LastOpenedAt,
+			BlockedReason: blockedReason,
+		})
+	}
 	return items
 }
 

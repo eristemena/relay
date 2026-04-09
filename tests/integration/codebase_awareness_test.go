@@ -117,9 +117,13 @@ func TestCodebaseAwareness_BootstrapReconnectRestoresPendingApprovalForConnected
 		t.Fatalf("config.Save() error = %v", err)
 	}
 
-	session, err := store.CreateSession(context.Background(), "Codebase awareness approval session")
+	session, err := store.CreateProjectSession(
+		context.Background(),
+		"Codebase awareness approval session",
+		repoRoot,
+	)
 	if err != nil {
-		t.Fatalf("CreateSession() error = %v", err)
+		t.Fatalf("CreateProjectSession() error = %v", err)
 	}
 
 	runner := &approvalFlowRunner{
@@ -247,11 +251,26 @@ func TestCodebaseAwareness_RepositoryGraphEventsStreamFromLoadingToReady(t *test
 	_ = readUntilType(t, connection, "workspace.bootstrap")
 	loading := readUntilType(t, connection, "repository_graph_status")
 	loadingPayload := loading["payload"].(map[string]any)
-	if loadingPayload["status"] != "loading" {
-		t.Fatalf("loading status = %v, want loading", loadingPayload["status"])
-	}
 	if loadingPayload["repository_root"] != repoRoot {
 		t.Fatalf("loading repository_root = %v, want %q", loadingPayload["repository_root"], repoRoot)
+	}
+	if loadingPayload["status"] == "ready" {
+		nodes := loadingPayload["nodes"].([]any)
+		edges := loadingPayload["edges"].([]any)
+		if len(nodes) != 2 {
+			t.Fatalf("len(nodes) = %d, want 2", len(nodes))
+		}
+		if len(edges) != 1 {
+			t.Fatalf("len(edges) = %d, want 1", len(edges))
+		}
+		edge := edges[0].(map[string]any)
+		if edge["source"] != "src/index.ts" || edge["target"] != "src/lib/util.ts" {
+			t.Fatalf("edge = %#v, want src/index.ts -> src/lib/util.ts", edge)
+		}
+		return
+	}
+	if loadingPayload["status"] != "loading" {
+		t.Fatalf("loading status = %v, want loading or ready", loadingPayload["status"])
 	}
 
 	ready := readUntilType(t, connection, "repository_graph_status")

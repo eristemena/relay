@@ -35,23 +35,26 @@ export function WorkspaceShell() {
   );
   const {
     browseRepository,
-    createSession,
     controlReplay,
     exportRunHistory,
     getRunHistoryDetails,
     openRun,
-    openSession,
     queryRunHistory,
     requestRepositoryTree,
     respondToApproval,
     savePreferences,
+    switchProject,
     submitRun,
     cancelRun,
   } = useWorkspaceSocket();
   const connectionState = useWorkspaceStore((state) => state.connectionState);
+  const activeProjectRoot = useWorkspaceStore(
+    (state) => state.activeProjectRoot,
+  );
   const activeSessionId = useWorkspaceStore((state) => state.activeSessionId);
   const activeRunId = useWorkspaceStore((state) => state.activeRunId);
   const selectedRunId = useWorkspaceStore((state) => state.selectedRunId);
+  const knownProjects = useWorkspaceStore((state) => state.knownProjects);
   const sessions = useWorkspaceStore((state) => state.sessions);
   const runSummaries = useWorkspaceStore((state) => state.runSummaries);
   const pendingApprovals = useWorkspaceStore((state) => state.pendingApprovals);
@@ -142,9 +145,12 @@ export function WorkspaceShell() {
     : null;
   const repositoryTreeRunId = selectedHistoryRunId || activeRunId;
   const selectedRunIsLive = isLiveRunState(selectedHistoryRun?.state);
-  const showRightRail = Boolean(activeSessionId && selectedHistoryRun);
+  const showRightRail = Boolean(activeSessionId);
   const showRepositoryTreeOnly = showRightRail && selectedRunIsLive;
   const showRightRailTabs = showRightRail && !selectedRunIsLive;
+  const showInspectorPlaceholder = Boolean(
+    activeSessionId && !selectedHistoryRun,
+  );
 
   useEffect(() => {
     if (selectedPendingApproval) {
@@ -159,6 +165,7 @@ export function WorkspaceShell() {
 
     startTransition(() => {
       queryRunHistory(activeSessionId, {
+        all_projects: runHistoryQuery?.all_projects,
         query: runHistoryQuery?.query,
         file_path: runHistoryQuery?.file_path,
         date_from: runHistoryQuery?.date_from,
@@ -171,6 +178,7 @@ export function WorkspaceShell() {
     runHistoryQuery?.date_from,
     runHistoryQuery?.date_to,
     runHistoryQuery?.file_path,
+    runHistoryQuery?.all_projects,
     runHistoryQuery?.query,
   ]);
 
@@ -258,21 +266,16 @@ export function WorkspaceShell() {
     switch (activePanel) {
       case "sessions":
         return (
-          <nav aria-label="Session history and switching">
+          <nav aria-label="Project context and switching">
             <SessionSidebar
-              activeSessionId={activeSessionId}
-              onCreate={() =>
+              activeProjectRoot={activeProjectRoot}
+              knownProjects={knownProjects}
+              onOpenPreferences={() => setActivePanel("preferences")}
+              onSwitch={(projectRoot) =>
                 startTransition(() => {
-                  createSession();
+                  switchProject(projectRoot);
                 })
               }
-              onOpen={(sessionId) =>
-                startTransition(() => {
-                  openSession(sessionId);
-                  setActivePanel(null);
-                })
-              }
-              sessions={sessions}
             />
           </nav>
         );
@@ -386,13 +389,13 @@ export function WorkspaceShell() {
     }
   }, [
     activePanel,
+    activeProjectRoot,
     activeRunId,
     activeSessionId,
     browseRepository,
-    createSession,
     openRun,
-    openSession,
     connectedRepository,
+    knownProjects,
     pendingApprovalCount,
     preferences,
     repositoryBrowser,
@@ -418,7 +421,6 @@ export function WorkspaceShell() {
     selectedHistoryRunDetails,
     selectedHistoryRunId,
     selectedRunId,
-    sessions,
     toggleWorkspaceRepositoryTreePath,
     uiState.history_state,
     uiState.save_state,
@@ -470,20 +472,34 @@ export function WorkspaceShell() {
 
   return (
     <div className="mx-auto flex h-[100dvh] w-full max-w-[120rem] flex-col overflow-hidden px-4 py-4 md:px-6 md:py-6">
-      <header className="panel-surface rounded-[2rem] px-5 py-5 shadow-idle">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
+      <header className="panel-surface rounded-[1.5rem] px-4 py-3 shadow-idle md:px-5 md:py-3.5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0 flex-1">
             <p className="eyebrow">Relay workspace</p>
-            <h1
-              className="font-display text-2xl text-text 
-               -mt-[0.1em] pt-[0.1em] leading-[1.2]"
-            >
+            <h1 className="mt-1 font-display text-xl text-text leading-[1.15] md:text-[1.65rem]">
               Local AI session control, without leaving localhost.
             </h1>
           </div>
-          <div className="flex flex-wrap items-start justify-end gap-3">
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2.5 md:gap-3">
+            <section
+              aria-label="Active project"
+              className="workspace-header-cluster rounded-[1.25rem] border border-border bg-raised/80 px-3 py-2.5"
+            >
+              <p className="eyebrow">Active project</p>
+              <p
+                className="mt-1 max-w-[24rem] overflow-hidden text-sm leading-5 text-text md:max-w-[28rem]"
+                title={activeProjectRoot || "No active project selected yet."}
+              >
+                {activeProjectRoot || "No active project selected yet."}
+              </p>
+              <p className="mt-1 text-[0.68rem] uppercase tracking-[0.18em] text-text-muted">
+                {knownProjects.length <= 1
+                  ? "Single known project"
+                  : `${knownProjects.length} known projects`}
+              </p>
+            </section>
             {showHeaderStatus ? (
-              <div className="workspace-header-cluster rounded-3xl border border-border bg-raised/80 px-4 py-3">
+              <div className="workspace-header-cluster rounded-[1.25rem] border border-border bg-raised/80 px-3 py-2.5">
                 <WorkspaceStatusBanner
                   compact
                   embedded
@@ -548,7 +564,7 @@ export function WorkspaceShell() {
               </section>
             </div>
           </div>
-          {showRepositoryTreeOnly ? (
+          {showRepositoryTreeOnly && selectedHistoryRun ? (
             repositoryTreePanel
           ) : showRightRailTabs && selectedHistoryRun ? (
             <section className="flex min-h-0 flex-col gap-4">
@@ -602,6 +618,34 @@ export function WorkspaceShell() {
                   {repositoryTreePanel}
                 </div>
               )}
+            </section>
+          ) : showInspectorPlaceholder ? (
+            <section className="flex min-h-0 flex-col gap-4">
+              <SidebarTabs
+                activeTab={repositoryTree.activeTab}
+                disabled
+                onChange={() => {}}
+              />
+              <div
+                aria-labelledby={
+                  repositoryTree.activeTab === "replay"
+                    ? "replay-tab"
+                    : "repository-tree-tab"
+                }
+                className="min-h-0 flex-1"
+                id={
+                  repositoryTree.activeTab === "replay"
+                    ? "replay-tabpanel"
+                    : "repository-tree-tabpanel"
+                }
+                role="tabpanel"
+              >
+                <WorkspaceInspectorPlaceholder
+                  activeTab={repositoryTree.activeTab}
+                  hasSavedRuns={runSummaries.length > 0}
+                  onBrowseRuns={() => setActivePanel("history")}
+                />
+              </div>
             </section>
           ) : null}
         </section>
@@ -699,5 +743,67 @@ function WorkspaceSummaryPanel({
         {repositorySummaryMessage}
       </p>
     </section>
+  );
+}
+
+function WorkspaceInspectorPlaceholder({
+  activeTab,
+  hasSavedRuns,
+  onBrowseRuns,
+}: {
+  activeTab: "replay" | "repository_tree";
+  hasSavedRuns: boolean;
+  onBrowseRuns: () => void;
+}) {
+  const isReplayTab = activeTab === "replay";
+
+  return (
+    <aside className="panel-surface flex min-h-0 flex-col rounded-[2rem] p-5 shadow-idle">
+      <div>
+        <p className="eyebrow">Workspace detail rail</p>
+        <h2
+          className="mt-2 font-display text-2xl text-text"
+          id="workspace-inspector-placeholder-heading"
+        >
+          {isReplayTab ? "Historical replay" : "Repository tree"}
+        </h2>
+      </div>
+      <div className="mt-4 space-y-4 text-sm leading-6 text-text-muted">
+        {isReplayTab ? (
+          <>
+            <p>
+              Historical replay appears here after you reopen a saved run from
+              Run history.
+            </p>
+            <p>
+              {hasSavedRuns
+                ? "Choose a saved run to inspect its recorded timeline, replay controls, and export actions."
+                : "Submit a goal first, then reopen the saved run from Run history when you want replay controls."}
+            </p>
+          </>
+        ) : (
+          <>
+            <p>
+              The File Tree browser appears here while a live run is active.
+            </p>
+            <p>
+              Reopened saved runs can also show repository state in this rail
+              after you select them from Run history.
+            </p>
+          </>
+        )}
+      </div>
+      {hasSavedRuns ? (
+        <div className="mt-6">
+          <button
+            className="rounded-full border border-border px-4 py-2 text-sm font-medium text-text hover:border-brand-mid hover:bg-raised"
+            onClick={onBrowseRuns}
+            type="button"
+          >
+            Browse saved runs
+          </button>
+        </div>
+      ) : null}
+    </aside>
   );
 }

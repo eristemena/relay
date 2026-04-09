@@ -4,10 +4,15 @@ import type { KeyboardEvent } from "react";
 
 interface SidebarTabsProps {
   activeTab: "replay" | "repository_tree";
+  disabled?: boolean;
   onChange: (tab: "replay" | "repository_tree") => void;
 }
 
-export function SidebarTabs({ activeTab, onChange }: SidebarTabsProps) {
+export function SidebarTabs({
+  activeTab,
+  disabled = false,
+  onChange,
+}: SidebarTabsProps) {
   const tabs: Array<{
     value: "replay" | "repository_tree";
     label: string;
@@ -32,6 +37,10 @@ export function SidebarTabs({ activeTab, onChange }: SidebarTabsProps) {
   ];
 
   function handleKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    if (disabled) {
+      return;
+    }
+
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
       return;
     }
@@ -63,15 +72,21 @@ export function SidebarTabs({ activeTab, onChange }: SidebarTabsProps) {
       {tabs.map((tab) => (
         <button
           aria-controls={tab.panelId}
+          aria-disabled={disabled}
           aria-selected={activeTab === tab.value}
-          className="repository-tab flex-1 rounded-full border border-border px-4 py-2 text-sm font-medium text-text transition-colors duration-200 data-[active=true]:border-brand-mid data-[active=true]:bg-raised"
+          className="repository-tab flex-1 rounded-full border border-border px-4 py-2 text-sm font-medium text-text transition-colors duration-200 data-[active=true]:border-brand-mid data-[active=true]:bg-raised disabled:cursor-not-allowed disabled:opacity-60"
           data-active={activeTab === tab.value}
+          disabled={disabled}
           id={tab.id}
           key={tab.value}
-          onClick={() => onChange(tab.value)}
+          onClick={() => {
+            if (!disabled) {
+              onChange(tab.value);
+            }
+          }}
           onKeyDown={handleKeyDown}
           role="tab"
-          tabIndex={activeTab === tab.value ? 0 : -1}
+          tabIndex={disabled ? -1 : activeTab === tab.value ? 0 : -1}
           type="button"
         >
           <span className="block">{tab.label}</span>

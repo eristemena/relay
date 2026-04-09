@@ -50,13 +50,18 @@ export function RunHistoryPanel({
   const [filePath, setFilePath] = useState(runHistoryQuery?.file_path ?? "");
   const [dateFrom, setDateFrom] = useState(runHistoryQuery?.date_from ?? "");
   const [dateTo, setDateTo] = useState(runHistoryQuery?.date_to ?? "");
+  const [allProjects, setAllProjects] = useState(
+    runHistoryQuery?.all_projects ?? false,
+  );
 
   useEffect(() => {
     setQuery(runHistoryQuery?.query ?? "");
     setFilePath(runHistoryQuery?.file_path ?? "");
     setDateFrom(runHistoryQuery?.date_from ?? "");
     setDateTo(runHistoryQuery?.date_to ?? "");
+    setAllProjects(runHistoryQuery?.all_projects ?? false);
   }, [
+    runHistoryQuery?.all_projects,
     runHistoryQuery?.date_from,
     runHistoryQuery?.date_to,
     runHistoryQuery?.file_path,
@@ -82,6 +87,9 @@ export function RunHistoryPanel({
   const selectedTimestamp = replayState?.selected_timestamp
     ? new Date(replayState.selected_timestamp).toLocaleString()
     : null;
+  const historyScopeLabel = allProjects
+    ? "all known projects"
+    : "the active project";
 
   return (
     <section aria-labelledby="run-history-heading" className="space-y-4">
@@ -99,6 +107,35 @@ export function RunHistoryPanel({
           Review preserved runs in read-only mode, search by transcript or path,
           and drive replay from the recorded timeline.
         </p>
+        <div className="mt-5 rounded-3xl border border-border bg-raised/60 p-4">
+          <label className="flex cursor-pointer items-start gap-3 text-sm text-text">
+            <input
+              checked={allProjects}
+              className="mt-1 h-4 w-4 rounded border border-border bg-raised accent-brand-mid"
+              onChange={(event) => {
+                const nextAllProjects = event.currentTarget.checked;
+                setAllProjects(nextAllProjects);
+                onQuery({
+                  all_projects: nextAllProjects,
+                  query: query || undefined,
+                  file_path: filePath || undefined,
+                  date_from: dateFrom || undefined,
+                  date_to: dateTo || undefined,
+                });
+              }}
+              type="checkbox"
+            />
+            <span>
+              <span className="block font-medium text-text">
+                Include runs from all known projects
+              </span>
+              <span className="mt-1 block leading-6 text-text-muted">
+                Leave this off to review only the active project without
+                changing the selected workspace root.
+              </span>
+            </span>
+          </label>
+        </div>
       </div>
 
       <RunHistoryFilters
@@ -107,6 +144,7 @@ export function RunHistoryPanel({
         filePath={filePath}
         onApply={() =>
           onQuery({
+            all_projects: allProjects,
             query: query || undefined,
             file_path: filePath || undefined,
             date_from: dateFrom || undefined,
@@ -122,7 +160,7 @@ export function RunHistoryPanel({
           setFilePath("");
           setDateFrom("");
           setDateTo("");
-          onQuery({});
+          onQuery({ all_projects: allProjects });
         }}
         query={query}
       />
@@ -134,13 +172,14 @@ export function RunHistoryPanel({
           ) : null}
           {historyState === "error" ? (
             <p className="mt-2 text-sm text-error">
-              Relay could not load the saved run history.
+              Relay could not load saved runs for {historyScopeLabel}.
             </p>
           ) : null}
           {historyState === "ready" && runSummaries.length === 0 ? (
             <p className="mt-4 rounded-3xl border border-dashed border-border bg-raised/60 p-5 text-sm leading-6 text-text-muted">
-              No saved runs yet. Completed, clarification-required, and errored
-              agent tasks will appear here for replay.
+              No saved runs found for {historyScopeLabel}. Completed,
+              clarification-required, and errored agent tasks will appear here
+              for replay.
             </p>
           ) : null}
           {runSummaries.length > 0 ? (

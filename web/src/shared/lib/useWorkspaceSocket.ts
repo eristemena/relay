@@ -8,6 +8,7 @@ import {
   createAgentRunReplayControlRequest,
   createAgentRunSubmitRequest,
   createBootstrapRequest,
+  createProjectSwitchRequest,
   createPreferencesSaveRequest,
   createRepositoryBrowseRequest,
   createRepositoryTreeRequest,
@@ -136,6 +137,9 @@ export function useWorkspaceSocket() {
   return {
     createSession(displayName?: string) {
       sendEnvelope(createSessionCreateRequest(displayName));
+    },
+    switchProject(projectRoot: string) {
+      sendEnvelope(createProjectSwitchRequest(projectRoot));
     },
     openSession(sessionId: string) {
       sendEnvelope(createSessionOpenRequest(sessionId));

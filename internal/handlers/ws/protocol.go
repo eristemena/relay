@@ -12,6 +12,7 @@ const (
 	TypeRepositoryTreeResult      = "repository.tree.result"
 	TypeFileTouched               = "file_touched"
 	TypeRepositoryGraphStatus     = "repository_graph_status"
+	TypeProjectSwitchRequest      = "project.switch.request"
 	TypeSessionCreate             = "session.create"
 	TypeSessionCreated            = "session.created"
 	TypeSessionOpen               = "session.open"
@@ -62,6 +63,19 @@ type OutboundEnvelope[T any] struct {
 
 type BootstrapRequestPayload struct {
 	LastSessionID string `json:"last_session_id,omitempty"`
+}
+
+type KnownProjectPayload struct {
+	ProjectRoot   string `json:"project_root"`
+	Label         string `json:"label"`
+	IsActive      bool   `json:"is_active"`
+	IsAvailable   bool   `json:"is_available"`
+	LastOpenedAt  string `json:"last_opened_at"`
+	BlockedReason string `json:"blocked_reason,omitempty"`
+}
+
+type ProjectSwitchRequestPayload struct {
+	ProjectRoot string `json:"project_root"`
 }
 
 type RepositoryBrowseRequestPayload struct {
@@ -173,11 +187,12 @@ type AgentRunOpenPayload struct {
 }
 
 type RunHistoryQueryPayload struct {
-	SessionID string `json:"session_id"`
-	Query     string `json:"query,omitempty"`
-	FilePath  string `json:"file_path,omitempty"`
-	DateFrom  string `json:"date_from,omitempty"`
-	DateTo    string `json:"date_to,omitempty"`
+	SessionID   string `json:"session_id,omitempty"`
+	AllProjects bool   `json:"all_projects,omitempty"`
+	Query       string `json:"query,omitempty"`
+	FilePath    string `json:"file_path,omitempty"`
+	DateFrom    string `json:"date_from,omitempty"`
+	DateTo      string `json:"date_to,omitempty"`
 }
 
 type RunHistoryDetailsRequestPayload struct {
@@ -248,6 +263,8 @@ type UIState struct {
 
 type WorkspaceSnapshotPayload struct {
 	ActiveSessionID     string                   `json:"active_session_id"`
+	ActiveProjectRoot   string                   `json:"active_project_root,omitempty"`
+	KnownProjects       []KnownProjectPayload    `json:"known_projects,omitempty"`
 	Sessions            []SessionSummary         `json:"sessions"`
 	Preferences         PreferencesView          `json:"preferences"`
 	ConnectedRepository ConnectedRepositoryView  `json:"connected_repository"`
@@ -263,6 +280,8 @@ type AgentRunSummary struct {
 	ID              string `json:"id"`
 	GeneratedTitle  string `json:"generated_title,omitempty"`
 	TaskTextPreview string `json:"task_text_preview"`
+	ProjectRoot     string `json:"project_root,omitempty"`
+	ProjectLabel    string `json:"project_label,omitempty"`
 	Role            string `json:"role"`
 	Model           string `json:"model"`
 	State           string `json:"state"`
@@ -286,12 +305,13 @@ type RunChangeRecordPayload struct {
 }
 
 type RunHistoryResultPayload struct {
-	SessionID string            `json:"session_id"`
-	Query     string            `json:"query,omitempty"`
-	FilePath  string            `json:"file_path,omitempty"`
-	DateFrom  string            `json:"date_from,omitempty"`
-	DateTo    string            `json:"date_to,omitempty"`
-	Runs      []AgentRunSummary `json:"runs"`
+	SessionID   string            `json:"session_id,omitempty"`
+	AllProjects bool              `json:"all_projects,omitempty"`
+	Query       string            `json:"query,omitempty"`
+	FilePath    string            `json:"file_path,omitempty"`
+	DateFrom    string            `json:"date_from,omitempty"`
+	DateTo      string            `json:"date_to,omitempty"`
+	Runs        []AgentRunSummary `json:"runs"`
 }
 
 type RunHistoryDetailsResultPayload struct {
@@ -333,6 +353,7 @@ type WorkspaceStatusPayload struct {
 type ErrorPayload struct {
 	Code       string `json:"code"`
 	Message    string `json:"message"`
+	ProjectRoot string `json:"project_root,omitempty"`
 	SessionID  string `json:"session_id,omitempty"`
 	RunID      string `json:"run_id,omitempty"`
 	AgentID    string `json:"agent_id,omitempty"`

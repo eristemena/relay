@@ -1,5 +1,7 @@
 SHELL := /bin/zsh
 
+ROOT ?=
+
 .PHONY: dev serve frontend-dev frontend-build build test test-web
 
 dev:
@@ -7,10 +9,18 @@ dev:
 	npm --prefix web run dev & \
 	frontend_pid=$$!; \
 	trap 'kill $$frontend_pid 2>/dev/null || true' EXIT INT TERM; \
-	RELAY_DEV=true go run ./cmd/relay serve --dev --port 4747
+	if [[ -n "$(ROOT)" ]]; then \
+		RELAY_DEV=true go run ./cmd/relay serve --dev --port 4747 --root "$(ROOT)"; \
+	else \
+		RELAY_DEV=true go run ./cmd/relay serve --dev --port 4747; \
+	fi
 
 serve:
-	go run ./cmd/relay serve --port 4747
+	@if [[ -n "$(ROOT)" ]]; then \
+		go run ./cmd/relay serve --port 4747 --root "$(ROOT)"; \
+	else \
+		go run ./cmd/relay serve --port 4747; \
+	fi
 
 frontend-dev:
 	npm --prefix web run dev

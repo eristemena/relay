@@ -274,6 +274,187 @@ describe("workspaceStore", () => {
     resetWorkspaceStore();
   });
 
+  it("clears project-scoped caches when the active project changes", () => {
+    resetWorkspaceStore();
+    primeWorkspaceStore(
+      buildWorkspaceSnapshot({
+        active_project_root: "/tmp/relay-a",
+        known_projects: [
+          {
+            project_root: "/tmp/relay-a",
+            label: "relay-a",
+            is_active: true,
+            is_available: true,
+            last_opened_at: "2026-03-23T12:15:00Z",
+          },
+          {
+            project_root: "/tmp/relay-b",
+            label: "relay-b",
+            is_active: false,
+            is_available: true,
+            last_opened_at: "2026-03-23T12:20:00Z",
+          },
+        ],
+        active_run_id: "run_a",
+        run_summaries: [
+          {
+            id: "run_a",
+            task_text_preview: "Inspect relay-a",
+            role: "coder",
+            model: "anthropic/claude-sonnet-4-5",
+            state: "thinking",
+            started_at: "2026-03-23T12:00:00Z",
+            has_tool_activity: true,
+          },
+        ],
+      }),
+    );
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "agent_spawned",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_a",
+          sequence: 1,
+          replay: false,
+          role: "coder",
+          model: "anthropic/claude-sonnet-4-5",
+          agent_id: "agent_coder_1",
+          label: "Coder",
+          spawn_order: 1,
+          occurred_at: "2026-03-23T12:00:01Z",
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "run.history.result",
+        payload: {
+          session_id: "session_alpha",
+          all_projects: true,
+          query: "relay",
+          runs: [
+            {
+              id: "run_history_a",
+              task_text_preview: "Inspect relay-a history",
+              project_root: "/tmp/relay-a",
+              project_label: "relay-a",
+              role: "reviewer",
+              model: "anthropic/claude-sonnet-4-5",
+              state: "completed",
+              started_at: "2026-03-23T12:02:00Z",
+              has_tool_activity: true,
+            },
+          ],
+        },
+      } as never);
+      workspaceStore.handleEnvelope({
+        type: "repository.tree.result",
+        payload: {
+          session_id: "session_alpha",
+          run_id: "run_a",
+          repository_root: "/tmp/relay-a",
+          status: "ready",
+          paths: ["README.md"],
+          touched_files: [],
+        },
+      } as never);
+    });
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "workspace.bootstrap",
+        payload: buildWorkspaceSnapshot({
+          active_session_id: "session_beta",
+          active_project_root: "/tmp/relay-b",
+          known_projects: [
+            {
+              project_root: "/tmp/relay-a",
+              label: "relay-a",
+              is_active: false,
+              is_available: true,
+              last_opened_at: "2026-03-23T12:15:00Z",
+            },
+            {
+              project_root: "/tmp/relay-b",
+              label: "relay-b",
+              is_active: true,
+              is_available: true,
+              last_opened_at: "2026-03-23T12:20:00Z",
+            },
+          ],
+          sessions: [
+            {
+              id: "session_beta",
+              display_name: "relay-b",
+              created_at: "2026-03-23T12:10:00Z",
+              last_opened_at: "2026-03-23T12:20:00Z",
+              status: "active",
+              has_activity: false,
+            },
+          ],
+          preferences: {
+            ...buildWorkspaceSnapshot().preferences,
+            project_root: "/tmp/relay-b",
+            project_root_configured: true,
+            project_root_valid: true,
+          },
+          run_summaries: [],
+        }),
+      } as never);
+    });
+
+    const state = workspaceStore.getSnapshot();
+    expect(state.activeProjectRoot).toBe("/tmp/relay-b");
+    expect(state.knownProjects).toHaveLength(2);
+    expect(state.runEvents).toEqual({});
+    expect(state.orchestrationDocuments).toEqual({});
+    expect(state.runHistoryResults).toEqual([]);
+    expect(state.runHistoryQuery?.all_projects).toBe(true);
+    expect(state.repositoryTree.status).toBe("idle");
+    expect(state.repositoryTree.paths).toEqual([]);
+
+    resetWorkspaceStore();
+  });
+
+  it("stores project metadata for all-project history results", () => {
+    resetWorkspaceStore();
+
+    act(() => {
+      workspaceStore.handleEnvelope({
+        type: "run.history.result",
+        payload: {
+          session_id: "session_alpha",
+          all_projects: true,
+          runs: [
+            {
+              id: "run_history_a",
+              task_text_preview: "Inspect relay-a history",
+              project_root: "/tmp/relay-a",
+              project_label: "relay-a",
+              role: "reviewer",
+              model: "anthropic/claude-sonnet-4-5",
+              state: "completed",
+              started_at: "2026-03-23T12:02:00Z",
+              has_tool_activity: true,
+            },
+          ],
+        },
+      } as never);
+    });
+
+    const state = workspaceStore.getSnapshot();
+    expect(state.runHistoryQuery?.all_projects).toBe(true);
+    expect(state.runHistoryResults).toEqual([
+      expect.objectContaining({
+        id: "run_history_a",
+        project_root: "/tmp/relay-a",
+        project_label: "relay-a",
+      }),
+    ]);
+
+    resetWorkspaceStore();
+  });
+
   it("rehydrates pending approvals from bootstrap snapshots", () => {
     resetWorkspaceStore();
 

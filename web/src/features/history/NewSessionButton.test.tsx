@@ -3,11 +3,13 @@ import { describe, expect, it, vi } from "vitest";
 import { NewSessionButton } from "@/features/history/NewSessionButton";
 
 describe("NewSessionButton", () => {
-  it("fires the create callback", () => {
-    const onCreate = vi.fn();
-    render(<NewSessionButton onCreate={onCreate} />);
+  it("fires the click callback with project-context copy", () => {
+    const onClick = vi.fn();
+    render(<NewSessionButton onClick={onClick} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /start new session/i }));
-    expect(onCreate).toHaveBeenCalledTimes(1);
+    fireEvent.click(
+      screen.getByRole("button", { name: /open local settings/i }),
+    );
+    expect(onClick).toHaveBeenCalledTimes(1);
   });
 });

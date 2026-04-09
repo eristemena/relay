@@ -117,6 +117,76 @@ func TestHandlerHandleMessage_RoutesServiceActionsAndMapsErrors(t *testing.T) {
 		assertWriteTypes(t, calls, TypeSessionCreated, TypeRepositoryGraphStatus)
 	})
 
+	t.Run("project switch success", func(t *testing.T) {
+		calls := make([]capturedWrite, 0, 2)
+		err := handler.handleMessage(context.Background(), Envelope{
+			Type:      TypeProjectSwitchRequest,
+			RequestID: "req_project_switch",
+			Payload:   mustMarshalJSON(t, ProjectSwitchRequestPayload{ProjectRoot: "/tmp/another"}),
+		}, captureWrites(&calls))
+		if err != nil {
+			t.Fatalf("handleMessage() error = %v", err)
+		}
+		if service.switchProjectRoot != "/tmp/another" {
+			t.Fatalf("service.switchProjectRoot = %q, want /tmp/another", service.switchProjectRoot)
+		}
+		assertWriteTypes(t, calls, TypeWorkspaceBootstrap, TypeRepositoryGraphStatus)
+	})
+
+	t.Run("project switch blocked", func(t *testing.T) {
+		calls := make([]capturedWrite, 0, 1)
+		service.switchErr = &workspaceorchestrator.ProjectSwitchError{
+			Code:        "project_switch_blocked",
+			Message:     "Finish or stop the active run before switching projects.",
+			ProjectRoot: "/tmp/another",
+		}
+		defer func() { service.switchErr = nil }()
+
+		err := handler.handleMessage(context.Background(), Envelope{
+			Type:      TypeProjectSwitchRequest,
+			RequestID: "req_project_switch_blocked",
+			Payload:   mustMarshalJSON(t, ProjectSwitchRequestPayload{ProjectRoot: "/tmp/another"}),
+		}, captureWrites(&calls))
+		if err != nil {
+			t.Fatalf("handleMessage() error = %v", err)
+		}
+		assertWriteType(t, calls, TypeError)
+		payload := calls[0].payload.(ErrorPayload)
+		if payload.Code != "project_switch_blocked" {
+			t.Fatalf("payload.Code = %q, want project_switch_blocked", payload.Code)
+		}
+		if payload.ProjectRoot != "/tmp/another" {
+			t.Fatalf("payload.ProjectRoot = %q, want /tmp/another", payload.ProjectRoot)
+		}
+	})
+
+	t.Run("project switch not found", func(t *testing.T) {
+		calls := make([]capturedWrite, 0, 1)
+		service.switchErr = &workspaceorchestrator.ProjectSwitchError{
+			Code:        "project_not_found",
+			Message:     "Relay does not know that project yet.",
+			ProjectRoot: "/tmp/missing",
+		}
+		defer func() { service.switchErr = nil }()
+
+		err := handler.handleMessage(context.Background(), Envelope{
+			Type:      TypeProjectSwitchRequest,
+			RequestID: "req_project_switch_missing",
+			Payload:   mustMarshalJSON(t, ProjectSwitchRequestPayload{ProjectRoot: "/tmp/missing"}),
+		}, captureWrites(&calls))
+		if err != nil {
+			t.Fatalf("handleMessage() error = %v", err)
+		}
+		assertWriteType(t, calls, TypeError)
+		payload := calls[0].payload.(ErrorPayload)
+		if payload.Code != "project_not_found" {
+			t.Fatalf("payload.Code = %q, want project_not_found", payload.Code)
+		}
+		if payload.ProjectRoot != "/tmp/missing" {
+			t.Fatalf("payload.ProjectRoot = %q, want /tmp/missing", payload.ProjectRoot)
+		}
+	})
+
 	t.Run("session open not found", func(t *testing.T) {
 		calls := make([]capturedWrite, 0, 1)
 		service.openErr = sqlite.ErrSessionNotFound
@@ -344,6 +414,8 @@ func TestHandlerHandleMessage_RoutesServiceActionsAndMapsErrors(t *testing.T) {
 			ID:              "run_history_1",
 			GeneratedTitle:  "Review approval flow",
 			TaskTextPreview: "Audit approval review flow",
+			ProjectRoot:     "/tmp/project-a",
+			ProjectLabel:    "project-a",
 			Role:            sqlite.RoleReviewer,
 			Model:           "anthropic/claude-sonnet-4-5",
 			State:           sqlite.RunStateCompleted,
@@ -374,7 +446,7 @@ func TestHandlerHandleMessage_RoutesServiceActionsAndMapsErrors(t *testing.T) {
 		err := handler.handleMessage(context.Background(), Envelope{
 			Type:      TypeRunHistoryQuery,
 			RequestID: "req_history_query",
-			Payload:   mustMarshalJSON(t, RunHistoryQueryPayload{SessionID: "session_alpha", Query: "approval", FilePath: "README.md", DateFrom: "2026-03-24"}),
+			Payload:   mustMarshalJSON(t, RunHistoryQueryPayload{SessionID: "session_alpha", AllProjects: true, Query: "approval", FilePath: "README.md", DateFrom: "2026-03-24"}),
 		}, captureWrites(&queryCalls))
 		if err != nil {
 			t.Fatalf("handleMessage() history query error = %v", err)
@@ -384,8 +456,17 @@ func TestHandlerHandleMessage_RoutesServiceActionsAndMapsErrors(t *testing.T) {
 		if len(queryPayload.Runs) != 1 || queryPayload.Runs[0].GeneratedTitle != "Review approval flow" {
 			t.Fatalf("queryPayload = %#v, want generated title in run history result", queryPayload)
 		}
+		if !queryPayload.AllProjects {
+			t.Fatalf("queryPayload.AllProjects = %t, want true", queryPayload.AllProjects)
+		}
+		if queryPayload.Runs[0].ProjectRoot != "/tmp/project-a" || queryPayload.Runs[0].ProjectLabel != "project-a" {
+			t.Fatalf("queryPayload.Runs[0] = %#v, want project metadata", queryPayload.Runs[0])
+		}
 		if service.runHistoryQueryInput.Query != "approval" || service.runHistoryQueryInput.FilePath != "README.md" {
 			t.Fatalf("runHistoryQueryInput = %#v, want approval + README.md", service.runHistoryQueryInput)
+		}
+		if !service.runHistoryQueryInput.AllProjects {
+			t.Fatalf("service.runHistoryQueryInput.AllProjects = %t, want true", service.runHistoryQueryInput.AllProjects)
 		}
 
 		detailCalls := make([]capturedWrite, 0, 1)
@@ -607,6 +688,7 @@ type stubService struct {
 	repositoryBrowseResult workspaceorchestrator.RepositoryBrowseResult
 	bootstrapLastSessionID string
 	createDisplayName      string
+	switchProjectRoot      string
 	openSessionID          string
 	preferencesInput       workspaceorchestrator.PreferencesInput
 	submitInput            workspaceorchestrator.SubmitRunInput
@@ -625,6 +707,7 @@ type stubService struct {
 	repositoryTreeResult   workspaceorchestrator.RepositoryTreeResult
 	replayControlInput     workspaceorchestrator.ReplayControlInput
 	openErr                error
+	switchErr              error
 	submitErr              error
 	browseErr              error
 	repositoryTreeErr      error
@@ -657,6 +740,14 @@ func (s *stubService) GetRepositoryTree(_ context.Context, input workspaceorches
 func (s *stubService) CreateSession(_ context.Context, displayName string) (workspaceorchestrator.WorkspaceSnapshot, error) {
 	s.createDisplayName = displayName
 	return s.createSnapshot, nil
+}
+
+func (s *stubService) SwitchProject(_ context.Context, projectRoot string) (workspaceorchestrator.WorkspaceSnapshot, error) {
+	s.switchProjectRoot = projectRoot
+	if s.switchErr != nil {
+		return workspaceorchestrator.WorkspaceSnapshot{}, s.switchErr
+	}
+	return s.bootstrapSnapshot, nil
 }
 
 func (s *stubService) OpenSession(_ context.Context, sessionID string) (workspaceorchestrator.WorkspaceSnapshot, error) {
